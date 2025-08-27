@@ -543,6 +543,22 @@ def llc_ci_from_histories(Ln_histories, n, beta, L0, alpha=0.05):
     return llc_mean, (llc_mean - z* n*float(beta)*se, llc_mean + z* n*float(beta)*se)
 
 
+def scalar_chain_diagnostics(series_per_chain, name="L"):
+    """Compute ESS and R-hat for a scalar quantity across chains"""
+    # Truncate to common length
+    valid = [np.asarray(s) for s in series_per_chain if len(s) > 1]
+    if not valid:
+        return dict(ess=np.nan, rhat=np.nan)
+    m = min(len(s) for s in valid)
+    H = np.stack([s[:m] for s in valid], axis=0)  # (chains, m)
+    idata = az.from_dict(posterior={name: H})
+    ess_result = az.ess(idata, var_names=[name])
+    rhat_result = az.rhat(idata, var_names=[name])
+    ess = float(np.nanmedian(ess_result[name].values))
+    rhat = float(np.nanmax(rhat_result[name].values))
+    return dict(ess=ess, rhat=rhat)
+
+
 # ----------------------------
 # Log posterior & score (tempered + localized)
 # log pi(w) = - n * beta * L_n(w) - (gamma/2)||w - w0||^2
@@ -581,13 +597,16 @@ def run_sgld_online(key, init_thetas, grad_logpost_minibatch, X, Y, n, step_size
 
     Ln_running = [RunningMeanVar() for _ in range(chains)]
     Ln_history = [[] for _ in range(chains)]  # track Ln evaluations
+    radius_history = [[] for _ in range(chains)]  # track radius from theta0
+    q_history = [[] for _ in range(chains)]  # track prior quadratic
     stored = []  # thinned positions for diagnostics (kept small)
 
     def one_step(theta, k, idx):
         # Create minibatch from indices  
         Xb, Yb = X[idx], Y[idx]
-        theta, _info = sgld_step(k, theta, (Xb, Yb), step_size)  # always expect tuple
-        return theta
+        out = sgld_step(k, theta, (Xb, Yb), step_size)
+        # Handle both position-only and (position, info) returns
+        return out[0] if isinstance(out, tuple) else out
 
     # Use fold_in for deterministic per-chain RNG streams
     keys = [random.fold_in(key, c) for c in range(chains)]
@@ -795,15 +814,6 @@ def run_nuts_online(key, init_thetas, logpost_and_grad, warmup, draws, thin, eva
 
 
 
-def arviz_from_samples(samples, name="theta"):
-    """Build a light InferenceData to run ESS/Rhat, without printing 10k parameters."""
-    samples_np = np.asarray(samples)  # (chains, draws, dim)
-    coords = {"theta_dim": np.arange(samples_np.shape[-1])}
-    dims = {name: ["theta_dim"]}
-    idata = az.from_dict(posterior={name: samples_np}, coords=coords, dims=dims)
-    return idata
-
-
 # ----------------------------
 # Main
 # ----------------------------
@@ -896,22 +906,10 @@ def main(cfg: Config = CFG):
     llc_sgld, ci_sgld = llc_ci_from_histories(Ln_histories_sgld, cfg.n_data, beta, L0)
     print(f"SGLD LLC: {llc_sgld:.4f}  95% CI: [{ci_sgld[0]:.4f}, {ci_sgld[1]:.4f}]")
 
-    # Diagnostics on thinned samples
-    if sgld_samples_thin.shape[1] > 1:
-        idata_sgld = arviz_from_samples(sgld_samples_thin, name="theta")
-        # ESS returns a Dataset with variables, each variable has dimensions
-        # For bulk ESS, use method='bulk' (default)
-        ess_sgld = az.ess(idata_sgld, var_names=["theta"], method="bulk")
-        # rhat returns a Dataset with variables
-        rhat_sgld = az.rhat(idata_sgld, var_names=["theta"])
-        print("SGLD diagnostics (thinned samples):")
-        # Access the theta variable from the xarray.Dataset
-        print(
-            f"  ESS bulk (median over dims): {np.nanmedian(ess_sgld.data_vars['theta'].values):.1f}"
-        )
-        print(
-            f"  R-hat (max over dims):        {np.nanmax(rhat_sgld.data_vars['theta'].values):.3f}"
-        )
+    # Scalar diagnostics on L_n histories (relevant to LLC estimand)
+    diag_L_sgld = scalar_chain_diagnostics(Ln_histories_sgld, name="L")
+    print("SGLD diagnostics (L_n histories):")
+    print(f"  ESS(L_n): {diag_L_sgld['ess']:.1f}  R-hat(L_n): {diag_L_sgld['rhat']:.3f}")
 
     # ===== HMC (Online) =====
     print("\n=== HMC (BlackJAX, online) ===")
@@ -940,20 +938,10 @@ def main(cfg: Config = CFG):
     print(f"HMC LLC: {llc_hmc:.4f}  95% CI: [{ci_hmc[0]:.4f}, {ci_hmc[1]:.4f}]")
     print(f"HMC acceptance rate (mean over chains/draws): {mean_acc:.3f}")
 
-    # Diagnostics on thinned samples
-    if hmc_samples_thin.shape[1] > 1:
-        idata_hmc = arviz_from_samples(hmc_samples_thin, name="theta")
-        # ESS returns a Dataset with variables, each variable has dimensions
-        # For bulk ESS, use method='bulk' (default)
-        ess_hmc = az.ess(idata_hmc, var_names=["theta"], method="bulk")
-        # rhat returns a Dataset with variables
-        rhat_hmc = az.rhat(idata_hmc, var_names=["theta"])
-        print("HMC diagnostics (thinned samples):")
-        # Access the theta variable from the xarray.Dataset
-        print(f"  ESS bulk (median over dims): {np.nanmedian(ess_hmc.data_vars['theta'].values):.1f}")
-        print(
-            f"  R-hat (max over dims):        {np.nanmax(rhat_hmc.data_vars['theta'].values):.3f}"
-        )
+    # Scalar diagnostics on L_n histories (relevant to LLC estimand)
+    diag_L_hmc = scalar_chain_diagnostics(Ln_histories_hmc, name="L")
+    print("HMC diagnostics (L_n histories):")
+    print(f"  ESS(L_n): {diag_L_hmc['ess']:.1f}  R-hat(L_n): {diag_L_hmc['rhat']:.3f}")
 
     # LLC confidence interval from running statistics
     def llc_ci_from_running(L_means, L_vars, L_ns, n, beta, L0, alpha=0.05):
