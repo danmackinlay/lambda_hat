@@ -325,11 +325,10 @@ def init_mlp_params(key, in_dim: int, widths: list[int], out_dim: int, activatio
 def mlp_forward(params, x, activation: str = "relu", skip: bool = False, residual_period: int = 2, layernorm: bool = False):
     """Forward pass with optional residuals and layer norm"""
     act = act_fn(activation)
-    bias = True  # assume bias exists in params
 
     h = x
     for i, lyr in enumerate(params["layers"]):
-        z = h @ lyr["W"].T + (lyr["b"] if bias and lyr["b"] is not None else 0.0)
+        z = h @ lyr["W"].T + (lyr["b"] if lyr["b"] is not None else 0.0)
 
         if layernorm:
             mu = jnp.mean(z, axis=-1, keepdims=True)
@@ -348,7 +347,7 @@ def mlp_forward(params, x, activation: str = "relu", skip: bool = False, residua
             h = h_new
 
     # Output layer
-    y = h @ params["out"]["W"].T + (params["out"]["b"] if bias and params["out"]["b"] is not None else 0.0)
+    y = h @ params["out"]["W"].T + (params["out"]["b"] if params["out"]["b"] is not None else 0.0)
     return y
 
 
@@ -357,10 +356,10 @@ def count_params(params):
     leaves = []
     for lyr in params["layers"]:
         leaves.append(lyr["W"])
-        if params["bias"] and lyr["b"] is not None:
+        if lyr["b"] is not None: 
             leaves.append(lyr["b"])
     leaves.append(params["out"]["W"])
-    if params["bias"] and params["out"]["b"] is not None:
+    if params["out"]["b"] is not None: 
         leaves.append(params["out"]["b"])
     return sum(p.size for p in leaves)
 
@@ -496,41 +495,6 @@ def make_loss_fns(unravel, cfg: Config, X, Y):
 # ----------------------------
 # Sampler factory
 # ----------------------------
-def make_sampler(cfg: Config, logpost, grad_logpost, theta_init):
-    """Create sampler based on config"""
-    if cfg.sampler == "sgld":
-        def sample_sgld(key, data):
-            X, Y = data
-            return run_sgld_online(key, theta_init, grad_logpost, X, Y,
-                                   cfg.n_data, cfg.sgld_step_size, cfg.sgld_steps, cfg.sgld_warmup,
-                                   cfg.sgld_batch_size, cfg.sgld_eval_every, cfg.sgld_thin,
-                                   lambda th: 0.0)  # placeholder for Ln_full64
-        return sample_sgld
-
-    elif cfg.sampler == "hmc":
-        def sample_hmc(key, data):
-            X, Y = data
-            return run_hmc_online_with_adaptation(key, theta_init, logpost,
-                                                   cfg.hmc_num_integration_steps, cfg.hmc_warmup, cfg.hmc_draws,
-                                                   cfg.hmc_thin, cfg.hmc_eval_every,
-                                                   lambda th: 0.0)  # placeholder for Ln_full64
-        return sample_hmc
-
-    elif cfg.sampler == "nuts":
-        # For NUTS we'd use blackjax.nuts, similar to HMC but with automatic step size
-        def sample_nuts(key, data):
-            X, Y = data
-            return run_nuts_online(key, theta_init, logpost,
-                                   cfg.hmc_warmup, cfg.hmc_draws, cfg.hmc_thin, cfg.hmc_eval_every,
-                                   lambda th: 0.0)  # placeholder for Ln_full64
-        return sample_nuts
-
-    else:
-        raise ValueError(f"Unknown sampler: {cfg.sampler}")
-
-
-
-
 # ----------------------------
 # Online mean/variance tracking (Welford)
 # ----------------------------
@@ -585,21 +549,6 @@ def llc_ci_from_histories(Ln_histories, n, beta, L0, alpha=0.05):
 # log pi(w) = - n * beta * L_n(w) - (gamma/2)||w - w0||^2
 # ----------------------------
 # ----------------------------
-# Sampler factory
-# ----------------------------
-def build_sampler(cfg: Config, logdensity):
-    """Factory for different samplers"""
-    if cfg.sampler == "hmc":
-        return blackjax.hmc, dict(num_integration_steps=cfg.hmc_num_integration_steps)
-    elif cfg.sampler == "nuts":
-        return blackjax.nuts, {}
-    elif cfg.sampler == "sgld":
-        return blackjax.sgld, {}
-    else:
-        raise NotImplementedError(f"Sampler {cfg.sampler} not implemented")
-
-
-# ----------------------------
 # Updated log posterior & score factory
 # ----------------------------
 def make_logpost_and_score(loss_full, loss_minibatch, theta0, n, beta, gamma):
@@ -612,11 +561,10 @@ def make_logpost_and_score(loss_full, loss_minibatch, theta0, n, beta, gamma):
     logpost_and_grad = value_and_grad(logpost)
 
     @jit
-    def grad_logpost_minibatch(theta, idx, X, Y):
-        Xb, Yb = X[idx], Y[idx]
+    def grad_logpost_minibatch(theta, minibatch):   # <- accepts (Xb, Yb)
+        Xb, Yb = minibatch
         g_Lb = grad(lambda th: loss_minibatch(th, Xb, Yb))(theta)
-        score = -gamma * (theta - theta0) - beta * n * g_Lb
-        return score
+        return -gamma * (theta - theta0) - beta * n * g_Lb
 
     return logpost_and_grad, grad_logpost_minibatch
 
@@ -630,6 +578,8 @@ def run_sgld_online(key, init_thetas, grad_logpost_minibatch, X, Y, n, step_size
                     Ln_full64, use_tqdm=True, progress_update_every=50, stats: RunStats | None=None):
     chains = init_thetas.shape[0]
     sgld = blackjax.sgld(grad_logpost_minibatch)
+    sgld_step = jax.jit(sgld.step)
+    
     Ln_running = [RunningMeanVar() for _ in range(chains)]
     Ln_history = [[] for _ in range(chains)]  # track Ln evaluations
     stored = []  # thinned positions for diagnostics (kept small)
@@ -639,7 +589,13 @@ def run_sgld_online(key, init_thetas, grad_logpost_minibatch, X, Y, n, step_size
         # Create minibatch from indices
         Xb, Yb = X[idx], Y[idx]
         minibatch = (Xb, Yb)
-        return sgld.step(k, theta, minibatch, step_size)
+        result = sgld_step(k, theta, minibatch, step_size)
+        # Handle both cases: JIT returns (position, info), eager returns just position
+        if isinstance(result, tuple):
+            theta, _ = result
+        else:
+            theta = result
+        return theta
 
     keys = random.split(key, chains)
 
@@ -710,61 +666,70 @@ def run_hmc_online_with_adaptation(key, init_thetas, logpost_and_grad,
                                    Ln_full64, use_tqdm=True, progress_update_every=50, 
                                    stats: RunStats | None = None):
     chains, dim = init_thetas.shape
-
-    def logdensity(theta):
-        val, _ = logpost_and_grad(theta)
+    def logdensity(theta): 
+        val, _ = logpost_and_grad(theta) 
         return val
 
-    def warm_and_sample(key, theta_init):
-        wa = blackjax.window_adaptation(blackjax.hmc, logdensity,
-                                        num_integration_steps=num_integration_steps)
-        (state, params), _ = wa.run(key, theta_init, num_steps=warmup)
+    kept_list, means, vars_, ns, accs, Ln_hist_list = [], [], [], [], [], []
+    for c in range(chains):
+        pbar = tqdm(total=warmup+draws, desc=f"HMC(c{c})", leave=False) if use_tqdm else None
 
-        # ensure diagonal inverse mass matrix (convert dense to diag if needed)
+        t0 = tic()
+        wa = blackjax.window_adaptation(blackjax.hmc, logdensity, num_integration_steps=num_integration_steps)
+        (state, params), _ = wa.run(key, init_thetas[c], num_steps=warmup)
+        if stats:
+            stats.t_hmc_warmup += toc(t0)
+            stats.n_hmc_warmup_leapfrog_grads += warmup * num_integration_steps
+        if pbar: 
+            pbar.update(warmup)
+
         invM = params.get("inverse_mass_matrix", jnp.ones(dim))
-        if invM.ndim == 2:  # dense -> take diagonal
-            invM = jnp.diag(invM)
-        tuned = dict(step_size=params["step_size"], inverse_mass_matrix=invM)
-        step = blackjax.hmc(logdensity, **tuned, num_integration_steps=num_integration_steps).step
+        if invM.ndim == 2: 
+            invM = jnp.diag(invM)        # keep diagonal mass
+        kernel = blackjax.hmc(logdensity, **dict(step_size=params["step_size"], inverse_mass_matrix=invM),
+                              num_integration_steps=num_integration_steps).step
 
-        rm = RunningMeanVar()
-        kept = []
-        accs = []
-        Ln_hist = []  # track Ln evaluations
-
+        rm, kept, acc_chain, Lhist = RunningMeanVar(), [], [], []
+        t1 = tic()
         keys = random.split(key, draws)
+
         @jit
-        def one(state, k):
-            return step(k, state)
+        def one(state, k): 
+            return kernel(k, state)
 
         for t in range(draws):
             state, info = one(state, keys[t])
             if (t % eval_every) == 0:
-                # Always evaluate in float64 for consistency
                 Ln = float(Ln_full64(state.position.astype(jnp.float64)))
-                rm.update(Ln)
-                Ln_hist.append(Ln)
+                rm.update(Ln) 
+                Lhist.append(Ln)
+                if stats: 
+                    stats.n_hmc_full_loss += 1
             if (t % thin) == 0:
                 kept.append(np.array(state.position))
-            accs.append(float(info.acceptance_rate))
+            acc_chain.append(float(info.acceptance_rate))
+            if stats and hasattr(info, "num_integration_steps"):
+                stats.n_hmc_leapfrog_grads += int(info.num_integration_steps)
+            elif stats:
+                stats.n_hmc_leapfrog_grads += num_integration_steps
+            if pbar and (t % progress_update_every == 0 or t == draws-1):
+                pbar.set_postfix_str(f"acc≈{np.mean(acc_chain):.2f}, L̄≈{(rm.value()[0] if rm.n>0 else float('nan')):.4f}")
+                pbar.update(1)
 
-        kept = np.stack(kept, axis=0) if kept else np.empty((0, dim))
-        return kept, rm.value()[0], rm.value()[1], rm.value()[2], np.array(accs), np.asarray(Ln_hist)
+        if stats: 
+            stats.t_hmc_sampling += toc(t1)
+        if pbar: 
+            pbar.close()
 
-    keys = random.split(key, chains)
-    kept_list, means, vars_, ns, accs, Ln_hist_list = [], [], [], [], [], []
-    for c in range(chains):
-        kept, m, v, n, a, hist = warm_and_sample(keys[c], init_thetas[c])
-        kept_list.append(kept)
-        means.append(m)
-        vars_.append(v)
-        ns.append(n)
-        accs.append(a)
-        Ln_hist_list.append(hist)
+        kept_list.append(np.stack(kept, 0) if kept else np.empty((0, dim)))
+        m, v, n = rm.value()
+        means.append(m) 
+        vars_.append(v) 
+        ns.append(n) 
+        accs.append(np.array(acc_chain)) 
+        Ln_hist_list.append(np.asarray(Lhist))
 
-    # pack thinned samples - avoid NaN padding
     samples_thin = stack_thinned(kept_list)
-
     return samples_thin, np.array(means), np.array(vars_), np.array(ns), accs, Ln_hist_list
 
 
@@ -825,12 +790,16 @@ def main(cfg: Config = CFG):
 
     # Initialize student network parameters
     key, subkey = random.split(key)
-    widths = cfg.widths if cfg.widths else [cfg.hidden] * cfg.depth
+    widths = cfg.widths or infer_widths(cfg.in_dim, cfg.out_dim, cfg.depth, cfg.target_params, fallback_width=cfg.hidden)
     w0_pytree = init_mlp_params(subkey, cfg.in_dim, widths, cfg.out_dim, cfg.activation, cfg.bias, cfg.init)
+    
+    stats.t_build = toc(t0)
 
     # Train to empirical minimizer (ERM) - center the local prior there
     print("Training to empirical minimizer...")
+    t1 = tic()
     theta_star_f64, unravel_star_f64 = train_erm(w0_pytree, cfg, X.astype(jnp.float64), Y.astype(jnp.float64))
+    stats.t_train = toc(t1)
     theta_star_f32 = theta_star_f64.astype(jnp.float32)
 
     # Center the local prior at θ⋆, not at the teacher
@@ -844,17 +813,8 @@ def main(cfg: Config = CFG):
     dim = theta0_f32.size
     print(f"Parameter dimension: {dim:,d}")
 
-    beta = cfg.beta0 / jnp.log(cfg.n_data)
-    print(f"beta = {float(beta):.6g}  (with n={cfg.n_data})")
-
-    # Compute interpretable gamma from prior radius
-    if cfg.gamma is None:
-        # For typical ||w-w0|| ≈ r in d dims, set τ = r/√d ⇒ γ = d/r²
-        gamma = dim / (cfg.prior_radius ** 2)
-        print(f"gamma = {gamma:.6g} (from prior_radius={cfg.prior_radius}, dim={dim})")
-    else:
-        gamma = cfg.gamma
-        print(f"gamma = {gamma:.6g} (explicit)")
+    beta, gamma = compute_beta_gamma(cfg, dim)
+    print(f"beta={beta:.6g} gamma={gamma:.6g}")
 
     # Create loss functions for each dtype
     loss_full_f32, loss_minibatch_f32 = make_loss_fns(unravel_f32, cfg, X_f32, Y_f32)
@@ -1111,7 +1071,7 @@ def run_experiment(cfg: Config, verbose=True):
 
     # Initialize network
     key, subkey = random.split(key)
-    widths = cfg.widths if cfg.widths else [cfg.hidden] * cfg.depth
+    widths = cfg.widths or infer_widths(cfg.in_dim, cfg.out_dim, cfg.depth, cfg.target_params, fallback_width=cfg.hidden)
     w0 = init_mlp_params(subkey, cfg.in_dim, widths, cfg.out_dim, cfg.activation, cfg.bias, cfg.init)
 
     # Train ERM
