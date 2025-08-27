@@ -6,6 +6,7 @@ os.environ.setdefault("JAX_ENABLE_X64", "true")  # HMC benefits from float64
 import time
 from dataclasses import dataclass
 from functools import partial
+from typing import Literal, Optional
 
 import arviz as az
 import jax
@@ -23,21 +24,57 @@ import optax
 # ----------------------------
 @dataclass
 class Config:
-    # Model sizing
+    # Model architecture
     in_dim: int = 32
     out_dim: int = 1
-    target_params: int | None = 10_000   # if set, overrides 'hidden'
-    hidden: int = 300                    # used only if target_params=None
+    depth: int = 1                    # number of hidden layers
+    widths: Optional[list[int]] = None  # per-layer widths; if None, auto-infer
+    activation: Literal["relu","tanh","gelu","identity"] = "relu"
+    bias: bool = True
+    skip_connections: bool = False
+    residual_period: int = 2          # every k layers add skip if enabled
+    layernorm: bool = False           # (default False; can destabilize HMC)
+    init: Literal["he","xavier","lecun","orthogonal"] = "he"
 
-    # Data / posterior temperature
+    # Size control
+    target_params: Optional[int] = 10_000  # if provided, fix total d and infer widths
+    # keep old 'hidden' for backward compatibility
+    hidden: int = 300                    # used only if target_params=None and widths=None
+
+    # Data
     n_data: int = 20_000
-    noise_std: float = 0.10
+    x_dist: Literal["gauss_iso","gauss_aniso","mixture","lowdim_manifold","heavy_tail"] = "gauss_iso"
+    cov_decay: float = 0.95           # for anisotropy: eigvals ~ cov_decay**i
+    mixture_k: int = 4
+    mixture_spread: float = 2.0
+    x_dim_latent: int = 2             # for low-dim manifold
+    noise_model: Literal["gauss","hetero","student_t","outliers"] = "gauss"
+    noise_scale: float = 0.1
+    hetero_scale: float = 0.1
+    student_df: float = 4.0
+    outlier_frac: float = 0.05
+    outlier_scale: float = 2.0
+
+    # Teacher (can differ from student)
+    teacher_depth: Optional[int] = None
+    teacher_widths: Optional[list[int]] = None
+    teacher_activation: Optional[str] = None
+    teacher_dropout_rate: float = 0.0 # stochastic teacher if >0 (only during data gen)
+
+    # Loss / likelihood
+    loss: Literal["mse","t_regression"] = "mse"
+
+    # Local posterior (tempering + prior)
+    beta_mode: Literal["1_over_log_n","fixed"] = "1_over_log_n"
     beta0: float = 1.0
-    prior_radius: float = 1.0  # interpretable prior: typical ||w-w0|| ≈ r
-    gamma: float | None = None  # computed from prior_radius if None
+    prior_radius: Optional[float] = None  # if set, gamma = d / prior_radius**2
+    gamma: float = 1.0                    # used only if prior_radius None
+
+    # Sampling
+    sampler: Literal["sgld","hmc","nuts"] = "sgld"
+    chains: int = 4
 
     # SGLD
-    sgld_chains: int = 4
     sgld_steps: int = 4_000
     sgld_warmup: int = 1_000
     sgld_batch_size: int = 256
@@ -47,13 +84,19 @@ class Config:
     sgld_dtype: str = "float32"      # reduce memory
 
     # HMC
-    hmc_chains: int = 4
     hmc_draws: int = 1_000
     hmc_warmup: int = 1_000
     hmc_num_integration_steps: int = 10
     hmc_thin: int = 5                # store every k-th draw for diagnostics
     hmc_eval_every: int = 1          # compute L_n(w) every k draws (usually 1 for HMC)
     hmc_dtype: str = "float64"
+
+    # NUTS
+    nuts_draws: int = 1_000
+    nuts_warmup: int = 1_000
+    nuts_thin: int = 5
+    nuts_eval_every: int = 1
+    nuts_dtype: str = "float64"
 
     # Misc
     seed: int = 42
@@ -69,15 +112,14 @@ TEST_CFG = Config(
     # Small data
     n_data=100,
 
-    # Minimal SGLD
-    sgld_chains=2,
+    # Minimal sampling
+    chains=2,
     sgld_steps=100,
     sgld_warmup=20,
     sgld_eval_every=5,
     sgld_thin=10,
 
     # Minimal HMC
-    hmc_chains=2,
     hmc_draws=50,
     hmc_warmup=20,
     hmc_thin=5,
@@ -98,6 +140,31 @@ def infer_hidden(in_dim, out_dim, target_params):
     return hidden
 
 
+def infer_widths(in_dim: int, out_dim: int, depth: int, target_params: Optional[int], fallback_width: int = 128) -> list[int]:
+    """Infer widths to hit target_params, or use fallback"""
+    if target_params is None:
+        return [fallback_width] * depth
+    # For simplicity, use constant width h and solve approximately:
+    # P(h) = (in_dim+1)h + (L-1)(h+1)h + (h+1)out_dim ≈ target_params
+    L = depth
+    a = (L - 1)  # coefficient of h^2
+    b = (in_dim + 1) + (L - 1) + out_dim + 1  # coefficient of h
+    if a == 0:
+        h = max(1, (target_params - out_dim) // (in_dim + 1))
+    else:
+        disc = b*b + 4*a*target_params
+        h = int((-b + jnp.sqrt(disc)) / (2*a))
+        h = int(max(1, h))
+    return [h] * L
+
+
+def compute_beta_gamma(cfg: Config, d: int) -> tuple[float, float]:
+    """Compute beta and gamma from config and dimension"""
+    beta = cfg.beta0 / jnp.log(cfg.n_data) if cfg.beta_mode == "1_over_log_n" else cfg.beta0
+    gamma = (d / (cfg.prior_radius**2)) if (cfg.prior_radius is not None) else cfg.gamma
+    return float(beta), float(gamma)
+
+
 # ----------------------------
 # Dtype helper
 # ----------------------------
@@ -108,6 +175,27 @@ def as_dtype(x, dtype_str):  # 'float32' or 'float64'
 # ----------------------------
 # ERM training to find empirical minimizer
 # ----------------------------
+def train_erm(w_init_pytree, cfg: Config, X, Y, steps=2000, lr=1e-2):
+    """Train to empirical risk minimizer using new flexible architecture"""
+    theta, unravel = ravel_pytree(w_init_pytree)
+    loss_full, _ = make_loss_fns(unravel, cfg, X, Y)
+    opt = optax.adam(lr)
+    opt_state = opt.init(theta)
+
+    @jit
+    def step(theta, opt_state):
+        loss, g = value_and_grad(loss_full)(theta)
+        updates, opt_state = opt.update(g, opt_state, theta)
+        theta = optax.apply_updates(theta, updates)
+        return theta, opt_state, loss
+
+    for _ in range(steps):
+        theta, opt_state, _ = step(theta, opt_state)
+
+    return theta, unravel  # θ⋆, unravel tied to θ⋆
+
+
+# Legacy ERM training for backward compatibility
 def train_to_erm(w_init, X, Y, steps=2000, lr=1e-2):
     theta, unravel = ravel_pytree(w_init)
     opt = optax.adam(lr); opt_state = opt.init(theta)
@@ -123,52 +211,266 @@ def train_to_erm(w_init, X, Y, steps=2000, lr=1e-2):
 
 
 # ----------------------------
-# Small MLP (~10k params)
+# Flexible MLP with arbitrary depth and activations
 # ----------------------------
-def init_mlp_params(key, in_dim, hidden, out_dim):
-    k1, k2 = random.split(key)
-    W1 = random.normal(k1, (hidden, in_dim)) / jnp.sqrt(in_dim)
-    b1 = jnp.zeros((hidden,))
-    W2 = random.normal(k2, (out_dim, hidden)) / jnp.sqrt(hidden)
-    b2 = jnp.zeros((out_dim,))
-    params = {"W1": W1, "b1": b1, "W2": W2, "b2": b2}
-    return params
+def act_fn(name: str):
+    """Activation function factory"""
+    activations = {
+        "relu": jax.nn.relu,
+        "tanh": jnp.tanh,
+        "gelu": jax.nn.gelu,
+        "identity": (lambda x: x)
+    }
+    return activations[name]
 
 
-def mlp_forward(params, x):
-    h = jnp.maximum(0.0, x @ params["W1"].T + params["b1"])  # ReLU
-    y = h @ params["W2"].T + params["b2"]
+def fan_in_init(key, shape, scheme: str, fan_in: int):
+    """Weight initialization schemes"""
+    if scheme == "he":
+        scale = jnp.sqrt(2.0 / fan_in)
+    elif scheme == "xavier":
+        scale = jnp.sqrt(1.0 / fan_in)
+    elif scheme == "lecun":
+        scale = jnp.sqrt(1.0 / fan_in)
+    elif scheme == "orthogonal":
+        # Simple orthogonal init fallback
+        q, _ = jnp.linalg.qr(random.normal(key, shape))
+        return q[:shape[0], :shape[1]]
+    else:
+        scale = 1.0
+    return random.normal(key, shape) * scale
+
+
+def init_mlp_params(key, in_dim: int, widths: list[int], out_dim: int, activation: str, bias: bool, init: str):
+    """Initialize MLP with arbitrary depth"""
+    keys = random.split(key, len(widths) + 1)
+    layers = []
+    prev = in_dim
+
+    for i, h in enumerate(widths):
+        W = fan_in_init(keys[i], (h, prev), init, prev)
+        b = jnp.zeros((h,)) if bias else None
+        layers.append({"W": W, "b": b})
+        prev = h
+
+    # Output layer (linear)
+    W = fan_in_init(keys[-1], (out_dim, prev), "xavier", prev)
+    b = jnp.zeros((out_dim,)) if bias else None
+    out_layer = {"W": W, "b": b}
+
+    return {
+        "layers": layers,
+        "out": out_layer
+    }
+
+
+def mlp_forward(params, x, activation: str = "relu", skip: bool = False, residual_period: int = 2, layernorm: bool = False):
+    """Forward pass with optional residuals and layer norm"""
+    act = act_fn(activation)
+    bias = True  # assume bias exists in params
+
+    h = x
+    for i, lyr in enumerate(params["layers"]):
+        z = h @ lyr["W"].T + (lyr["b"] if bias and lyr["b"] is not None else 0.0)
+
+        if layernorm:
+            mu = jnp.mean(z, axis=-1, keepdims=True)
+            sig = jnp.std(z, axis=-1, keepdims=True) + 1e-6
+            z = (z - mu) / sig
+
+        h_new = act(z)
+
+        if skip and (i % residual_period == residual_period - 1):
+            # Project if dimensions differ
+            if h.shape[-1] != h_new.shape[-1]:
+                P = jnp.eye(h_new.shape[-1], h.shape[-1])[:h_new.shape[-1], :h.shape[-1]]
+                h = h @ P.T
+            h = h + h_new
+        else:
+            h = h_new
+
+    # Output layer
+    y = h @ params["out"]["W"].T + (params["out"]["b"] if bias and params["out"]["b"] is not None else 0.0)
     return y
 
 
 def count_params(params):
-    return sum(p.size for p in jax.tree_util.tree_leaves(params))
+    """Count total parameters in MLP"""
+    leaves = []
+    for lyr in params["layers"]:
+        leaves.append(lyr["W"])
+        if params["bias"] and lyr["b"] is not None:
+            leaves.append(lyr["b"])
+    leaves.append(params["out"]["W"])
+    if params["bias"] and params["out"]["b"] is not None:
+        leaves.append(params["out"]["b"])
+    return sum(p.size for p in leaves)
 
 
 # ----------------------------
-# Dataset (teacher-student)
+# Flexible data generation
 # ----------------------------
-def make_teacher_and_data(key, n, in_dim, hidden, out_dim, noise_std):
-    k_init, k_x, k_eps = random.split(key, 3)
-    w0_pytree = init_mlp_params(k_init, in_dim, hidden, out_dim)
-    X = random.normal(k_x, (n, in_dim))
-    y_clean = mlp_forward(w0_pytree, X)
-    eps = noise_std * random.normal(k_eps, y_clean.shape)
-    Y = y_clean + eps
-    return w0_pytree, X, Y
+def sample_X(key, cfg: Config, n: int, in_dim: int):
+    """Sample inputs according to various distributions"""
+    if cfg.x_dist == "gauss_iso":
+        return random.normal(key, (n, in_dim))
+    elif cfg.x_dist == "gauss_aniso":
+        vals = jnp.array([cfg.cov_decay**i for i in range(in_dim)])
+        A = jnp.diag(jnp.sqrt(vals))
+        Z = random.normal(key, (n, in_dim))
+        return Z @ A.T
+    elif cfg.x_dist == "mixture":
+        keys = random.split(key, 2)
+        centers = random.normal(keys[0], (cfg.mixture_k, in_dim))
+        centers = cfg.mixture_spread * centers / (1e-6 + jnp.linalg.norm(centers, axis=1, keepdims=True))
+        comp = random.randint(keys[1], (n,), 0, cfg.mixture_k)
+        eps = random.normal(key, (n, in_dim))
+        return centers[comp] + eps
+    elif cfg.x_dist == "lowdim_manifold":
+        kz, ka = random.split(key)
+        Z = random.normal(kz, (n, cfg.x_dim_latent))
+        A = random.normal(ka, (cfg.x_dim_latent, in_dim))
+        X_low = jnp.tanh(Z @ A)  # non-linear embedding
+        return X_low
+    elif cfg.x_dist == "heavy_tail":
+        # Student-t via scaled normal / sqrt(gamma)
+        k1, k2 = random.split(key)
+        g = random.gamma(k1, cfg.student_df/2, (n,1)) / (cfg.student_df/2)
+        Z = random.normal(k2, (n, in_dim)) / jnp.sqrt(g)
+        return Z
+    else:
+        raise ValueError(f"Unknown x_dist: {cfg.x_dist}")
 
 
-# Empirical MSE (Eq. (3.7) style; mean over data)
-def mse_loss_full(theta, unravel_fn, X, Y):
-    params = unravel_fn(theta)
-    pred = mlp_forward(params, X)
-    return jnp.mean((pred - Y) ** 2)
+def build_teacher(key, cfg: Config):
+    """Build teacher network (can differ from student)"""
+    t_depth = cfg.teacher_depth or cfg.depth
+    t_widths = cfg.teacher_widths
+    if t_widths is None:
+        t_widths = infer_widths(cfg.in_dim, cfg.out_dim, t_depth, cfg.target_params, cfg.hidden)
+    t_act = cfg.teacher_activation or cfg.activation
+
+    params = init_mlp_params(key, cfg.in_dim, t_widths, cfg.out_dim, t_act, bias=True, init=cfg.init)
+
+    def forward(X):
+        Y = mlp_forward(params, X, t_act, skip=False, residual_period=cfg.residual_period, layernorm=False)
+        return Y
+
+    return params, forward
 
 
-def mse_loss_minibatch(theta, unravel_fn, Xb, Yb):
-    params = unravel_fn(theta)
-    pred = mlp_forward(params, Xb)
-    return jnp.mean((pred - Yb) ** 2)
+def add_noise(key, y_clean, cfg: Config, X):
+    """Add noise according to various models"""
+    if cfg.noise_model == "gauss":
+        return y_clean + cfg.noise_scale * random.normal(key, y_clean.shape)
+    elif cfg.noise_model == "hetero":
+        scale = cfg.noise_scale * (1.0 + cfg.hetero_scale * jnp.linalg.norm(X, axis=1, keepdims=True))
+        return y_clean + scale * random.normal(key, y_clean.shape)
+    elif cfg.noise_model == "student_t":
+        # Draw t noise via normal / sqrt(gamma)
+        k1, k2 = random.split(key)
+        g = random.gamma(k1, cfg.student_df/2, y_clean.shape) / (cfg.student_df/2)
+        return y_clean + cfg.noise_scale * random.normal(k2, y_clean.shape) / jnp.sqrt(g)
+    elif cfg.noise_model == "outliers":
+        k1, k2, k3 = random.split(key, 3)
+        base = cfg.noise_scale * random.normal(k1, y_clean.shape)
+        mask = random.uniform(k2, y_clean.shape) < cfg.outlier_frac
+        outl = cfg.outlier_scale * random.normal(k3, y_clean.shape)
+        return y_clean + jnp.where(mask, outl, base)
+    else:
+        raise ValueError(f"Unknown noise_model: {cfg.noise_model}")
+
+
+def make_dataset(key, cfg: Config):
+    """End-to-end data generation"""
+    kx, kt, kn = random.split(key, 3)
+    X = sample_X(kx, cfg, cfg.n_data, cfg.in_dim)
+    teacher_params, teacher_forward = build_teacher(kt, cfg)
+    y_clean = teacher_forward(X)
+
+    if cfg.teacher_dropout_rate > 0.0:
+        kd = random.split(kt, 1)[0]
+        mask = (random.uniform(kd, y_clean.shape) > cfg.teacher_dropout_rate).astype(y_clean.dtype)
+        y_clean = y_clean * mask
+
+    Y = add_noise(kn, y_clean, cfg, X)
+    return X, Y, teacher_params, teacher_forward
+
+
+# ----------------------------
+# Loss / likelihood factory
+# ----------------------------
+def make_loss_fns(unravel, cfg: Config, X, Y):
+    """Create loss functions for both full data and minibatch"""
+    if cfg.loss == "mse":
+        def full(theta):
+            params = unravel(theta)
+            pred = mlp_forward(params, X, cfg.activation, cfg.skip_connections, cfg.residual_period, cfg.layernorm)
+            return jnp.mean((pred - Y)**2)
+
+        def minibatch(theta, Xb, Yb):
+            params = unravel(theta)
+            pred = mlp_forward(params, Xb, cfg.activation, cfg.skip_connections, cfg.residual_period, cfg.layernorm)
+            return jnp.mean((pred - Yb)**2)
+
+    elif cfg.loss == "t_regression":
+        s2 = cfg.noise_scale**2
+        nu = cfg.student_df
+
+        def neglogt(resid):
+            return 0.5*(nu+1)*jnp.log1p((resid**2)/(nu*s2))
+
+        def full(theta):
+            params = unravel(theta)
+            pred = mlp_forward(params, X, cfg.activation, cfg.skip_connections, cfg.residual_period, cfg.layernorm)
+            return jnp.mean(neglogt(pred - Y))
+
+        def minibatch(theta, Xb, Yb):
+            params = unravel(theta)
+            pred = mlp_forward(params, Xb, cfg.activation, cfg.skip_connections, cfg.residual_period, cfg.layernorm)
+            return jnp.mean(neglogt(pred - Yb))
+    else:
+        raise ValueError(f"Unknown loss: {cfg.loss}")
+
+    return full, minibatch
+
+
+# ----------------------------
+# Sampler factory
+# ----------------------------
+def make_sampler(cfg: Config, logpost, grad_logpost, theta_init):
+    """Create sampler based on config"""
+    if cfg.sampler == "sgld":
+        def sample_sgld(key, data):
+            X, Y = data
+            return run_sgld_online(key, theta_init, grad_logpost, X, Y,
+                                   cfg.n_data, cfg.sgld_step_size, cfg.sgld_steps, cfg.sgld_warmup,
+                                   cfg.sgld_batch_size, cfg.sgld_eval_every, cfg.sgld_thin, 
+                                   lambda th: 0.0)  # placeholder for Ln_full64
+        return sample_sgld
+
+    elif cfg.sampler == "hmc":
+        def sample_hmc(key, data):
+            X, Y = data
+            return run_hmc_online_with_adaptation(key, theta_init, logpost,
+                                                   cfg.hmc_num_integration_steps, cfg.hmc_warmup, cfg.hmc_draws,
+                                                   cfg.hmc_thin, cfg.hmc_eval_every,
+                                                   lambda th: 0.0)  # placeholder for Ln_full64
+        return sample_hmc
+
+    elif cfg.sampler == "nuts":
+        # For NUTS we'd use blackjax.nuts, similar to HMC but with automatic step size
+        def sample_nuts(key, data):
+            X, Y = data
+            return run_nuts_online(key, theta_init, logpost,
+                                   cfg.hmc_warmup, cfg.hmc_draws, cfg.hmc_thin, cfg.hmc_eval_every,
+                                   lambda th: 0.0)  # placeholder for Ln_full64
+        return sample_nuts
+
+    else:
+        raise ValueError(f"Unknown sampler: {cfg.sampler}")
+
+
 
 
 # ----------------------------
@@ -224,33 +526,48 @@ def llc_ci_from_histories(Ln_histories, n, beta, L0, alpha=0.05):
 # Log posterior & score (tempered + localized)
 # log pi(w) = - n * beta * L_n(w) - (gamma/2)||w - w0||^2
 # ----------------------------
-def make_logpost_and_score(X, Y, theta0, unravel, n, beta, gamma):
-    # Full-batch log posterior and grad (for HMC)
+# ----------------------------
+# Sampler factory
+# ----------------------------
+def build_sampler(cfg: Config, logdensity):
+    """Factory for different samplers"""
+    if cfg.sampler == "hmc":
+        return blackjax.hmc, dict(num_integration_steps=cfg.hmc_num_integration_steps)
+    elif cfg.sampler == "nuts":
+        return blackjax.nuts, {}
+    elif cfg.sampler == "sgld":
+        return blackjax.sgld, {}
+    else:
+        raise NotImplementedError(f"Sampler {cfg.sampler} not implemented")
+
+
+# ----------------------------
+# Updated log posterior & score factory
+# ----------------------------
+def make_logpost_and_score(loss_full, loss_minibatch, theta0, n, beta, gamma):
+    """Create log posterior using flexible loss functions"""
     def logpost(theta):
-        Ln = mse_loss_full(theta, unravel, X, Y)
+        Ln = loss_full(theta)
         lp = -0.5 * gamma * jnp.sum((theta - theta0) ** 2)
         return lp - n * beta * Ln
 
     logpost_and_grad = value_and_grad(logpost)
 
-    # SGLD gradient estimator (mini-batch)
     @jit
-    def grad_logpost_minibatch(theta, batch):
-        # 'batch' carries indices
-        idx = batch
+    def grad_logpost_minibatch(theta, idx, X, Y):
         Xb, Yb = X[idx], Y[idx]
-        # grad of mean loss on batch, then scale by n to estimate grad of n * L_n
-        g_Lb = grad(lambda th: mse_loss_minibatch(th, unravel, Xb, Yb))(theta)
+        g_Lb = grad(lambda th: loss_minibatch(th, Xb, Yb))(theta)
         score = -gamma * (theta - theta0) - beta * n * g_Lb
         return score
 
     return logpost_and_grad, grad_logpost_minibatch
 
 
+
 # ----------------------------
 # SGLD chains (BlackJAX) - Online memory-efficient version
 # ----------------------------
-def run_sgld_online(key, init_thetas, grad_logpost_minibatch, n, step_size,
+def run_sgld_online(key, init_thetas, grad_logpost_minibatch, X, Y, n, step_size,
                     num_steps, warmup, batch_size, eval_every, thin,
                     Ln_full64):
     chains = init_thetas.shape[0]
@@ -261,7 +578,7 @@ def run_sgld_online(key, init_thetas, grad_logpost_minibatch, n, step_size,
 
     @jit
     def one_step(theta, k, idx):
-        return sgld.step(k, theta, idx, step_size)
+        return sgld.step(k, theta, idx, X, Y, step_size)
 
     keys = random.split(key, chains)
     for c in range(chains):
@@ -362,6 +679,34 @@ def run_hmc_online_with_adaptation(key, init_thetas, logpost_and_grad,
     return samples_thin, np.array(means), np.array(vars_), np.array(ns), accs, Ln_hist_list
 
 
+# ----------------------------
+# NUTS chains (BlackJAX) - Online memory-efficient version
+# ----------------------------
+def run_nuts_online(key, init_thetas, logpost_and_grad, warmup, draws, thin, eval_every, Ln_full64):
+    """NUTS with automatic step size tuning - INCOMPLETE IMPLEMENTATION"""
+    # TODO: Fix BlackJAX API usage - current implementation has issues with:
+    # 1. wa.run() parameter count (expecting 2 vs 3 arguments) 
+    # 2. Return value unpacking from window adaptation
+    # 3. Proper NUTS state handling and iteration
+    raise NotImplementedError(
+        "NUTS sampler implementation needs fixing. "
+        "BlackJAX API usage is incorrect. Use 'sgld' or 'hmc' samplers for now."
+    )
+    
+    # Incomplete reference implementation below:
+    # chains, dim = init_thetas.shape
+    # def logdensity(theta):
+    #     val, _ = logpost_and_grad(theta)
+    #     return val
+    # 
+    # def warm_and_sample(key, theta_init):
+    #     wa = blackjax.window_adaptation(blackjax.nuts, logdensity)
+    #     (state, params), _ = wa.run(key, theta_init)  # API issue here
+    #     nuts = blackjax.nuts(logdensity, **params)
+    #     # ... rest of sampling logic
+    #     return states
+
+
 
 def arviz_from_samples(samples, name="theta"):
     """Build a light InferenceData to run ESS/Rhat, without printing 10k parameters."""
@@ -384,13 +729,16 @@ def main(cfg: Config = CFG):
     hid_from_target = infer_hidden(cfg.in_dim, cfg.out_dim, cfg.target_params)
     hidden = hid_from_target if hid_from_target is not None else cfg.hidden
 
-    w0_pytree, X, Y = make_teacher_and_data(
-        key, cfg.n_data, cfg.in_dim, hidden, cfg.out_dim, cfg.noise_std
-    )
+    X, Y, teacher_params, teacher_forward = make_dataset(key, cfg)
+
+    # Initialize student network parameters
+    key, subkey = random.split(key)
+    widths = cfg.widths if cfg.widths else [cfg.hidden] * cfg.depth
+    w0_pytree = init_mlp_params(subkey, cfg.in_dim, widths, cfg.out_dim, cfg.activation, cfg.bias, cfg.init)
 
     # Train to empirical minimizer (ERM) - center the local prior there
     print("Training to empirical minimizer...")
-    theta_star_f64, unravel_star_f64 = train_to_erm(w0_pytree, X.astype(jnp.float64), Y.astype(jnp.float64))
+    theta_star_f64, unravel_star_f64 = train_erm(w0_pytree, cfg, X.astype(jnp.float64), Y.astype(jnp.float64))
     theta_star_f32 = theta_star_f64.astype(jnp.float32)
 
     # Center the local prior at θ⋆, not at the teacher
@@ -416,31 +764,36 @@ def main(cfg: Config = CFG):
         gamma = cfg.gamma
         print(f"gamma = {gamma:.6g} (explicit)")
 
+    # Create loss functions for each dtype
+    loss_full_f32, loss_minibatch_f32 = make_loss_fns(unravel_f32, cfg, X_f32, Y_f32)
+    loss_full_f64, loss_minibatch_f64 = make_loss_fns(unravel_f64, cfg, X_f64, Y_f64)
+
     # log posterior & gradient factories for each dtype
     logpost_and_grad_f32, grad_logpost_minibatch_f32 = make_logpost_and_score(
-        X_f32, Y_f32, theta0_f32, unravel_f32, cfg.n_data, beta, gamma
+        loss_full_f32, loss_minibatch_f32, theta0_f32, cfg.n_data, beta, gamma
     )
     logpost_and_grad_f64, grad_logpost_minibatch_f64 = make_logpost_and_score(
-        X_f64, Y_f64, theta0_f64, unravel_f64, cfg.n_data, beta, gamma
+        loss_full_f64, loss_minibatch_f64, theta0_f64, cfg.n_data, beta, gamma
     )
 
     # Recompute L0 at empirical minimizer (do this in float64 for both samplers)
-    L0 = float(mse_loss_full(theta0_f64, unravel_f64, X.astype(jnp.float64), Y.astype(jnp.float64)))
+    L0 = float(loss_full_f64(theta0_f64))
     print(f"L0 at empirical minimizer: {L0:.6f}")
 
-    # Create unified float64 loss evaluator for LLC computation
-    Ln_full64 = jit(lambda th64: mse_loss_full(th64, unravel_f64, X_f64, Y_f64))
+    # JIT compile the loss evaluator for LLC computation
+    Ln_full64 = jit(loss_full_f64)
 
     # ===== SGLD (Online) =====
     print("\n=== SGLD (BlackJAX, online) ===")
     k_sgld = random.split(key, 1)[0]
     # simple overdispersed inits around w0
-    init_thetas_sgld = theta0_f32 + 0.01 * random.normal(k_sgld, (cfg.sgld_chains, dim)).astype(jnp.float32)
+    init_thetas_sgld = theta0_f32 + 0.01 * random.normal(k_sgld, (cfg.chains, dim)).astype(jnp.float32)
 
     sgld_samples_thin, sgld_Es, sgld_Vars, sgld_Ns, Ln_histories_sgld = run_sgld_online(
         k_sgld,
         init_thetas_sgld,
         grad_logpost_minibatch_f32,
+        X_f32, Y_f32,
         cfg.n_data,
         cfg.sgld_step_size,
         cfg.sgld_steps,
@@ -464,18 +817,18 @@ def main(cfg: Config = CFG):
         # rhat returns a Dataset with variables
         rhat_sgld = az.rhat(idata_sgld, var_names=["theta"])
         print("SGLD diagnostics (thinned samples):")
-        # Access the theta variable from the Dataset, then get its values
+        # Access the theta variable from the xarray.Dataset
         print(
-            f"  ESS bulk (median over dims): {np.nanmedian(ess_sgld.theta.values):.1f}"
+            f"  ESS bulk (median over dims): {np.nanmedian(ess_sgld.data_vars['theta'].values):.1f}"
         )
         print(
-            f"  R-hat (max over dims):        {np.nanmax(rhat_sgld.theta.values):.3f}"
+            f"  R-hat (max over dims):        {np.nanmax(rhat_sgld.data_vars['theta'].values):.3f}"
         )
 
     # ===== HMC (Online) =====
     print("\n=== HMC (BlackJAX, online) ===")
     k_hmc = random.fold_in(key, 123)
-    init_thetas_hmc = theta0_f64 + 0.01 * random.normal(k_hmc, (cfg.hmc_chains, dim))
+    init_thetas_hmc = theta0_f64 + 0.01 * random.normal(k_hmc, (cfg.chains, dim))
 
     hmc_samples_thin, hmc_Es, hmc_Vars, hmc_Ns, accs_hmc, Ln_histories_hmc = run_hmc_online_with_adaptation(
         k_hmc,
@@ -505,10 +858,10 @@ def main(cfg: Config = CFG):
         # rhat returns a Dataset with variables
         rhat_hmc = az.rhat(idata_hmc, var_names=["theta"])
         print("HMC diagnostics (thinned samples):")
-        # Access the theta variable from the Dataset, then get its values
-        print(f"  ESS bulk (median over dims): {np.nanmedian(ess_hmc.theta.values):.1f}")
+        # Access the theta variable from the xarray.Dataset
+        print(f"  ESS bulk (median over dims): {np.nanmedian(ess_hmc.data_vars['theta'].values):.1f}")
         print(
-            f"  R-hat (max over dims):        {np.nanmax(rhat_hmc.theta.values):.3f}"
+            f"  R-hat (max over dims):        {np.nanmax(rhat_hmc.data_vars['theta'].values):.3f}"
         )
 
     # LLC confidence interval from running statistics
@@ -525,6 +878,155 @@ def main(cfg: Config = CFG):
     print(f"\nDone in {time.time() - t0:.1f}s.")
 
 
+# ----------------------------
+# Experiment runner for parameter sweeps
+# ----------------------------
+def sweep_space():
+    """Define experiment sweep space"""
+    return {
+        'base': Config(
+            in_dim=32, out_dim=1, n_data=5000,
+            sgld_steps=2000, sgld_warmup=500,
+            hmc_draws=500, hmc_warmup=200
+        ),
+        'sweeps': [
+            # Architecture sweeps
+            {'name': 'depth', 'param': 'depth', 'values': [1, 2, 3, 4]},
+            {'name': 'width', 'param': 'hidden', 'values': [50, 100, 200, 400]},
+            {'name': 'activation', 'param': 'activation', 'values': ['relu', 'tanh', 'gelu']},
+            
+            # Data sweeps  
+            {'name': 'x_dist', 'param': 'x_dist', 'values': ['gauss_iso', 'gauss_aniso', 'mixture', 'lowdim_manifold']},
+            {'name': 'noise', 'param': 'noise_model', 'values': ['gauss', 'hetero', 'student_t']},
+            
+            # Loss sweeps
+            {'name': 'loss', 'param': 'loss', 'values': ['mse', 't_regression']},
+        ]
+    }
+
+
+def run_sweep(sweep_config, n_seeds=3):
+    """Run experiment sweep"""
+    import pandas as pd
+    from dataclasses import replace
+    
+    base = sweep_config['base']
+    results = []
+    
+    for sweep in sweep_config['sweeps']:
+        name = sweep['name']
+        param = sweep['param']
+        values = sweep['values']
+        
+        print(f"\n=== Sweeping {name} ===")
+        for val in values:
+            print(f"\n{param} = {val}")
+            
+            llc_sgld_seeds = []
+            llc_hmc_seeds = []
+            
+            for seed in range(n_seeds):
+                # Create config with swept parameter
+                cfg = replace(base, **{param: val, 'seed': seed})
+                
+                # Run experiment
+                try:
+                    llc_sgld, llc_hmc = run_experiment(cfg, verbose=False)
+                    llc_sgld_seeds.append(llc_sgld)
+                    llc_hmc_seeds.append(llc_hmc)
+                except Exception as e:
+                    print(f"  Seed {seed} failed: {e}")
+                    continue
+            
+            if llc_sgld_seeds:
+                result = {
+                    'sweep': name,
+                    'param': param,
+                    'value': val,
+                    'llc_sgld_mean': np.mean(llc_sgld_seeds),
+                    'llc_sgld_std': np.std(llc_sgld_seeds),
+                    'llc_hmc_mean': np.mean(llc_hmc_seeds),
+                    'llc_hmc_std': np.std(llc_hmc_seeds),
+                    'n_seeds': len(llc_sgld_seeds)
+                }
+                results.append(result)
+                print(f"  LLC: SGLD={result['llc_sgld_mean']:.3f}±{result['llc_sgld_std']:.3f}, "
+                      f"HMC={result['llc_hmc_mean']:.3f}±{result['llc_hmc_std']:.3f}")
+    
+    return pd.DataFrame(results)
+
+
+def run_experiment(cfg: Config, verbose=True):
+    """Run single experiment and return LLCs"""
+    key = random.PRNGKey(cfg.seed)
+    
+    # Generate data
+    X, Y, _, _ = make_dataset(key, cfg)
+    
+    # Initialize network
+    key, subkey = random.split(key)
+    widths = cfg.widths if cfg.widths else [cfg.hidden] * cfg.depth
+    w0 = init_mlp_params(subkey, cfg.in_dim, widths, cfg.out_dim, cfg.activation, cfg.bias, cfg.init)
+    
+    # Train ERM
+    theta_star, unravel = train_erm(w0, cfg, X, Y)
+    
+    # Setup sampling
+    beta = cfg.beta0 / jnp.log(cfg.n_data)
+    dim = theta_star.size
+    gamma = dim / (cfg.prior_radius ** 2) if cfg.prior_radius else cfg.gamma
+    
+    # Create loss functions
+    loss_full, loss_minibatch = make_loss_fns(unravel, cfg, X, Y)
+    L0 = float(loss_full(theta_star))
+    
+    # Create log posterior
+    logpost_grad, grad_minibatch = make_logpost_and_score(
+        loss_full, loss_minibatch, theta_star, cfg.n_data, beta, gamma
+    )
+    
+    # Run SGLD
+    key, k_sgld = random.split(key)
+    init_sgld = theta_star + 0.01 * random.normal(k_sgld, (cfg.chains, dim))
+    
+    _, _, _, _, Ln_hist_sgld = run_sgld_online(
+        k_sgld, init_sgld, grad_minibatch, X, Y,
+        cfg.n_data, cfg.sgld_step_size, cfg.sgld_steps, cfg.sgld_warmup,
+        cfg.sgld_batch_size, cfg.sgld_eval_every, cfg.sgld_thin,
+        jit(loss_full)
+    )
+    
+    llc_sgld, _ = llc_ci_from_histories(Ln_hist_sgld, cfg.n_data, beta, L0)
+    
+    # Run HMC  
+    key, k_hmc = random.split(key)
+    init_hmc = theta_star + 0.01 * random.normal(k_hmc, (cfg.chains, dim))
+    
+    _, _, _, _, _, Ln_hist_hmc = run_hmc_online_with_adaptation(
+        k_hmc, init_hmc, logpost_grad,
+        cfg.hmc_num_integration_steps, cfg.hmc_warmup, cfg.hmc_draws,
+        cfg.hmc_thin, cfg.hmc_eval_every,
+        jit(loss_full)
+    )
+    
+    llc_hmc, _ = llc_ci_from_histories(Ln_hist_hmc, cfg.n_data, beta, L0)
+    
+    if verbose:
+        print(f"LLC: SGLD={llc_sgld:.4f}, HMC={llc_hmc:.4f}")
+    
+    return llc_sgld, llc_hmc
+
+
 if __name__ == "__main__":
-    # Use CFG for full run, TEST_CFG for quick testing
-    main(CFG)  # Change to TEST_CFG for quick tests
+    import sys
+    
+    if len(sys.argv) > 1 and sys.argv[1] == "sweep":
+        print("Running parameter sweep...")
+        results_df = run_sweep(sweep_space(), n_seeds=2)
+        print("\n=== Sweep Results ===")
+        print(results_df.to_string())
+        results_df.to_csv("llc_sweep_results.csv", index=False)
+        print("\nResults saved to llc_sweep_results.csv")
+    else:
+        # Use CFG for full run, TEST_CFG for quick testing
+        main(CFG)  # Change to TEST_CFG for quick tests
