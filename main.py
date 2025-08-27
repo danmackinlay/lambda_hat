@@ -17,6 +17,7 @@ from jax.flatten_util import ravel_pytree
 import blackjax
 import numpy as np
 import optax
+from tqdm.auto import tqdm
 
 
 # ----------------------------
@@ -100,6 +101,9 @@ class Config:
 
     # Misc
     seed: int = 42
+    use_tqdm: bool = True
+    progress_update_every: int = 50     # step/draw interval for bar postfix refresh
+    profile_adaptation: bool = True     # time warmup/adaptation separately
 
 
 # Small test config for quick verification
@@ -126,6 +130,60 @@ TEST_CFG = Config(
 )
 
 CFG = Config()  # Default full config
+
+
+# ----------------------------
+# Timing and work counters
+# ----------------------------
+@dataclass
+class RunStats:
+    # wall-clock
+    t_build: float = 0.0
+    t_train: float = 0.0
+    t_sgld_warmup: float = 0.0
+    t_sgld_sampling: float = 0.0
+    t_hmc_warmup: float = 0.0
+    t_hmc_sampling: float = 0.0
+
+    # work counters (proxy for computational work)
+    # Count "gradient-equivalent" evaluations to compare samplers.
+    # - SGLD: ~1 minibatch gradient per step -> +1
+    # - HMC: ~num_integration_steps gradients per draw (leapfrog) -> +L
+    # - Add full-data loss evals and log-prob grads as separate counters for transparency.
+    n_sgld_minibatch_grads: int = 0
+    n_sgld_full_loss: int = 0
+    n_hmc_leapfrog_grads: int = 0
+    n_hmc_full_loss: int = 0
+    n_hmc_warmup_leapfrog_grads: int = 0  # estimated during adaptation
+
+def tic(): return time.perf_counter()
+def toc(t0): return time.perf_counter() - t0
+
+
+# ----------------------------
+# Work-Normalized Variance utilities
+# ----------------------------
+def llc_mean_and_se_from_histories(Ln_histories, n, beta, L0):
+    """Compute LLC mean and SE using ESS from ArviZ"""
+    valid = [h for h in Ln_histories if len(h) > 1]
+    if not valid:
+        return np.nan, np.nan, np.nan
+    m = min(len(h) for h in valid)
+    H = np.stack([np.asarray(h[:m]) for h in valid], axis=0)  # (chains, m)
+    idata = az.from_dict(posterior={"L": H})
+    ess = float(np.nanmedian(az.ess(idata, var_names=["L"]).data_vars['L'].values))
+    L_mean = float(np.nanmean(H))
+    L_std  = float(np.nanstd(H, ddof=1))
+    lam_hat = n*float(beta)*(L_mean - L0)
+    se = n*float(beta)* (L_std / np.sqrt(max(1.0, ess)))
+    return lam_hat, se, ess
+
+def work_normalized_variance(se, time_seconds: float, grad_work: int):
+    """Compute WNV in both time and gradient units"""
+    return dict(
+        WNV_seconds = float(se**2 * max(1e-12, time_seconds)),
+        WNV_grads   = float(se**2 * max(1.0, grad_work))
+    )
 
 
 # ----------------------------
@@ -445,7 +503,7 @@ def make_sampler(cfg: Config, logpost, grad_logpost, theta_init):
             X, Y = data
             return run_sgld_online(key, theta_init, grad_logpost, X, Y,
                                    cfg.n_data, cfg.sgld_step_size, cfg.sgld_steps, cfg.sgld_warmup,
-                                   cfg.sgld_batch_size, cfg.sgld_eval_every, cfg.sgld_thin, 
+                                   cfg.sgld_batch_size, cfg.sgld_eval_every, cfg.sgld_thin,
                                    lambda th: 0.0)  # placeholder for Ln_full64
         return sample_sgld
 
@@ -569,7 +627,7 @@ def make_logpost_and_score(loss_full, loss_minibatch, theta0, n, beta, gamma):
 # ----------------------------
 def run_sgld_online(key, init_thetas, grad_logpost_minibatch, X, Y, n, step_size,
                     num_steps, warmup, batch_size, eval_every, thin,
-                    Ln_full64):
+                    Ln_full64, use_tqdm=True, progress_update_every=50, stats: RunStats | None=None):
     chains = init_thetas.shape[0]
     sgld = blackjax.sgld(grad_logpost_minibatch)
     Ln_running = [RunningMeanVar() for _ in range(chains)]
@@ -578,26 +636,56 @@ def run_sgld_online(key, init_thetas, grad_logpost_minibatch, X, Y, n, step_size
 
     @jit
     def one_step(theta, k, idx):
-        return sgld.step(k, theta, idx, X, Y, step_size)
+        # Create minibatch from indices
+        Xb, Yb = X[idx], Y[idx]
+        minibatch = (Xb, Yb)
+        return sgld.step(k, theta, minibatch, step_size)
 
     keys = random.split(key, chains)
+
+    # Warmup timing
+    t0 = tic() if stats else None
+
     for c in range(chains):
         k = keys[c]
         subkeys = random.split(k, num_steps)
         theta = init_thetas[c]
-        # stream steps
-        for t in range(num_steps):
+
+        rng_bar = range(num_steps)
+        if use_tqdm:
+            rng_bar = tqdm(rng_bar, desc=f"SGLD(c{c})", leave=False, total=num_steps)
+
+        for t in rng_bar:
             # Fix RNG hygiene: split for noise and minibatch sampling
             k_noise, k_batch = random.split(subkeys[t])
             idx = random.randint(k_batch, (batch_size,), 0, n)
             theta = one_step(theta, k_noise, idx)
-            if t >= warmup and ((t - warmup) % eval_every == 0):
-                # Always evaluate in float64 for consistency
-                Ln = float(Ln_full64(theta.astype(jnp.float64)))
-                Ln_running[c].update(Ln)
-                Ln_history[c].append(Ln)
-            if t >= warmup and ((t - warmup) % thin == 0):
-                stored.append((c, np.array(theta)))  # small footprint
+            if stats: stats.n_sgld_minibatch_grads += 1  # one mb-grad per step
+
+            if t >= warmup:
+                # mark transition to sampling timing at first post-warmup step
+                if t == warmup and c == 0 and stats:
+                    stats.t_sgld_warmup += toc(t0)
+                    t0 = tic()
+
+                if ((t - warmup) % eval_every == 0):
+                    # Always evaluate in float64 for consistency
+                    Ln = float(Ln_full64(theta.astype(jnp.float64)))
+                    Ln_running[c].update(Ln)
+                    Ln_history[c].append(Ln)
+                    if stats: stats.n_sgld_full_loss += 1
+
+                if ((t - warmup) % thin == 0):
+                    stored.append((c, np.array(theta)))  # small footprint
+
+            # progress bar updates
+            if use_tqdm and (t % progress_update_every == 0 or t == num_steps-1):
+                # Optional: display current E[L] for this chain
+                mean_L = float(Ln_running[c].value()[0]) if Ln_running[c].n > 0 else float('nan')
+                rng_bar.set_postfix_str(f"L̄≈{mean_L:.4f}")
+        # end for t
+    # end for c
+    if stats and t0: stats.t_sgld_sampling += toc(t0)
 
     # Pack thinned samples - avoid NaN padding
     kept_list = [[] for _ in range(chains)]
@@ -619,7 +707,8 @@ def run_sgld_online(key, init_thetas, grad_logpost_minibatch, X, Y, n, step_size
 # ----------------------------
 def run_hmc_online_with_adaptation(key, init_thetas, logpost_and_grad,
                                    num_integration_steps, warmup, draws, thin, eval_every,
-                                   Ln_full64):
+                                   Ln_full64, use_tqdm=True, progress_update_every=50, 
+                                   stats: RunStats | None = None):
     chains, dim = init_thetas.shape
 
     def logdensity(theta):
@@ -685,20 +774,20 @@ def run_hmc_online_with_adaptation(key, init_thetas, logpost_and_grad,
 def run_nuts_online(key, init_thetas, logpost_and_grad, warmup, draws, thin, eval_every, Ln_full64):
     """NUTS with automatic step size tuning - INCOMPLETE IMPLEMENTATION"""
     # TODO: Fix BlackJAX API usage - current implementation has issues with:
-    # 1. wa.run() parameter count (expecting 2 vs 3 arguments) 
+    # 1. wa.run() parameter count (expecting 2 vs 3 arguments)
     # 2. Return value unpacking from window adaptation
     # 3. Proper NUTS state handling and iteration
     raise NotImplementedError(
         "NUTS sampler implementation needs fixing. "
         "BlackJAX API usage is incorrect. Use 'sgld' or 'hmc' samplers for now."
     )
-    
+
     # Incomplete reference implementation below:
     # chains, dim = init_thetas.shape
     # def logdensity(theta):
     #     val, _ = logpost_and_grad(theta)
     #     return val
-    # 
+    #
     # def warm_and_sample(key, theta_init):
     #     wa = blackjax.window_adaptation(blackjax.nuts, logdensity)
     #     (state, params), _ = wa.run(key, theta_init)  # API issue here
@@ -721,8 +810,11 @@ def arviz_from_samples(samples, name="theta"):
 # Main
 # ----------------------------
 def main(cfg: Config = CFG):
-    t0 = time.time()
     print("=== Building teacher and data ===")
+    stats = RunStats()
+
+    # Build timing
+    t0 = tic()
     key = random.PRNGKey(cfg.seed)
 
     # Infer hidden size from target params if specified
@@ -839,7 +931,10 @@ def main(cfg: Config = CFG):
         cfg.hmc_draws,
         cfg.hmc_thin,
         cfg.hmc_eval_every,
-        Ln_full64
+        Ln_full64,
+        use_tqdm=cfg.use_tqdm,
+        progress_update_every=cfg.progress_update_every,
+        stats=stats
     )
 
     # Compute LLC with proper CI using ESS
@@ -875,6 +970,57 @@ def main(cfg: Config = CFG):
         z = st.norm.ppf(1 - alpha/2)
         return float(np.nanmean(llc_chain)), (llc_chain.mean() - z*se, llc_chain.mean() + z*se)
 
+    # ==============================================
+    # Work-Normalized Variance (WNV) Analysis
+    # ==============================================
+    print("\n=== Work-Normalized Variance (WNV) Analysis ===")
+    
+    # Compute LLC estimates with standard errors from histories
+    llc_sgld_mean, se_sgld, ess_sgld = llc_mean_and_se_from_histories(
+        Ln_histories_sgld, cfg.n_data, beta, L0)
+    llc_hmc_mean, se_hmc, ess_hmc = llc_mean_and_se_from_histories(
+        Ln_histories_hmc, cfg.n_data, beta, L0)
+    
+    # Compute WNV using both time and gradient work
+    wnv_sgld = work_normalized_variance(se_sgld, stats.t_sgld_sampling, stats.n_sgld_minibatch_grads)
+    wnv_hmc = work_normalized_variance(se_hmc, stats.t_hmc_sampling, stats.n_hmc_leapfrog_grads)
+    
+    # Gradient-work-normalized variance
+    sgld_total_grad_work = stats.n_sgld_minibatch_grads + stats.n_sgld_full_loss
+    hmc_total_grad_work = stats.n_hmc_leapfrog_grads + stats.n_hmc_full_loss
+    
+    print(f"SGLD: λ̂={llc_sgld_mean:.4f}, SE={se_sgld:.4f}, ESS={ess_sgld:.1f}")
+    print(f"      Time: {stats.t_sgld_sampling:.2f}s, WNV-time: {wnv_sgld['WNV_seconds']:.6f}")
+    print(f"      Grad work: {sgld_total_grad_work}, WNV-grad: {wnv_sgld['WNV_grads']:.6f}")
+    
+    print(f"HMC:  λ̂={llc_hmc_mean:.4f}, SE={se_hmc:.4f}, ESS={ess_hmc:.1f}")  
+    print(f"      Time: {stats.t_hmc_sampling:.2f}s, WNV-time: {wnv_hmc['WNV_seconds']:.6f}")
+    print(f"      Grad work: {hmc_total_grad_work}, WNV-grad: {wnv_hmc['WNV_grads']:.6f}")
+    
+    # WNV efficiency ratios
+    wnv_ratio_time = wnv_hmc['WNV_seconds'] / wnv_sgld['WNV_seconds'] if wnv_sgld['WNV_seconds'] > 0 else float('inf')
+    wnv_ratio_grad = wnv_hmc['WNV_grads'] / wnv_sgld['WNV_grads'] if wnv_sgld['WNV_grads'] > 0 else float('inf')
+    
+    print("WNV Efficiency Ratios (HMC/SGLD):")
+    print(f"  Time-normalized: {wnv_ratio_time:.3f}")
+    print(f"  Grad-normalized: {wnv_ratio_grad:.3f}")
+
+    print("\n=== Timing Summary (seconds) ===")
+    print(f"Build & Data:     {stats.t_build:.2f}")
+    print(f"ERM Training:     {stats.t_train:.2f}")
+    print(f"SGLD Warmup:      {stats.t_sgld_warmup:.2f}")
+    print(f"SGLD Sampling:    {stats.t_sgld_sampling:.2f}")
+    print(f"HMC Warmup:       {stats.t_hmc_warmup:.2f}")
+    print(f"HMC Sampling:     {stats.t_hmc_sampling:.2f}")
+    print(f"Total Runtime:    {time.time() - t0:.2f}")
+
+    print("\n=== Work Summary ===")
+    print(f"SGLD - Minibatch grads: {stats.n_sgld_minibatch_grads}")
+    print(f"SGLD - Full loss evals: {stats.n_sgld_full_loss}")
+    print(f"HMC - Leapfrog grads:   {stats.n_hmc_leapfrog_grads}")
+    print(f"HMC - Full loss evals:  {stats.n_hmc_full_loss}")
+    print(f"HMC - Warmup grads:     {stats.n_hmc_warmup_leapfrog_grads}")
+
     print(f"\nDone in {time.time() - t0:.1f}s.")
 
 
@@ -894,11 +1040,11 @@ def sweep_space():
             {'name': 'depth', 'param': 'depth', 'values': [1, 2, 3, 4]},
             {'name': 'width', 'param': 'hidden', 'values': [50, 100, 200, 400]},
             {'name': 'activation', 'param': 'activation', 'values': ['relu', 'tanh', 'gelu']},
-            
-            # Data sweeps  
+
+            # Data sweeps
             {'name': 'x_dist', 'param': 'x_dist', 'values': ['gauss_iso', 'gauss_aniso', 'mixture', 'lowdim_manifold']},
             {'name': 'noise', 'param': 'noise_model', 'values': ['gauss', 'hetero', 'student_t']},
-            
+
             # Loss sweeps
             {'name': 'loss', 'param': 'loss', 'values': ['mse', 't_regression']},
         ]
@@ -909,26 +1055,26 @@ def run_sweep(sweep_config, n_seeds=3):
     """Run experiment sweep"""
     import pandas as pd
     from dataclasses import replace
-    
+
     base = sweep_config['base']
     results = []
-    
+
     for sweep in sweep_config['sweeps']:
         name = sweep['name']
         param = sweep['param']
         values = sweep['values']
-        
+
         print(f"\n=== Sweeping {name} ===")
         for val in values:
             print(f"\n{param} = {val}")
-            
+
             llc_sgld_seeds = []
             llc_hmc_seeds = []
-            
+
             for seed in range(n_seeds):
                 # Create config with swept parameter
                 cfg = replace(base, **{param: val, 'seed': seed})
-                
+
                 # Run experiment
                 try:
                     llc_sgld, llc_hmc = run_experiment(cfg, verbose=False)
@@ -937,7 +1083,7 @@ def run_sweep(sweep_config, n_seeds=3):
                 except Exception as e:
                     print(f"  Seed {seed} failed: {e}")
                     continue
-            
+
             if llc_sgld_seeds:
                 result = {
                     'sweep': name,
@@ -952,74 +1098,74 @@ def run_sweep(sweep_config, n_seeds=3):
                 results.append(result)
                 print(f"  LLC: SGLD={result['llc_sgld_mean']:.3f}±{result['llc_sgld_std']:.3f}, "
                       f"HMC={result['llc_hmc_mean']:.3f}±{result['llc_hmc_std']:.3f}")
-    
+
     return pd.DataFrame(results)
 
 
 def run_experiment(cfg: Config, verbose=True):
     """Run single experiment and return LLCs"""
     key = random.PRNGKey(cfg.seed)
-    
+
     # Generate data
     X, Y, _, _ = make_dataset(key, cfg)
-    
+
     # Initialize network
     key, subkey = random.split(key)
     widths = cfg.widths if cfg.widths else [cfg.hidden] * cfg.depth
     w0 = init_mlp_params(subkey, cfg.in_dim, widths, cfg.out_dim, cfg.activation, cfg.bias, cfg.init)
-    
+
     # Train ERM
     theta_star, unravel = train_erm(w0, cfg, X, Y)
-    
+
     # Setup sampling
     beta = cfg.beta0 / jnp.log(cfg.n_data)
     dim = theta_star.size
     gamma = dim / (cfg.prior_radius ** 2) if cfg.prior_radius else cfg.gamma
-    
+
     # Create loss functions
     loss_full, loss_minibatch = make_loss_fns(unravel, cfg, X, Y)
     L0 = float(loss_full(theta_star))
-    
+
     # Create log posterior
     logpost_grad, grad_minibatch = make_logpost_and_score(
         loss_full, loss_minibatch, theta_star, cfg.n_data, beta, gamma
     )
-    
+
     # Run SGLD
     key, k_sgld = random.split(key)
     init_sgld = theta_star + 0.01 * random.normal(k_sgld, (cfg.chains, dim))
-    
+
     _, _, _, _, Ln_hist_sgld = run_sgld_online(
         k_sgld, init_sgld, grad_minibatch, X, Y,
         cfg.n_data, cfg.sgld_step_size, cfg.sgld_steps, cfg.sgld_warmup,
         cfg.sgld_batch_size, cfg.sgld_eval_every, cfg.sgld_thin,
         jit(loss_full)
     )
-    
+
     llc_sgld, _ = llc_ci_from_histories(Ln_hist_sgld, cfg.n_data, beta, L0)
-    
-    # Run HMC  
+
+    # Run HMC
     key, k_hmc = random.split(key)
     init_hmc = theta_star + 0.01 * random.normal(k_hmc, (cfg.chains, dim))
-    
+
     _, _, _, _, _, Ln_hist_hmc = run_hmc_online_with_adaptation(
         k_hmc, init_hmc, logpost_grad,
         cfg.hmc_num_integration_steps, cfg.hmc_warmup, cfg.hmc_draws,
         cfg.hmc_thin, cfg.hmc_eval_every,
         jit(loss_full)
     )
-    
+
     llc_hmc, _ = llc_ci_from_histories(Ln_hist_hmc, cfg.n_data, beta, L0)
-    
+
     if verbose:
         print(f"LLC: SGLD={llc_sgld:.4f}, HMC={llc_hmc:.4f}")
-    
+
     return llc_sgld, llc_hmc
 
 
 if __name__ == "__main__":
     import sys
-    
+
     if len(sys.argv) > 1 and sys.argv[1] == "sweep":
         print("Running parameter sweep...")
         results_df = run_sweep(sweep_space(), n_seeds=2)

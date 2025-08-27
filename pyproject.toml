@@ -8,4 +8,5 @@ dependencies = [
     "arviz~=0.22.0",
     "blackjax~=1.2.5",
     "optax>=0.2.5",
+    "tqdm>=4.67.1",
 ]
