@@ -16,6 +16,7 @@ from scipy.stats import norm
 import scipy.stats as st
 
 import blackjax
+from blackjax.sgmcmc import sgld as sgld_module
 import numpy as np
 import optax
 from tqdm.auto import tqdm
@@ -162,7 +163,12 @@ def tic(): return time.perf_counter()
 def toc(t0): return time.perf_counter() - t0
 
 def get_accept(info):
-    """Robust accessor for HMC acceptance rate across BlackJAX versions"""
+    """Robust accessor for HMC acceptance rate across BlackJAX versions
+    
+    BlackJAX >=1.2: HMCInfo.acceptance_rate (float)
+    Some versions expose nested 'acceptance.rate'
+    This function handles both patterns.
+    """
     if hasattr(info, "acceptance_rate"):
         return float(info.acceptance_rate)
     acc = getattr(info, "acceptance", None)
@@ -592,21 +598,19 @@ def run_sgld_online(key, init_thetas, grad_logpost_minibatch, X, Y, n, step_size
                     num_steps, warmup, batch_size, eval_every, thin,
                     Ln_full64, use_tqdm=True, progress_update_every=50, stats: RunStats | None=None):
     chains = init_thetas.shape[0]
-    sgld = blackjax.sgld(grad_logpost_minibatch)
+    sgld = sgld_module(grad_logpost_minibatch)
     sgld_step = jax.jit(sgld.step)
 
     Ln_running = [RunningMeanVar() for _ in range(chains)]
     Ln_history = [[] for _ in range(chains)]  # track Ln evaluations
-    radius_history = [[] for _ in range(chains)]  # track radius from theta0
-    q_history = [[] for _ in range(chains)]  # track prior quadratic
     stored = []  # thinned positions for diagnostics (kept small)
 
     def one_step(theta, k, idx):
         # Create minibatch from indices  
         Xb, Yb = X[idx], Y[idx]
-        out = sgld_step(k, theta, (Xb, Yb), step_size)
-        # Handle both position-only and (position, info) returns
-        return out[0] if isinstance(out, tuple) else out
+        new_theta, _info = sgld_step(k, theta, (Xb, Yb), step_size)
+        # Explicit unpacking of (position, info) tuple
+        return new_theta
 
     # Use fold_in for deterministic per-chain RNG streams
     keys = [random.fold_in(key, c) for c in range(chains)]
@@ -721,7 +725,8 @@ def run_hmc_online_with_adaptation(key, init_thetas, logpost_and_grad,
         (state, params), _ = wa.run(ck, init_thetas[c], num_steps=warmup)
         if stats:
             stats.t_hmc_warmup += toc(t0)
-            stats.n_hmc_warmup_leapfrog_grads += warmup * num_integration_steps
+            # Approximation: window adaptation uses ~L+1 gradients per step
+            stats.n_hmc_warmup_leapfrog_grads += warmup * (num_integration_steps + 1)
         if pbar:
             pbar.update(warmup)
 
@@ -757,10 +762,10 @@ def run_hmc_online_with_adaptation(key, init_thetas, logpost_and_grad,
             if (t % thin) == 0:
                 kept.append(np.array(state.position))
             acc_chain.append(get_accept(info))
-            if stats and hasattr(info, "num_integration_steps"):
-                stats.n_hmc_leapfrog_grads += int(info.num_integration_steps)
-            elif stats:
-                stats.n_hmc_leapfrog_grads += num_integration_steps
+            if stats:
+                # More accurate: velocity-Verlet uses ~L+1 gradient evals
+                steps = getattr(info, "num_integration_steps", num_integration_steps)
+                stats.n_hmc_leapfrog_grads += int(steps + 1)
             if pbar and (t % progress_update_every == 0 or t == draws-1):
                 pbar.set_postfix_str(f"acc≈{np.mean(acc_chain):.2f}, L̄≈{(rm.value()[0] if rm.n>0 else float('nan')):.4f}")
                 pbar.update(1)
