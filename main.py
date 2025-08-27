@@ -4,8 +4,7 @@ import os
 os.environ.setdefault("JAX_ENABLE_X64", "true")  # HMC benefits from float64
 
 import time
-from dataclasses import dataclass
-from functools import partial
+from dataclasses import dataclass, replace
 from typing import Literal, Optional
 
 import arviz as az
@@ -13,11 +12,14 @@ import jax
 import jax.numpy as jnp
 from jax import random, jit, value_and_grad, grad
 from jax.flatten_util import ravel_pytree
+from scipy.stats import norm
+import scipy.stats as st
 
 import blackjax
 import numpy as np
 import optax
 from tqdm.auto import tqdm
+import pandas as pd
 
 
 # ----------------------------
@@ -159,6 +161,13 @@ class RunStats:
 def tic(): return time.perf_counter()
 def toc(t0): return time.perf_counter() - t0
 
+def get_accept(info):
+    """Robust accessor for HMC acceptance rate across BlackJAX versions"""
+    if hasattr(info, "acceptance_rate"):
+        return float(info.acceptance_rate)
+    acc = getattr(info, "acceptance", None)
+    return float(getattr(acc, "rate", np.nan)) if acc is not None else np.nan
+
 
 # ----------------------------
 # Work-Normalized Variance utilities
@@ -189,15 +198,6 @@ def work_normalized_variance(se, time_seconds: float, grad_work: int):
 # ----------------------------
 # Helper: Infer hidden size from target params
 # ----------------------------
-def infer_hidden(in_dim, out_dim, target_params):
-    # params ≈ (in_dim + out_dim) * hidden + hidden + out_dim
-    #        = (in_dim + out_dim + 1) * hidden + out_dim
-    if target_params is None: return None
-    denom = (in_dim + out_dim + 1)
-    hidden = max(1, int((target_params - out_dim) // denom))
-    return hidden
-
-
 def infer_widths(in_dim: int, out_dim: int, depth: int, target_params: Optional[int], fallback_width: int = 128) -> list[int]:
     """Infer widths to hit target_params, or use fallback"""
     if target_params is None:
@@ -291,9 +291,9 @@ def fan_in_init(key, shape, scheme: str, fan_in: int):
     elif scheme == "lecun":
         scale = jnp.sqrt(1.0 / fan_in)
     elif scheme == "orthogonal":
-        # Simple orthogonal init fallback
-        q, _ = jnp.linalg.qr(random.normal(key, shape))
-        return q[:shape[0], :shape[1]]
+        # Use He scaling instead of true orthogonal for robustness
+        scale = jnp.sqrt(2.0 / fan_in)
+        return random.normal(key, shape) * scale
     else:
         scale = 1.0
     return random.normal(key, shape) * scale
@@ -356,10 +356,10 @@ def count_params(params):
     leaves = []
     for lyr in params["layers"]:
         leaves.append(lyr["W"])
-        if lyr["b"] is not None: 
+        if lyr["b"] is not None:
             leaves.append(lyr["b"])
     leaves.append(params["out"]["W"])
-    if params["out"]["b"] is not None: 
+    if params["out"]["b"] is not None:
         leaves.append(params["out"]["b"])
     return sum(p.size for p in leaves)
 
@@ -538,7 +538,6 @@ def llc_ci_from_histories(Ln_histories, n, beta, L0, alpha=0.05):
     L_std = float(np.nanstd(H, ddof=1))
     # variance of mean adjusted by ESS
     se = L_std / np.sqrt(max(1.0, ess))
-    from scipy.stats import norm
     z = norm.ppf(1 - alpha/2)
     llc_mean = n * float(beta) * (L_mean - L0)
     return llc_mean, (llc_mean - z* n*float(beta)*se, llc_mean + z* n*float(beta)*se)
@@ -579,7 +578,7 @@ def run_sgld_online(key, init_thetas, grad_logpost_minibatch, X, Y, n, step_size
     chains = init_thetas.shape[0]
     sgld = blackjax.sgld(grad_logpost_minibatch)
     sgld_step = jax.jit(sgld.step)
-    
+
     Ln_running = [RunningMeanVar() for _ in range(chains)]
     Ln_history = [[] for _ in range(chains)]  # track Ln evaluations
     stored = []  # thinned positions for diagnostics (kept small)
@@ -588,14 +587,9 @@ def run_sgld_online(key, init_thetas, grad_logpost_minibatch, X, Y, n, step_size
     def one_step(theta, k, idx):
         # Create minibatch from indices
         Xb, Yb = X[idx], Y[idx]
-        minibatch = (Xb, Yb)
-        result = sgld_step(k, theta, minibatch, step_size)
-        # Handle both cases: JIT returns (position, info), eager returns just position
-        if isinstance(result, tuple):
-            theta, _ = result
-        else:
-            theta = result
-        return theta
+        out = sgld_step(k, theta, (Xb, Yb), step_size)
+        # Robustly unwrap: handle both "position" and "(position, info)" cases
+        return out[0] if isinstance(out, tuple) else out
 
     keys = random.split(key, chains)
 
@@ -641,7 +635,10 @@ def run_sgld_online(key, init_thetas, grad_logpost_minibatch, X, Y, n, step_size
                 rng_bar.set_postfix_str(f"L̄≈{mean_L:.4f}")
         # end for t
     # end for c
-    if stats and t0: stats.t_sgld_sampling += toc(t0)
+    if stats and t0:
+        # Force device sync for accurate timing
+        jax.block_until_ready(jnp.array(0))
+        stats.t_sgld_sampling += toc(t0)
 
     # Pack thinned samples - avoid NaN padding
     kept_list = [[] for _ in range(chains)]
@@ -663,51 +660,55 @@ def run_sgld_online(key, init_thetas, grad_logpost_minibatch, X, Y, n, step_size
 # ----------------------------
 def run_hmc_online_with_adaptation(key, init_thetas, logpost_and_grad,
                                    num_integration_steps, warmup, draws, thin, eval_every,
-                                   Ln_full64, use_tqdm=True, progress_update_every=50, 
+                                   Ln_full64, use_tqdm=True, progress_update_every=50,
                                    stats: RunStats | None = None):
     chains, dim = init_thetas.shape
-    def logdensity(theta): 
-        val, _ = logpost_and_grad(theta) 
+    def logdensity(theta):
+        val, _ = logpost_and_grad(theta)
         return val
 
     kept_list, means, vars_, ns, accs, Ln_hist_list = [], [], [], [], [], []
+    chain_keys = random.split(key, chains)  # Split once for chains
+
     for c in range(chains):
+        ck = chain_keys[c]
         pbar = tqdm(total=warmup+draws, desc=f"HMC(c{c})", leave=False) if use_tqdm else None
 
         t0 = tic()
         wa = blackjax.window_adaptation(blackjax.hmc, logdensity, num_integration_steps=num_integration_steps)
-        (state, params), _ = wa.run(key, init_thetas[c], num_steps=warmup)
+        (state, params), _ = wa.run(ck, init_thetas[c], num_steps=warmup)
         if stats:
             stats.t_hmc_warmup += toc(t0)
             stats.n_hmc_warmup_leapfrog_grads += warmup * num_integration_steps
-        if pbar: 
+        if pbar:
             pbar.update(warmup)
 
         invM = params.get("inverse_mass_matrix", jnp.ones(dim))
-        if invM.ndim == 2: 
+        if invM.ndim == 2:
             invM = jnp.diag(invM)        # keep diagonal mass
         kernel = blackjax.hmc(logdensity, **dict(step_size=params["step_size"], inverse_mass_matrix=invM),
                               num_integration_steps=num_integration_steps).step
 
         rm, kept, acc_chain, Lhist = RunningMeanVar(), [], [], []
         t1 = tic()
-        keys = random.split(key, draws)
+        ck, ck_draw = random.split(ck)                        # Decorrelate adaptation and sampling
+        draw_keys = random.split(ck_draw, draws)              # Use separate key stream
 
         @jit
-        def one(state, k): 
+        def one(state, k):
             return kernel(k, state)
 
         for t in range(draws):
-            state, info = one(state, keys[t])
+            state, info = one(state, draw_keys[t])
             if (t % eval_every) == 0:
                 Ln = float(Ln_full64(state.position.astype(jnp.float64)))
-                rm.update(Ln) 
+                rm.update(Ln)
                 Lhist.append(Ln)
-                if stats: 
+                if stats:
                     stats.n_hmc_full_loss += 1
             if (t % thin) == 0:
                 kept.append(np.array(state.position))
-            acc_chain.append(float(info.acceptance_rate))
+            acc_chain.append(get_accept(info))
             if stats and hasattr(info, "num_integration_steps"):
                 stats.n_hmc_leapfrog_grads += int(info.num_integration_steps)
             elif stats:
@@ -716,17 +717,19 @@ def run_hmc_online_with_adaptation(key, init_thetas, logpost_and_grad,
                 pbar.set_postfix_str(f"acc≈{np.mean(acc_chain):.2f}, L̄≈{(rm.value()[0] if rm.n>0 else float('nan')):.4f}")
                 pbar.update(1)
 
-        if stats: 
+        if stats:
+            # Force device sync for accurate timing
+            jax.block_until_ready(jnp.array(0))
             stats.t_hmc_sampling += toc(t1)
-        if pbar: 
+        if pbar:
             pbar.close()
 
         kept_list.append(np.stack(kept, 0) if kept else np.empty((0, dim)))
         m, v, n = rm.value()
-        means.append(m) 
-        vars_.append(v) 
-        ns.append(n) 
-        accs.append(np.array(acc_chain)) 
+        means.append(m)
+        vars_.append(v)
+        ns.append(n)
+        accs.append(np.array(acc_chain))
         Ln_hist_list.append(np.asarray(Lhist))
 
     samples_thin = stack_thinned(kept_list)
@@ -782,17 +785,13 @@ def main(cfg: Config = CFG):
     t0 = tic()
     key = random.PRNGKey(cfg.seed)
 
-    # Infer hidden size from target params if specified
-    hid_from_target = infer_hidden(cfg.in_dim, cfg.out_dim, cfg.target_params)
-    hidden = hid_from_target if hid_from_target is not None else cfg.hidden
-
     X, Y, teacher_params, teacher_forward = make_dataset(key, cfg)
 
     # Initialize student network parameters
     key, subkey = random.split(key)
     widths = cfg.widths or infer_widths(cfg.in_dim, cfg.out_dim, cfg.depth, cfg.target_params, fallback_width=cfg.hidden)
     w0_pytree = init_mlp_params(subkey, cfg.in_dim, widths, cfg.out_dim, cfg.activation, cfg.bias, cfg.init)
-    
+
     stats.t_build = toc(t0)
 
     # Train to empirical minimizer (ERM) - center the local prior there
@@ -800,11 +799,15 @@ def main(cfg: Config = CFG):
     t1 = tic()
     theta_star_f64, unravel_star_f64 = train_erm(w0_pytree, cfg, X.astype(jnp.float64), Y.astype(jnp.float64))
     stats.t_train = toc(t1)
-    theta_star_f32 = theta_star_f64.astype(jnp.float32)
+
+    # Create proper f32 unravel function (rebuild around f32 params)
+    params_star_f64 = unravel_star_f64(theta_star_f64)
+    params_star_f32 = jax.tree_util.tree_map(lambda a: a.astype(jnp.float32), params_star_f64)
+    theta_star_f32, unravel_star_f32 = ravel_pytree(params_star_f32)
 
     # Center the local prior at θ⋆, not at the teacher
     theta0_f64, unravel_f64 = theta_star_f64, unravel_star_f64
-    theta0_f32, unravel_f32 = theta_star_f32, unravel_star_f64
+    theta0_f32, unravel_f32 = theta_star_f32, unravel_star_f32
 
     # Create dtype-specific data versions
     X_f32, Y_f32 = as_dtype(X, cfg.sgld_dtype), as_dtype(Y, cfg.sgld_dtype)
@@ -853,7 +856,10 @@ def main(cfg: Config = CFG):
         cfg.sgld_batch_size,
         cfg.sgld_eval_every,
         cfg.sgld_thin,
-        Ln_full64
+        Ln_full64,
+        use_tqdm=cfg.use_tqdm,
+        progress_update_every=cfg.progress_update_every,
+        stats=stats
     )
 
     # Compute LLC with proper CI using ESS
@@ -921,7 +927,6 @@ def main(cfg: Config = CFG):
 
     # LLC confidence interval from running statistics
     def llc_ci_from_running(L_means, L_vars, L_ns, n, beta, L0, alpha=0.05):
-        import scipy.stats as st
         # combine chain means via simple average; use within-chain SE pooled / n_chains
         llc_chain = n * beta * (L_means - L0)
         se_chain = n * beta * np.sqrt(L_vars / np.maximum(1, (L_ns - 1)))
@@ -934,33 +939,35 @@ def main(cfg: Config = CFG):
     # Work-Normalized Variance (WNV) Analysis
     # ==============================================
     print("\n=== Work-Normalized Variance (WNV) Analysis ===")
-    
+
     # Compute LLC estimates with standard errors from histories
     llc_sgld_mean, se_sgld, ess_sgld = llc_mean_and_se_from_histories(
         Ln_histories_sgld, cfg.n_data, beta, L0)
     llc_hmc_mean, se_hmc, ess_hmc = llc_mean_and_se_from_histories(
         Ln_histories_hmc, cfg.n_data, beta, L0)
-    
-    # Compute WNV using both time and gradient work
-    wnv_sgld = work_normalized_variance(se_sgld, stats.t_sgld_sampling, stats.n_sgld_minibatch_grads)
-    wnv_hmc = work_normalized_variance(se_hmc, stats.t_hmc_sampling, stats.n_hmc_leapfrog_grads)
-    
-    # Gradient-work-normalized variance
-    sgld_total_grad_work = stats.n_sgld_minibatch_grads + stats.n_sgld_full_loss
-    hmc_total_grad_work = stats.n_hmc_leapfrog_grads + stats.n_hmc_full_loss
-    
+
+    # Separate gradient work from loss evaluations (for fair WNV comparison)
+    sgld_grad_work = stats.n_sgld_minibatch_grads  # Only gradient operations
+    hmc_grad_work = stats.n_hmc_leapfrog_grads     # Only gradient operations
+
+    # Compute WNV using gradient work only (loss evals are for LLC estimation, not sampling cost)
+    wnv_sgld = work_normalized_variance(se_sgld, stats.t_sgld_sampling, sgld_grad_work)
+    wnv_hmc = work_normalized_variance(se_hmc, stats.t_hmc_sampling, hmc_grad_work)
+
     print(f"SGLD: λ̂={llc_sgld_mean:.4f}, SE={se_sgld:.4f}, ESS={ess_sgld:.1f}")
     print(f"      Time: {stats.t_sgld_sampling:.2f}s, WNV-time: {wnv_sgld['WNV_seconds']:.6f}")
-    print(f"      Grad work: {sgld_total_grad_work}, WNV-grad: {wnv_sgld['WNV_grads']:.6f}")
-    
-    print(f"HMC:  λ̂={llc_hmc_mean:.4f}, SE={se_hmc:.4f}, ESS={ess_hmc:.1f}")  
+    print(f"      Grad work: {sgld_grad_work}, WNV-grad: {wnv_sgld['WNV_grads']:.6f}")
+    print(f"      Loss evals: {stats.n_sgld_full_loss} (for LLC estimation)")
+
+    print(f"HMC:  λ̂={llc_hmc_mean:.4f}, SE={se_hmc:.4f}, ESS={ess_hmc:.1f}")
     print(f"      Time: {stats.t_hmc_sampling:.2f}s, WNV-time: {wnv_hmc['WNV_seconds']:.6f}")
-    print(f"      Grad work: {hmc_total_grad_work}, WNV-grad: {wnv_hmc['WNV_grads']:.6f}")
-    
+    print(f"      Grad work: {hmc_grad_work}, WNV-grad: {wnv_hmc['WNV_grads']:.6f}")
+    print(f"      Loss evals: {stats.n_hmc_full_loss} (for LLC estimation)")
+
     # WNV efficiency ratios
     wnv_ratio_time = wnv_hmc['WNV_seconds'] / wnv_sgld['WNV_seconds'] if wnv_sgld['WNV_seconds'] > 0 else float('inf')
     wnv_ratio_grad = wnv_hmc['WNV_grads'] / wnv_sgld['WNV_grads'] if wnv_sgld['WNV_grads'] > 0 else float('inf')
-    
+
     print("WNV Efficiency Ratios (HMC/SGLD):")
     print(f"  Time-normalized: {wnv_ratio_time:.3f}")
     print(f"  Grad-normalized: {wnv_ratio_grad:.3f}")
@@ -972,6 +979,7 @@ def main(cfg: Config = CFG):
     print(f"SGLD Sampling:    {stats.t_sgld_sampling:.2f}")
     print(f"HMC Warmup:       {stats.t_hmc_warmup:.2f}")
     print(f"HMC Sampling:     {stats.t_hmc_sampling:.2f}")
+    jax.block_until_ready(jnp.array(1.0))  # Sync before total runtime measurement
     print(f"Total Runtime:    {time.time() - t0:.2f}")
 
     print("\n=== Work Summary ===")
@@ -981,6 +989,7 @@ def main(cfg: Config = CFG):
     print(f"HMC - Full loss evals:  {stats.n_hmc_full_loss}")
     print(f"HMC - Warmup grads:     {stats.n_hmc_warmup_leapfrog_grads}")
 
+    jax.block_until_ready(jnp.array(1.0))  # Final sync before runtime report
     print(f"\nDone in {time.time() - t0:.1f}s.")
 
 
@@ -1013,8 +1022,6 @@ def sweep_space():
 
 def run_sweep(sweep_config, n_seeds=3):
     """Run experiment sweep"""
-    import pandas as pd
-    from dataclasses import replace
 
     base = sweep_config['base']
     results = []
@@ -1082,11 +1089,18 @@ def run_experiment(cfg: Config, verbose=True):
     dim = theta_star.size
     gamma = dim / (cfg.prior_radius ** 2) if cfg.prior_radius else cfg.gamma
 
-    # Create loss functions
+    # Create loss functions (default dtype for training)
     loss_full, loss_minibatch = make_loss_fns(unravel, cfg, X, Y)
-    L0 = float(loss_full(theta_star))
 
-    # Create log posterior
+    # Create f64 loss functions for consistent LLC evaluation
+    X64, Y64 = X.astype(jnp.float64), Y.astype(jnp.float64)
+    params64 = jax.tree_util.tree_map(lambda a: a.astype(jnp.float64), unravel(theta_star))
+    theta_star64, unravel64 = ravel_pytree(params64)
+    loss_full64, loss_minibatch64 = make_loss_fns(unravel64, cfg, X64, Y64)
+    L0 = float(loss_full64(theta_star64))
+    Ln_full64 = jit(loss_full64)
+
+    # Create log posterior (default dtype for sampling efficiency)
     logpost_grad, grad_minibatch = make_logpost_and_score(
         loss_full, loss_minibatch, theta_star, cfg.n_data, beta, gamma
     )
@@ -1099,7 +1113,7 @@ def run_experiment(cfg: Config, verbose=True):
         k_sgld, init_sgld, grad_minibatch, X, Y,
         cfg.n_data, cfg.sgld_step_size, cfg.sgld_steps, cfg.sgld_warmup,
         cfg.sgld_batch_size, cfg.sgld_eval_every, cfg.sgld_thin,
-        jit(loss_full)
+        Ln_full64  # Use f64 for consistent LLC evaluation
     )
 
     llc_sgld, _ = llc_ci_from_histories(Ln_hist_sgld, cfg.n_data, beta, L0)
@@ -1112,7 +1126,7 @@ def run_experiment(cfg: Config, verbose=True):
         k_hmc, init_hmc, logpost_grad,
         cfg.hmc_num_integration_steps, cfg.hmc_warmup, cfg.hmc_draws,
         cfg.hmc_thin, cfg.hmc_eval_every,
-        jit(loss_full)
+        Ln_full64  # Use f64 for consistent LLC evaluation
     )
 
     llc_hmc, _ = llc_ci_from_histories(Ln_hist_hmc, cfg.n_data, beta, L0)
