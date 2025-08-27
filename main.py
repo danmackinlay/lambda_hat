@@ -583,18 +583,20 @@ def run_sgld_online(key, init_thetas, grad_logpost_minibatch, X, Y, n, step_size
     Ln_history = [[] for _ in range(chains)]  # track Ln evaluations
     stored = []  # thinned positions for diagnostics (kept small)
 
-    @jit
     def one_step(theta, k, idx):
-        # Create minibatch from indices
+        # Create minibatch from indices  
         Xb, Yb = X[idx], Y[idx]
-        out = sgld_step(k, theta, (Xb, Yb), step_size)
-        # Robustly unwrap: handle both "position" and "(position, info)" cases
-        return out[0] if isinstance(out, tuple) else out
+        theta, _info = sgld_step(k, theta, (Xb, Yb), step_size)  # always expect tuple
+        return theta
 
-    keys = random.split(key, chains)
+    # Use fold_in for deterministic per-chain RNG streams
+    keys = [random.fold_in(key, c) for c in range(chains)]
 
-    # Warmup timing
-    t0 = tic() if stats else None
+    # Per-chain timing accumulators
+    if stats:
+        stats_chain_warm = 0.0
+        stats_chain_samp = 0.0
+        eval_time_accumulator = 0.0
 
     for c in range(chains):
         k = keys[c]
@@ -605,6 +607,9 @@ def run_sgld_online(key, init_thetas, grad_logpost_minibatch, X, Y, n, step_size
         if use_tqdm:
             rng_bar = tqdm(rng_bar, desc=f"SGLD(c{c})", leave=False, total=num_steps)
 
+        # Chain-level timing
+        t_chain = tic() if stats else None
+
         for t in rng_bar:
             # Fix RNG hygiene: split for noise and minibatch sampling
             k_noise, k_batch = random.split(subkeys[t])
@@ -612,15 +617,20 @@ def run_sgld_online(key, init_thetas, grad_logpost_minibatch, X, Y, n, step_size
             theta = one_step(theta, k_noise, idx)
             if stats: stats.n_sgld_minibatch_grads += 1  # one mb-grad per step
 
-            if t >= warmup:
-                # mark transition to sampling timing at first post-warmup step
-                if t == warmup and c == 0 and stats:
-                    stats.t_sgld_warmup += toc(t0)
-                    t0 = tic()
+            # Mark transition from warmup to sampling timing
+            if t == warmup and stats:
+                stats_chain_warm += toc(t_chain)
+                t_chain = tic()
 
+            if t >= warmup:
                 if ((t - warmup) % eval_every == 0):
+                    # Time LLC evaluation separately from sampling
+                    eval_t0 = tic() if stats else None
                     # Always evaluate in float64 for consistency
-                    Ln = float(Ln_full64(theta.astype(jnp.float64)))
+                    Ln_val = Ln_full64(theta.astype(jnp.float64))
+                    Ln = float(jax.device_get(Ln_val))
+                    if stats:
+                        eval_time_accumulator += toc(eval_t0)
                     Ln_running[c].update(Ln)
                     Ln_history[c].append(Ln)
                     if stats: stats.n_sgld_full_loss += 1
@@ -633,12 +643,20 @@ def run_sgld_online(key, init_thetas, grad_logpost_minibatch, X, Y, n, step_size
                 # Optional: display current E[L] for this chain
                 mean_L = float(Ln_running[c].value()[0]) if Ln_running[c].n > 0 else float('nan')
                 rng_bar.set_postfix_str(f"L̄≈{mean_L:.4f}")
+
+        # End of chain timing
+        if stats:
+            # Block on actual computed value for accurate timing
+            jax.block_until_ready(theta)
+            stats_chain_samp += toc(t_chain)
         # end for t
     # end for c
-    if stats and t0:
-        # Force device sync for accurate timing
-        jax.block_until_ready(jnp.array(0))
-        stats.t_sgld_sampling += toc(t0)
+    
+    # Accumulate per-chain timings to global stats
+    if stats:
+        stats.t_sgld_warmup += stats_chain_warm
+        # Subtract LLC evaluation time from sampling time for pure sampling WNV
+        stats.t_sgld_sampling += stats_chain_samp - eval_time_accumulator
 
     # Pack thinned samples - avoid NaN padding
     kept_list = [[] for _ in range(chains)]
@@ -668,14 +686,19 @@ def run_hmc_online_with_adaptation(key, init_thetas, logpost_and_grad,
         return val
 
     kept_list, means, vars_, ns, accs, Ln_hist_list = [], [], [], [], [], []
-    chain_keys = random.split(key, chains)  # Split once for chains
+    # Use fold_in for deterministic per-chain RNG streams
+    chain_keys = [random.fold_in(key, c) for c in range(chains)]
 
     for c in range(chains):
         ck = chain_keys[c]
         pbar = tqdm(total=warmup+draws, desc=f"HMC(c{c})", leave=False) if use_tqdm else None
 
         t0 = tic()
-        wa = blackjax.window_adaptation(blackjax.hmc, logdensity, num_integration_steps=num_integration_steps)
+        wa = blackjax.window_adaptation(
+            blackjax.hmc, logdensity,
+            is_mass_matrix_diagonal=True,
+            num_integration_steps=num_integration_steps
+        )
         (state, params), _ = wa.run(ck, init_thetas[c], num_steps=warmup)
         if stats:
             stats.t_hmc_warmup += toc(t0)
@@ -690,6 +713,7 @@ def run_hmc_online_with_adaptation(key, init_thetas, logpost_and_grad,
                               num_integration_steps=num_integration_steps).step
 
         rm, kept, acc_chain, Lhist = RunningMeanVar(), [], [], []
+        hmc_eval_time = 0.0
         t1 = tic()
         ck, ck_draw = random.split(ck)                        # Decorrelate adaptation and sampling
         draw_keys = random.split(ck_draw, draws)              # Use separate key stream
@@ -701,7 +725,12 @@ def run_hmc_online_with_adaptation(key, init_thetas, logpost_and_grad,
         for t in range(draws):
             state, info = one(state, draw_keys[t])
             if (t % eval_every) == 0:
-                Ln = float(Ln_full64(state.position.astype(jnp.float64)))
+                # Time LLC evaluation separately from sampling
+                eval_t0 = tic() if stats else None
+                Ln_val = Ln_full64(state.position.astype(jnp.float64))
+                Ln = float(jax.device_get(Ln_val))
+                if stats:
+                    hmc_eval_time += toc(eval_t0)
                 rm.update(Ln)
                 Lhist.append(Ln)
                 if stats:
@@ -718,9 +747,10 @@ def run_hmc_online_with_adaptation(key, init_thetas, logpost_and_grad,
                 pbar.update(1)
 
         if stats:
-            # Force device sync for accurate timing
-            jax.block_until_ready(jnp.array(0))
-            stats.t_hmc_sampling += toc(t1)
+            # Block on actual computed value for accurate timing
+            jax.block_until_ready(state.position)
+            # Subtract LLC evaluation time from sampling time for pure sampling WNV
+            stats.t_hmc_sampling += toc(t1) - hmc_eval_time
         if pbar:
             pbar.close()
 
@@ -979,7 +1009,7 @@ def main(cfg: Config = CFG):
     print(f"SGLD Sampling:    {stats.t_sgld_sampling:.2f}")
     print(f"HMC Warmup:       {stats.t_hmc_warmup:.2f}")
     print(f"HMC Sampling:     {stats.t_hmc_sampling:.2f}")
-    jax.block_until_ready(jnp.array(1.0))  # Sync before total runtime measurement
+    jax.block_until_ready(hmc_samples_thin)  # Sync before total runtime measurement
     print(f"Total Runtime:    {time.time() - t0:.2f}")
 
     print("\n=== Work Summary ===")
@@ -989,7 +1019,7 @@ def main(cfg: Config = CFG):
     print(f"HMC - Full loss evals:  {stats.n_hmc_full_loss}")
     print(f"HMC - Warmup grads:     {stats.n_hmc_warmup_leapfrog_grads}")
 
-    jax.block_until_ready(jnp.array(1.0))  # Final sync before runtime report
+    jax.block_until_ready(hmc_samples_thin)  # Final sync before runtime report
     print(f"\nDone in {time.time() - t0:.1f}s.")
 
 
@@ -1085,9 +1115,8 @@ def run_experiment(cfg: Config, verbose=True):
     theta_star, unravel = train_erm(w0, cfg, X, Y)
 
     # Setup sampling
-    beta = cfg.beta0 / jnp.log(cfg.n_data)
     dim = theta_star.size
-    gamma = dim / (cfg.prior_radius ** 2) if cfg.prior_radius else cfg.gamma
+    beta, gamma = compute_beta_gamma(cfg, dim)
 
     # Create loss functions (default dtype for training)
     loss_full, loss_minibatch = make_loss_fns(unravel, cfg, X, Y)
