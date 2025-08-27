@@ -422,12 +422,14 @@ source = { virtual = "." }
 dependencies = [
     { name = "arviz" },
     { name = "blackjax" },
+    { name = "optax" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "arviz", specifier = "~=0.22.0" },
     { name = "blackjax", specifier = "~=1.2.5" },
+    { name = "optax", specifier = ">=0.2.5" },
 ]
 
 [[package]]
