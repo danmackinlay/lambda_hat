@@ -16,11 +16,11 @@ from scipy.stats import norm
 import scipy.stats as st
 
 import blackjax
-from blackjax.sgmcmc import sgld as sgld_module
 import numpy as np
 import optax
 from tqdm.auto import tqdm
 import pandas as pd
+import matplotlib.pyplot as plt
 
 
 # ----------------------------
@@ -107,6 +107,13 @@ class Config:
     use_tqdm: bool = True
     progress_update_every: int = 50     # step/draw interval for bar postfix refresh
     profile_adaptation: bool = True     # time warmup/adaptation separately
+
+    # Diagnostics and plotting
+    diag_mode: Literal["none","subset","proj"] = "proj"  # default: tiny random projections
+    diag_k: int = 16                    # number of dimensions/projections to track
+    diag_seed: int = 1234               # seed for dimension selection/projections
+    max_theta_plot_dims: int = 8        # cap for plotting even if k is larger
+    save_plots_prefix: Optional[str] = None  # e.g., "diag" to save PNGs
 
 
 # Small test config for quick verification
@@ -265,7 +272,7 @@ def train_to_erm(w_init, X, Y, steps=2000, lr=1e-2):
     opt = optax.adam(lr); opt_state = opt.init(theta)
     @jit
     def step(theta, opt_state):
-        loss, g = value_and_grad(lambda th: mse_loss_full(th, unravel, X, Y))(theta)
+        loss, g = value_and_grad(lambda th: jnp.mean((mlp_forward(unravel(th), X) - Y)**2))(theta)
         updates, opt_state = opt.update(g, opt_state, theta)
         theta = optax.apply_updates(theta, updates)
         return theta, opt_state, loss
@@ -565,6 +572,31 @@ def scalar_chain_diagnostics(series_per_chain, name="L"):
     return dict(ess=ess, rhat=rhat)
 
 
+def select_diag_dims(dim, k, seed):
+    """Select k random dimensions from d for subset diagnostics"""
+    k = min(k, dim)
+    rng = np.random.default_rng(seed)
+    return np.sort(rng.choice(dim, size=k, replace=False)).astype(int)
+
+
+def make_projection_matrix(dim, k, seed):
+    """Create k random unit vectors for projection diagnostics"""
+    k = min(k, dim)
+    rng = np.random.default_rng(seed)
+    R = rng.standard_normal((k, dim)).astype(np.float32)
+    R /= (np.linalg.norm(R, axis=1, keepdims=True) + 1e-8)
+    return R  # (k, d)
+
+
+def prepare_diag_targets(dim, cfg):
+    """Prepare diagnostic targets based on config"""
+    if cfg.diag_mode == "subset":
+        return dict(diag_dims=select_diag_dims(dim, cfg.diag_k, cfg.diag_seed))
+    elif cfg.diag_mode == "proj":
+        return dict(Rproj=make_projection_matrix(dim, cfg.diag_k, cfg.diag_seed))
+    return {}  # none
+
+
 # ----------------------------
 # Log posterior & score (tempered + localized)
 # log pi(w) = - n * beta * L_n(w) - (gamma/2)||w - w0||^2
@@ -596,9 +628,17 @@ def make_logpost_and_score(loss_full, loss_minibatch, theta0, n, beta, gamma):
 # ----------------------------
 def run_sgld_online(key, init_thetas, grad_logpost_minibatch, X, Y, n, step_size,
                     num_steps, warmup, batch_size, eval_every, thin,
-                    Ln_full64, use_tqdm=True, progress_update_every=50, stats: RunStats | None=None):
+                    Ln_full64, use_tqdm=True, progress_update_every=50, stats: RunStats | None=None,
+                    diag_dims=None, Rproj=None):
     chains = init_thetas.shape[0]
-    sgld = sgld_module(grad_logpost_minibatch)
+    
+    # SGLD (BlackJAX 1.2.5): Use top-level factory: sgld = blackjax.sgld(grad_estimator)
+    # .step returns *only* the new position (ArrayTree), not (position, info).
+    # Source (1.2.5): blackjax/sgmcmc/sgld.py -> as_top_level_api().step_fn returns kernel()
+    # which returns new_position (single value).
+    # API: https://blackjax-devs.github.io/blackjax/autoapi/blackjax/sgmcmc/sgld/index.html
+    # Some docs/examples show (new_position, info) unpacking - that's a doc bug for 1.2.5.
+    sgld = blackjax.sgld(grad_logpost_minibatch)  # Top-level factory (no need for submodule)
     sgld_step = jax.jit(sgld.step)
 
     Ln_running = [RunningMeanVar() for _ in range(chains)]
@@ -608,8 +648,8 @@ def run_sgld_online(key, init_thetas, grad_logpost_minibatch, X, Y, n, step_size
     def one_step(theta, k, idx):
         # Create minibatch from indices  
         Xb, Yb = X[idx], Y[idx]
-        new_theta, _info = sgld_step(k, theta, (Xb, Yb), step_size)
-        # Explicit unpacking of (position, info) tuple
+        # SGLD step in 1.2.5 returns single position, not tuple
+        new_theta = sgld_step(k, theta, (Xb, Yb), step_size)
         return new_theta
 
     # Use fold_in for deterministic per-chain RNG streams
@@ -659,7 +699,16 @@ def run_sgld_online(key, init_thetas, grad_logpost_minibatch, X, Y, n, step_size
                     if stats: stats.n_sgld_full_loss += 1
 
                 if ((t - warmup) % thin == 0):
-                    stored.append((c, np.array(theta)))  # small footprint
+                    # Store minimal theta info based on diag_mode
+                    vec = np.array(theta)
+                    if diag_dims is not None:  # subset
+                        to_store = vec[diag_dims]
+                    elif Rproj is not None:    # proj
+                        to_store = Rproj @ vec
+                    else:                      # none
+                        to_store = None
+                    if to_store is not None:
+                        stored.append((c, to_store))
 
             # progress bar updates
             if use_tqdm and (t % progress_update_every == 0 or t == num_steps-1):
@@ -686,7 +735,15 @@ def run_sgld_online(key, init_thetas, grad_logpost_minibatch, X, Y, n, step_size
     for c, th in stored:
         kept_list[c].append(th)
 
-    samples_thin = stack_thinned([np.stack(kl, axis=0) if kl else np.empty((0, init_thetas.shape[1])) for kl in kept_list])
+    # Determine shape for empty arrays based on diagnostic mode
+    if diag_dims is not None:
+        empty_shape = (0, len(diag_dims))
+    elif Rproj is not None:
+        empty_shape = (0, Rproj.shape[0])
+    else:
+        empty_shape = (0, 0)  # No theta storage
+
+    samples_thin = stack_thinned([np.stack(kl, axis=0) if kl else np.empty(empty_shape) for kl in kept_list])
 
     # Aggregate LLC stats
     means = [rm.value()[0] for rm in Ln_running]
@@ -702,7 +759,7 @@ def run_sgld_online(key, init_thetas, grad_logpost_minibatch, X, Y, n, step_size
 def run_hmc_online_with_adaptation(key, init_thetas, logpost_and_grad,
                                    num_integration_steps, warmup, draws, thin, eval_every,
                                    Ln_full64, use_tqdm=True, progress_update_every=50,
-                                   stats: RunStats | None = None):
+                                   stats: RunStats | None = None, diag_dims=None, Rproj=None):
     chains, dim = init_thetas.shape
     def logdensity(theta):
         val, _ = logpost_and_grad(theta)
@@ -717,6 +774,13 @@ def run_hmc_online_with_adaptation(key, init_thetas, logpost_and_grad,
         pbar = tqdm(total=warmup+draws, desc=f"HMC(c{c})", leave=False) if use_tqdm else None
 
         t0 = tic()
+        # Stan-style window adaptation (BlackJAX 1.2.5):
+        # (state, parameters), adapt_info = blackjax.window_adaptation(blackjax.hmc, logdensity,
+        #                                       is_mass_matrix_diagonal=True,
+        #                                       num_integration_steps=L).run(rng, init_pos, num_steps=warmup)
+        # Then build tuned kernel: blackjax.hmc(logdensity, **parameters, num_integration_steps=L).step
+        # Quickstart: https://blackjax-devs.github.io/blackjax/examples/quickstart.html
+        # API: https://blackjax-devs.github.io/blackjax/autoapi/blackjax/adaptation/window_adaptation/index.html
         wa = blackjax.window_adaptation(
             blackjax.hmc, logdensity,
             is_mass_matrix_diagonal=True,
@@ -760,7 +824,18 @@ def run_hmc_online_with_adaptation(key, init_thetas, logpost_and_grad,
                 if stats:
                     stats.n_hmc_full_loss += 1
             if (t % thin) == 0:
-                kept.append(np.array(state.position))
+                # Store minimal theta info based on diag_mode
+                vec = np.array(state.position)
+                if diag_dims is not None:  # subset
+                    to_store = vec[diag_dims]
+                elif Rproj is not None:    # proj
+                    to_store = Rproj @ vec
+                else:                      # none
+                    to_store = None
+                if to_store is not None:
+                    kept.append(to_store)
+            # HMC (BlackJAX 1.2.5): info is HMCInfo with flat acceptance_rate field
+            # Source: https://blackjax-devs.github.io/blackjax/_modules/blackjax/mcmc/hmc.html
             acc_chain.append(get_accept(info))
             if stats:
                 # More accurate: velocity-Verlet uses ~L+1 gradient evals
@@ -778,7 +853,14 @@ def run_hmc_online_with_adaptation(key, init_thetas, logpost_and_grad,
         if pbar:
             pbar.close()
 
-        kept_list.append(np.stack(kept, 0) if kept else np.empty((0, dim)))
+        # Determine shape for empty arrays based on diagnostic mode
+        if diag_dims is not None:
+            empty_shape = (0, len(diag_dims))
+        elif Rproj is not None:
+            empty_shape = (0, Rproj.shape[0])
+        else:
+            empty_shape = (0, 0)  # No theta storage
+        kept_list.append(np.stack(kept, 0) if kept else np.empty(empty_shape))
         m, v, n = rm.value()
         means.append(m)
         vars_.append(v)
@@ -817,6 +899,159 @@ def run_nuts_online(key, init_thetas, logpost_and_grad, warmup, draws, thin, eva
     #     # ... rest of sampling logic
     #     return states
 
+
+
+# ----------------------------
+# Plotting and diagnostics
+# ----------------------------
+def _stack_histories(Ln_histories):
+    """Stack histories into common-length array"""
+    valid = [np.asarray(h) for h in Ln_histories if len(h) > 1]
+    if not valid:
+        return None
+    T = min(len(h) for h in valid)
+    return np.stack([h[:T] for h in valid], 0)
+
+
+def _idata_from_L(Ln_histories):
+    """Create ArviZ InferenceData from L_n histories"""
+    H = _stack_histories(Ln_histories)
+    return (az.from_dict(posterior={"L": H}), H.shape[1]) if H is not None else (None, 0)
+
+
+def _idata_from_theta(samples_thin, max_dims=8):
+    """Create ArviZ InferenceData from theta samples"""
+    S = np.asarray(samples_thin)
+    if S.size == 0 or S.shape[1] < 2:
+        return None, []
+    k = S.shape[-1]
+    idx = list(range(min(k, max_dims)))
+    idata = az.from_dict(posterior={"theta": S}, coords={"theta_dim": np.arange(k)}, dims={"theta": ["theta_dim"]})
+    return idata, idx
+
+
+def _running_llc(Ln_histories, n, beta, L0):
+    """Compute running LLC estimates"""
+    H = _stack_histories(Ln_histories)
+    if H is None:
+        return None, None
+    cmean = np.cumsum(H, 1) / np.arange(1, H.shape[1]+1)[None, :]
+    lam = n*float(beta)*(cmean - L0)
+    pooled = n*float(beta)*(np.cumsum(H.mean(0)) / np.arange(1, H.shape[1]+1) - L0)
+    return lam, pooled
+
+
+def plot_diagnostics(sgld_samples_thin, Ln_histories_sgld,
+                     hmc_samples_thin, Ln_histories_hmc,
+                     accs_hmc, n, beta, L0, max_theta_dims=8, save_prefix=None):
+    """Plot comprehensive convergence diagnostics"""
+    
+    # Running LLC plots
+    for name, H in [("SGLD", Ln_histories_sgld), ("HMC", Ln_histories_hmc)]:
+        lam, pooled = _running_llc(H, n, beta, L0)
+        if lam is None:
+            continue
+        T = lam.shape[1]
+        plt.figure(figsize=(7, 4))
+        for c in range(lam.shape[0]):
+            plt.plot(np.arange(1, T+1), lam[c], alpha=.4, lw=1)
+        plt.plot(np.arange(1, T+1), pooled, lw=2, label="pooled")
+        plt.xlabel("L_n evaluations")
+        plt.ylabel(r"$\hat\lambda_t$")
+        plt.title(f"{name}: running LLC")
+        plt.legend()
+        plt.tight_layout()
+        if save_prefix:
+            plt.savefig(f"{save_prefix}_{name.lower()}_llc_running.png", dpi=160)
+        plt.show()
+
+    # L_n trace, ACF, ESS, Rhat
+    for name, H in [("SGLD", Ln_histories_sgld), ("HMC", Ln_histories_hmc)]:
+        idata_L, T = _idata_from_L(H)
+        if idata_L is None:
+            continue
+        
+        # Trace plot
+        az.plot_trace(idata_L, var_names=["L"])
+        plt.suptitle(f"{name}: L_n trace", y=1.02)
+        plt.tight_layout()
+        if save_prefix:
+            plt.savefig(f"{save_prefix}_{name.lower()}_L_trace.png", dpi=160, bbox_inches="tight")
+        plt.show()
+        
+        # Autocorrelation
+        az.plot_autocorr(idata_L, var_names=["L"])
+        plt.suptitle(f"{name}: L_n ACF", y=1.02)
+        plt.tight_layout()
+        if save_prefix:
+            plt.savefig(f"{save_prefix}_{name.lower()}_L_acf.png", dpi=160, bbox_inches="tight")
+        plt.show()
+        
+        # ESS
+        try:
+            az.plot_ess(idata_L, var_names=["L"])
+            plt.suptitle(f"{name}: ESS(L_n)", y=1.02)
+            plt.tight_layout()
+            if save_prefix:
+                plt.savefig(f"{save_prefix}_{name.lower()}_L_ess.png", dpi=160, bbox_inches="tight")
+            plt.show()
+        except:
+            pass
+        
+        # R-hat
+        try:
+            az.plot_rank(idata_L, var_names=["L"])
+            plt.suptitle(f"{name}: R̂(L_n)", y=1.02)
+            plt.tight_layout()
+            if save_prefix:
+                plt.savefig(f"{save_prefix}_{name.lower()}_L_rhat.png", dpi=160, bbox_inches="tight")
+            plt.show()
+        except:
+            pass
+
+    # Tiny theta diagnostics (only if we stored subset/proj)
+    for name, S in [("SGLD", sgld_samples_thin), ("HMC", hmc_samples_thin)]:
+        idata_th, idx = _idata_from_theta(S, max_dims=max_theta_dims)
+        if idata_th is None:
+            continue
+        
+        coords = {"theta_dim": idx}
+        
+        # Theta trace
+        try:
+            az.plot_trace(idata_th, var_names=["theta"], coords=coords)
+            plt.suptitle(f"{name}: θ trace (k={len(idx)})", y=1.02)
+            plt.tight_layout()
+            if save_prefix:
+                plt.savefig(f"{save_prefix}_{name.lower()}_theta_trace.png", dpi=160, bbox_inches="tight")
+            plt.show()
+        except:
+            pass
+        
+        # Rank plot
+        try:
+            az.plot_rank(idata_th, var_names=["theta"], coords=coords)
+            plt.suptitle(f"{name}: θ rank (k={len(idx)})", y=1.02)
+            plt.tight_layout()
+            if save_prefix:
+                plt.savefig(f"{save_prefix}_{name.lower()}_theta_rank.png", dpi=160, bbox_inches="tight")
+            plt.show()
+        except:
+            pass
+
+    # HMC acceptance histogram
+    if accs_hmc:
+        acc = np.concatenate([np.asarray(a).ravel() for a in accs_hmc if len(a)])
+        if acc.size:
+            plt.figure(figsize=(6, 4))
+            plt.hist(acc, bins=20, density=True)
+            plt.xlabel("acceptance_rate")
+            plt.ylabel("density")
+            plt.title("HMC acceptance")
+            plt.tight_layout()
+            if save_prefix:
+                plt.savefig(f"{save_prefix}_hmc_acceptance.png", dpi=160)
+            plt.show()
 
 
 # ----------------------------
@@ -883,6 +1118,9 @@ def main(cfg: Config = CFG):
     # JIT compile the loss evaluator for LLC computation
     Ln_full64 = jit(loss_full_f64)
 
+    # Prepare diagnostic targets based on config
+    diag_targets = prepare_diag_targets(dim, cfg)
+
     # ===== SGLD (Online) =====
     print("\n=== SGLD (BlackJAX, online) ===")
     k_sgld = random.split(key, 1)[0]
@@ -904,7 +1142,8 @@ def main(cfg: Config = CFG):
         Ln_full64,
         use_tqdm=cfg.use_tqdm,
         progress_update_every=cfg.progress_update_every,
-        stats=stats
+        stats=stats,
+        **diag_targets
     )
 
     # Compute LLC with proper CI using ESS
@@ -933,7 +1172,8 @@ def main(cfg: Config = CFG):
         Ln_full64,
         use_tqdm=cfg.use_tqdm,
         progress_update_every=cfg.progress_update_every,
-        stats=stats
+        stats=stats,
+        **diag_targets
     )
 
     # Compute LLC with proper CI using ESS
@@ -1011,6 +1251,15 @@ def main(cfg: Config = CFG):
     print(f"HMC - Leapfrog grads:   {stats.n_hmc_leapfrog_grads}")
     print(f"HMC - Full loss evals:  {stats.n_hmc_full_loss}")
     print(f"HMC - Warmup grads:     {stats.n_hmc_warmup_leapfrog_grads}")
+
+    # Plot diagnostics if enabled
+    if cfg.diag_mode != "none":
+        print("\n=== Generating Diagnostic Plots ===")
+        plot_diagnostics(sgld_samples_thin, Ln_histories_sgld,
+                        hmc_samples_thin, Ln_histories_hmc,
+                        accs_hmc, cfg.n_data, beta, L0,
+                        max_theta_dims=cfg.max_theta_plot_dims,
+                        save_prefix=cfg.save_plots_prefix)
 
     jax.block_until_ready(hmc_samples_thin)  # Final sync before runtime report
     print(f"\nDone in {time.time() - t0:.1f}s.")
