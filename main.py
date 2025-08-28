@@ -75,7 +75,7 @@ class Config:
     gamma: float = 1.0                    # used only if prior_radius None
 
     # Sampling
-    sampler: Literal["sgld","hmc","nuts"] = "sgld"
+    sampler: Literal["sgld","hmc","mclmc","nuts"] = "sgld"
     chains: int = 4
 
     # SGLD
@@ -94,6 +94,26 @@ class Config:
     hmc_thin: int = 5                # store every k-th draw for diagnostics
     hmc_eval_every: int = 1          # compute L_n(w) every k draws (usually 1 for HMC)
     hmc_dtype: str = "float64"
+
+    # MCLMC (unadjusted)
+    mclmc_draws: int = 2_000              # post-tuning steps (MCLMC yields 1 sample per step)
+    mclmc_eval_every: int = 1
+    mclmc_thin: int = 10
+    mclmc_dtype: str = "float64"          # keep f64 for stability (like HMC)
+
+    # MCLMC tuning
+    mclmc_tune_steps: int = 2_000         # steps used by the automatic tuner
+    mclmc_diagonal_preconditioning: bool = False
+    mclmc_desired_energy_var: float = 5e-4  # target EEV (per Sampling Book)
+    mclmc_integrator: Literal[
+        "isokinetic_mclachlan","isokinetic_velocity_verlet",
+        "isokinetic_yoshida","isokinetic_omelyan"
+    ] = "isokinetic_mclachlan"
+
+    # (optional) adjusted MCLMC
+    mclmc_adjusted: bool = False
+    mclmc_adjusted_target_accept: float = 0.90  # per docs' guidance
+    mclmc_grad_per_step_override: Optional[float] = None  # work accounting calibration
 
     # NUTS
     nuts_draws: int = 1_000
@@ -137,6 +157,11 @@ TEST_CFG = Config(
     hmc_draws=50,
     hmc_warmup=20,
     hmc_thin=5,
+
+    # Minimal MCLMC
+    mclmc_draws=80,
+    mclmc_tune_steps=100,
+    mclmc_thin=8,
 )
 
 CFG = Config()  # Default full config
@@ -622,6 +647,19 @@ def make_logpost_and_score(loss_full, loss_minibatch, theta0, n, beta, gamma):
     return logpost_and_grad, grad_logpost_minibatch
 
 
+def make_logdensity_for_mclmc(loss_full64, theta0_f64, n, beta, gamma):
+    """Create log-density function for MCLMC sampler (f64 precision)
+    
+    MCLMC expects a pure log-density function, not a gradient closure.
+    This extracts the log posterior: log π(θ) = -nβ L_n(θ) - γ/2 ||θ-θ₀||²
+    """
+    @jit
+    def logdensity(theta64):
+        Ln = loss_full64(theta64)  # already f64 X,Y inside loss_full64
+        lp = -0.5 * gamma * jnp.sum((theta64 - theta0_f64) ** 2)
+        return lp - n * beta * Ln
+    return logdensity
+
 
 # ----------------------------
 # SGLD chains (BlackJAX) - Online memory-efficient version
@@ -870,6 +908,195 @@ def run_hmc_online_with_adaptation(key, init_thetas, logpost_and_grad,
 
     samples_thin = stack_thinned(kept_list)
     return samples_thin, np.array(means), np.array(vars_), np.array(ns), accs, Ln_hist_list
+
+
+# ----------------------------
+# MCLMC chains (BlackJAX) - Online memory-efficient version
+# ----------------------------
+def run_mclmc_online(
+    key,
+    init_theta,                 # (chains, dim) f64
+    logdensity_fn,              # jitted f64 fn from make_logdensity_for_mclmc
+    draws: int,
+    eval_every: int,
+    thin: int,
+    Ln_full64,                  # jitted f64 loss for LLC evaluation
+    diag_dims=None, Rproj=None, # tiny θ diagnostics (subset/proj/none)
+    tuner_steps: int = 2000,
+    diagonal_preconditioning: bool = False,
+    desired_energy_var: float = 5e-4,
+    integrator_name: str = "isokinetic_mclachlan",
+    use_tqdm: bool = True,
+    progress_update_every: int = 50,
+    stats: RunStats | None = None,
+):
+    """
+    Unadjusted MCLMC: tune (L, step_size) using blackjax.mclmc_find_L_and_step_size,
+    then run draws steps, computing L_n online and storing thinned tiny diagnostics.
+    API grounded on Sampling Book's MCLMC page (1.2.x):
+      - mclmc_find_L_and_step_size(...)
+      - blackjax.mclmc(logdensity_fn, L=..., step_size=...).step
+      - blackjax.mcmc.integrators.isokinetic_mclachlan
+    See: https://blackjax-devs.github.io/sampling-book/algorithms/mclmc.html
+    """
+    # MCLMC (BlackJAX 1.2.x) quick facts:
+    # - Two hyperparameters L (momentum decoherence length) and step_size ε.
+    # - Use BlackJAX's automatic tuner to find (L, ε) before running.
+    # - Unadjusted MCLMC *does not* have accept/reject; adjusted variant exists and
+    #   typically targets ~0.9 MH acceptance; prefer unadjusted unless unbiasedness is
+    #   a hard requirement (per docs).
+    # - Sampling Book "How to run MCLMC" shows the exact sequence used here:
+    #   init -> build_kernel/integrator -> mclmc_find_L_and_step_size -> blackjax.mclmc(...)
+    #   https://blackjax-devs.github.io/sampling-book/algorithms/mclmc.html
+    # - Integrators list includes isokinetic_* variants (we default to isokinetic_mclachlan):
+    #   https://blackjax-devs.github.io/blackjax/autoapi/blackjax/mcmc/integrators/index.html
+
+    chains, dim = init_theta.shape
+
+    # 1) initial state (per chain)
+    def init_state(ck, pos):
+        return blackjax.mcmc.mclmc.init(position=pos, logdensity_fn=logdensity_fn, rng_key=ck)
+
+    # 2) kernel factory for tuner (per docs example)
+    integrator = getattr(blackjax.mcmc.integrators, integrator_name)
+    def build_kernel(inverse_mass_matrix):
+        return blackjax.mcmc.mclmc.build_kernel(
+            logdensity_fn=logdensity_fn,
+            integrator=integrator,
+            inverse_mass_matrix=inverse_mass_matrix,
+        )
+
+    # outputs
+    kept_list, means, vars_, ns, Ln_hist_list, energy_delta_list = [], [], [], [], [], []
+
+    # per-chain run
+    keys = [random.fold_in(key, c) for c in range(chains)]
+    for c in range(chains):
+        ck = keys[c]
+        init_state_c = init_state(ck, init_theta[c])
+
+        # 3) tune L and step_size (per docs)
+        tune_k1, tune_k2, run_k = random.split(ck, 3)
+        t0 = tic()
+        tuned_state, tuned_params, _ = blackjax.mclmc_find_L_and_step_size(
+            mclmc_kernel=build_kernel,
+            num_steps=tuner_steps,
+            state=init_state_c,
+            rng_key=tune_k1,
+            diagonal_preconditioning=diagonal_preconditioning,
+            desired_energy_var=desired_energy_var,
+        )
+        if stats:
+            # tuner cost is part of "warmup" wall time for MCLMC
+            stats.t_hmc_warmup += toc(t0)  # reuse same bucket or add new one for MCLMC
+        
+        # tuned_params has fields .L and .step_size (per docs)
+        alg = blackjax.mclmc(logdensity_fn, L=tuned_params.L, step_size=tuned_params.step_size)
+        step = jax.jit(alg.step)
+        state = tuned_state
+        kept, Lhist, Ehist = [], [], []
+        rm = RunningMeanVar()
+
+        pbar = tqdm(total=draws, desc=f"MCLMC(c{c})", leave=False) if use_tqdm else None
+        keys_draw = random.split(run_k, draws)
+        t1 = tic()
+        for t in range(draws):
+            state, info = step(keys_draw[t], state)  # unadjusted: no accept/reject
+            if (t % eval_every) == 0:
+                Ln = float(Ln_full64(state.position.astype(jnp.float64)))
+                rm.update(Ln)
+                Lhist.append(Ln)
+                if hasattr(info, "energy_change"):  # MCLMCInfo has energy_change in index
+                    Ehist.append(float(info.energy_change))
+                if stats: stats.n_hmc_full_loss += 1   # count LLC evals (same bucket)
+            if (t % thin) == 0:
+                vec = np.array(state.position)
+                if diag_dims is not None:
+                    to_store = vec[diag_dims]
+                elif Rproj is not None:
+                    to_store = Rproj @ vec
+                else:
+                    to_store = None
+                if to_store is not None:
+                    kept.append(to_store)
+            if pbar and (t % progress_update_every == 0 or t == draws-1):
+                pbar.set_postfix_str(f"L̄≈{np.mean(Lhist):.4f}" if Lhist else "")
+                pbar.update(1)
+
+        # end chain
+        if stats:
+            jax.block_until_ready(state.position)
+            stats.t_hmc_sampling += toc(t1)  # reuse bucket, or add a dedicated one if preferred
+            # crude "grad work" proxy: 1 integrator step per draw; set a multiplier if you calibrate later
+            stats.n_hmc_leapfrog_grads += draws  # you can scale by a factor after benchmarking
+
+        if pbar: pbar.close()
+        
+        # Determine shape for empty arrays based on diagnostic mode
+        if diag_dims is not None:
+            empty_shape = (0, len(diag_dims))
+        elif Rproj is not None:
+            empty_shape = (0, Rproj.shape[0])
+        else:
+            empty_shape = (0, 0)  # No theta storage
+        kept_list.append(np.stack(kept, 0) if kept else np.empty(empty_shape))
+        m, v, n = rm.value()
+        means.append(m)
+        vars_.append(v)
+        ns.append(n)
+        energy_delta_list.append(np.asarray(Ehist))
+        Ln_hist_list.append(np.asarray(Lhist))
+
+    samples_thin = stack_thinned(kept_list)
+    return samples_thin, np.array(means), np.array(vars_), np.array(ns), energy_delta_list, Ln_hist_list
+
+
+# ----------------------------
+# Uniform Sampler Registry/Dispatcher
+# ----------------------------
+def run_sampler(cfg, name: str, *,  # "sgld" | "hmc" | "mclmc"
+                init_theta_f32, init_theta_f64,
+                logpost_and_grad_f32, logpost_and_grad_f64,
+                grad_minibatch_f32,
+                Ln_full64, X_f32, Y_f32, theta0_f64, beta, gamma, stats=None):
+    """Uniform interface for running any sampler with consistent inputs/outputs"""
+    dim = init_theta_f64.shape[1]
+    diag_targets = prepare_diag_targets(dim, cfg)
+    
+    if name == "sgld":
+        return run_sgld_online(
+            random.PRNGKey(cfg.seed+10),
+            init_theta_f32, grad_minibatch_f32, X_f32, Y_f32, cfg.n_data,
+            cfg.sgld_step_size, cfg.sgld_steps, cfg.sgld_warmup, cfg.sgld_batch_size,
+            cfg.sgld_eval_every, cfg.sgld_thin, Ln_full64,
+            use_tqdm=cfg.use_tqdm, progress_update_every=cfg.progress_update_every,
+            stats=stats, **diag_targets
+        )
+    elif name == "hmc":
+        return run_hmc_online_with_adaptation(
+            random.PRNGKey(cfg.seed+20),
+            init_theta_f64, logpost_and_grad_f64,
+            cfg.hmc_num_integration_steps, cfg.hmc_warmup, cfg.hmc_draws,
+            cfg.hmc_thin, cfg.hmc_eval_every,
+            Ln_full64, use_tqdm=cfg.use_tqdm, progress_update_every=cfg.progress_update_every,
+            stats=stats, **diag_targets
+        )
+    elif name == "mclmc":
+        # Create logdensity for MCLMC
+        logdensity = make_logdensity_for_mclmc(Ln_full64, theta0_f64, cfg.n_data, beta, gamma)
+        return run_mclmc_online(
+            random.PRNGKey(cfg.seed+30),
+            init_theta_f64, logdensity,
+            cfg.mclmc_draws, cfg.mclmc_eval_every, cfg.mclmc_thin, Ln_full64,
+            use_tqdm=cfg.use_tqdm, progress_update_every=cfg.progress_update_every,
+            tuner_steps=cfg.mclmc_tune_steps,
+            diagonal_preconditioning=cfg.mclmc_diagonal_preconditioning,
+            desired_energy_var=cfg.mclmc_desired_energy_var,
+            integrator_name=cfg.mclmc_integrator,
+            stats=stats, **diag_targets
+        )
+    else:
+        raise ValueError(f"Unknown sampler: {name}")
 
 
 # ----------------------------
@@ -1188,6 +1415,41 @@ def main(cfg: Config = CFG):
     print("HMC diagnostics (L_n histories):")
     print(f"  ESS(L_n): {diag_L_hmc['ess']:.1f}  R-hat(L_n): {diag_L_hmc['rhat']:.3f}")
 
+    # ===== MCLMC (Online) =====
+    print("\n=== MCLMC (BlackJAX, online) ===")
+    k_mclmc = random.fold_in(key, 456)
+    init_thetas_mclmc = theta0_f64 + 0.01 * random.normal(k_mclmc, (cfg.chains, dim))
+
+    # Create logdensity for MCLMC
+    logdensity_mclmc = make_logdensity_for_mclmc(loss_full_f64, theta0_f64, cfg.n_data, beta, gamma)
+
+    mclmc_samples_thin, mclmc_Es, mclmc_Vars, mclmc_Ns, energy_deltas_mclmc, Ln_histories_mclmc = run_mclmc_online(
+        k_mclmc,
+        init_thetas_mclmc,
+        logdensity_mclmc,
+        cfg.mclmc_draws,
+        cfg.mclmc_eval_every,
+        cfg.mclmc_thin,
+        Ln_full64,
+        tuner_steps=cfg.mclmc_tune_steps,
+        diagonal_preconditioning=cfg.mclmc_diagonal_preconditioning,
+        desired_energy_var=cfg.mclmc_desired_energy_var,
+        integrator_name=cfg.mclmc_integrator,
+        use_tqdm=cfg.use_tqdm,
+        progress_update_every=cfg.progress_update_every,
+        stats=stats,
+        **diag_targets
+    )
+
+    # Compute LLC with proper CI using ESS
+    llc_mclmc, ci_mclmc = llc_ci_from_histories(Ln_histories_mclmc, cfg.n_data, beta, L0)
+    print(f"MCLMC LLC: {llc_mclmc:.4f}  95% CI: [{ci_mclmc[0]:.4f}, {ci_mclmc[1]:.4f}]")
+
+    # Scalar diagnostics on L_n histories (relevant to LLC estimand)
+    diag_L_mclmc = scalar_chain_diagnostics(Ln_histories_mclmc, name="L")
+    print("MCLMC diagnostics (L_n histories):")
+    print(f"  ESS(L_n): {diag_L_mclmc['ess']:.1f}  R-hat(L_n): {diag_L_mclmc['rhat']:.3f}")
+
     # LLC confidence interval from running statistics
     def llc_ci_from_running(L_means, L_vars, L_ns, n, beta, L0, alpha=0.05):
         # combine chain means via simple average; use within-chain SE pooled / n_chains
@@ -1208,14 +1470,19 @@ def main(cfg: Config = CFG):
         Ln_histories_sgld, cfg.n_data, beta, L0)
     llc_hmc_mean, se_hmc, ess_hmc = llc_mean_and_se_from_histories(
         Ln_histories_hmc, cfg.n_data, beta, L0)
+    llc_mclmc_mean, se_mclmc, ess_mclmc = llc_mean_and_se_from_histories(
+        Ln_histories_mclmc, cfg.n_data, beta, L0)
 
     # Separate gradient work from loss evaluations (for fair WNV comparison)
     sgld_grad_work = stats.n_sgld_minibatch_grads  # Only gradient operations
     hmc_grad_work = stats.n_hmc_leapfrog_grads     # Only gradient operations
+    # MCLMC work: use override if provided, otherwise default to draws count
+    mclmc_grad_work = int(cfg.mclmc_draws * (cfg.mclmc_grad_per_step_override or 1.0))
 
     # Compute WNV using gradient work only (loss evals are for LLC estimation, not sampling cost)
     wnv_sgld = work_normalized_variance(se_sgld, stats.t_sgld_sampling, sgld_grad_work)
     wnv_hmc = work_normalized_variance(se_hmc, stats.t_hmc_sampling, hmc_grad_work)
+    wnv_mclmc = work_normalized_variance(se_mclmc, stats.t_hmc_sampling, mclmc_grad_work)  # reuse HMC time bucket
 
     print(f"SGLD: λ̂={llc_sgld_mean:.4f}, SE={se_sgld:.4f}, ESS={ess_sgld:.1f}")
     print(f"      Time: {stats.t_sgld_sampling:.2f}s, WNV-time: {wnv_sgld['WNV_seconds']:.6f}")
@@ -1227,13 +1494,20 @@ def main(cfg: Config = CFG):
     print(f"      Grad work: {hmc_grad_work}, WNV-grad: {wnv_hmc['WNV_grads']:.6f}")
     print(f"      Loss evals: {stats.n_hmc_full_loss} (for LLC estimation)")
 
-    # WNV efficiency ratios
-    wnv_ratio_time = wnv_hmc['WNV_seconds'] / wnv_sgld['WNV_seconds'] if wnv_sgld['WNV_seconds'] > 0 else float('inf')
-    wnv_ratio_grad = wnv_hmc['WNV_grads'] / wnv_sgld['WNV_grads'] if wnv_sgld['WNV_grads'] > 0 else float('inf')
+    print(f"MCLMC: λ̂={llc_mclmc_mean:.4f}, SE={se_mclmc:.4f}, ESS={ess_mclmc:.1f}")
+    print(f"      Time: {stats.t_hmc_sampling:.2f}s, WNV-time: {wnv_mclmc['WNV_seconds']:.6f}")
+    print(f"      Grad work: {mclmc_grad_work}, WNV-grad: {wnv_mclmc['WNV_grads']:.6f}")
+    print(f"      Loss evals: {stats.n_hmc_full_loss} (for LLC estimation)")
 
-    print("WNV Efficiency Ratios (HMC/SGLD):")
-    print(f"  Time-normalized: {wnv_ratio_time:.3f}")
-    print(f"  Grad-normalized: {wnv_ratio_grad:.3f}")
+    # WNV efficiency ratios
+    wnv_ratio_hmc_sgld_time = wnv_hmc['WNV_seconds'] / wnv_sgld['WNV_seconds'] if wnv_sgld['WNV_seconds'] > 0 else float('inf')
+    wnv_ratio_hmc_sgld_grad = wnv_hmc['WNV_grads'] / wnv_sgld['WNV_grads'] if wnv_sgld['WNV_grads'] > 0 else float('inf')
+    wnv_ratio_mclmc_sgld_time = wnv_mclmc['WNV_seconds'] / wnv_sgld['WNV_seconds'] if wnv_sgld['WNV_seconds'] > 0 else float('inf')
+    wnv_ratio_mclmc_sgld_grad = wnv_mclmc['WNV_grads'] / wnv_sgld['WNV_grads'] if wnv_sgld['WNV_grads'] > 0 else float('inf')
+
+    print("WNV Efficiency Ratios (vs SGLD):")
+    print(f"  HMC   - Time-normalized: {wnv_ratio_hmc_sgld_time:.3f}, Grad-normalized: {wnv_ratio_hmc_sgld_grad:.3f}")
+    print(f"  MCLMC - Time-normalized: {wnv_ratio_mclmc_sgld_time:.3f}, Grad-normalized: {wnv_ratio_mclmc_sgld_grad:.3f}")
 
     print("\n=== Timing Summary (seconds) ===")
     print(f"Build & Data:     {stats.t_build:.2f}")
