@@ -39,6 +39,37 @@ Ultimately, we want to devise and evaluate new sampling algorithms for singular 
 
 ---
 
+## Example Diagnostics
+
+These are examples from a recent run (promoted to `assets/readme/`).
+
+### Running LLC Estimates
+
+![SGLD running LLC](assets/readme/sgld_llc_running.png)
+*SGLD: Running Local Learning Coefficient estimates showing convergence over sampling iterations*
+
+![HMC running LLC](assets/readme/hmc_llc_running.png)
+*HMC: Running LLC estimates with multiple chains and pooled estimate*
+
+![MCLMC running LLC](assets/readme/mclmc_llc_running.png)
+*MCLMC: Running LLC estimates showing sampling efficiency*
+
+### MCMC Diagnostics
+
+![HMC L_n Traces](assets/readme/hmc_L_trace.png)
+*HMC: Trace plots of loss function values L_n across chains*
+
+![HMC Autocorrelation](assets/readme/hmc_L_acf.png)
+*HMC: Autocorrelation function for L_n showing mixing properties*
+
+![HMC Acceptance](assets/readme/hmc_acceptance.png)
+*HMC: Acceptance rate distribution across chains*
+
+![MCLMC Energy Changes](assets/readme/mclmc_energy_hist.png)
+*MCLMC: Energy change distribution showing microcanonical dynamics*
+
+---
+
 ## Installation
 
 We use [uv](https://docs.astral.sh/uv/) instead of pip:
@@ -106,7 +137,21 @@ make run-save      # Run with visualization saving enabled
 make diag          # Quick test run with plots
 make clean         # Remove all artifacts
 make artifacts     # Create artifacts directory
+make promote-readme # Copy plots from latest run to README assets
 ```
+
+### Updating README Examples
+
+To refresh the example plots in the README:
+
+```bash
+make diag                    # Run a quick diagnostic with plots
+make promote-readme         # Copy selected plots to assets/readme/
+git add assets/readme       # Stage the new images
+git commit -m "refresh README examples"
+```
+
+The promotion script automatically selects key diagnostic plots and copies them to stable filenames in `assets/readme/`. No manual file management needed.
 
 ---
 

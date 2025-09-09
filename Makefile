@@ -1,6 +1,6 @@
 # LLC Sampler Benchmark Makefile
 
-.PHONY: help run diag test clean artifacts
+.PHONY: help run diag test clean artifacts promote-readme
 
 # Default target
 help:
@@ -13,6 +13,7 @@ help:
 	@echo "  sweep      - Run parameter sweep experiments"
 	@echo "  clean      - Clean generated artifacts"
 	@echo "  artifacts  - Create artifacts directory"
+	@echo "  promote-readme - Copy plots from latest run to README assets"
 	@echo ""
 	@echo "Configuration:"
 	@echo "  PYTHON     - Python command (default: uv run python)"
@@ -76,3 +77,8 @@ example-deep:
 
 example-mclmc-only:
 	$(PYTHON) -c "from main import main, Config; main(Config(sampler='mclmc', save_plots=True))"
+
+# Promote plots from latest run to README assets
+promote-readme:
+	$(PYTHON) scripts/promote_readme_images.py
+	@git status --short assets/readme/

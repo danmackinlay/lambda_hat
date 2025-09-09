@@ -10,8 +10,12 @@ wheels/
 .venv
 
 # Artifacts and visualization outputs
-artifacts/
+artifacts/*
+!artifacts/.keep
 *.png
 *.jpg
 *.jpeg
 *.pdf
+
+# Exception: tracked README example images
+!assets/readme/*.png
