@@ -1731,13 +1731,10 @@ def save_idata_L(run_dir: str, name: str, Ln_histories) -> str | None:
 
 def save_theta_thin(run_dir: str, name: str, samples_thin) -> str | None:
     """Save thinned theta samples as compressed npz"""
-    if not samples_thin or len(samples_thin) == 0:
-        return None
-
     from pathlib import Path
 
     # samples_thin: list of arrays, convert to (chains, draws, k)
-    S = np.array(samples_thin) if samples_thin else np.array([])
+    S = np.array(samples_thin) if samples_thin is not None else np.array([])
     if S.size == 0:
         return None
 

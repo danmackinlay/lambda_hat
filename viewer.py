@@ -7,6 +7,7 @@ app = marimo.App(width="medium")
 @app.cell
 def _():
     import marimo as mo
+
     return (mo,)
 
 
@@ -88,7 +89,10 @@ def _(artifacts_dir, run_selector):
         for file_obj in sorted(files):
             print(f"  {file_obj.name}")
 
-        run_info = {"path": selected_run, "files": {file_obj.name: file_obj for file_obj in files}}
+        run_info = {
+            "path": selected_run,
+            "files": {file_obj.name: file_obj for file_obj in files},
+        }
     else:
         run_info = None
     return (run_info,)
