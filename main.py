@@ -179,6 +179,8 @@ class RunStats:
     t_sgld_sampling: float = 0.0
     t_hmc_warmup: float = 0.0
     t_hmc_sampling: float = 0.0
+    t_mclmc_warmup: float = 0.0
+    t_mclmc_sampling: float = 0.0
 
     # work counters (proxy for computational work)
     # Count "gradient-equivalent" evaluations to compare samplers.
@@ -190,6 +192,8 @@ class RunStats:
     n_hmc_leapfrog_grads: int = 0
     n_hmc_full_loss: int = 0
     n_hmc_warmup_leapfrog_grads: int = 0  # estimated during adaptation
+    n_mclmc_steps: int = 0
+    n_mclmc_full_loss: int = 0
 
 def tic(): return time.perf_counter()
 def toc(t0): return time.perf_counter() - t0
@@ -838,18 +842,52 @@ def run_hmc_online_with_adaptation(key, init_thetas, logpost_and_grad,
         kernel = blackjax.hmc(logdensity, **dict(step_size=params["step_size"], inverse_mass_matrix=invM),
                               num_integration_steps=num_integration_steps).step
 
+        # Precompile the kernel to avoid XLA compilation during sampling
+        compiled_step = jax.jit(kernel)
+        pre_t = tic()
+        ck, ck_draw = random.split(ck)                        # Decorrelate adaptation and sampling
+        draw_keys = random.split(ck_draw, draws)              # Use separate key stream
+        state, info = compiled_step(draw_keys[0], state)      # Trigger compilation
+        jax.block_until_ready(state.position)
+        if stats:
+            stats.t_hmc_warmup += toc(pre_t)
+
         rm, kept, acc_chain, Lhist = RunningMeanVar(), [], [], []
         hmc_eval_time = 0.0
         t1 = tic()
-        ck, ck_draw = random.split(ck)                        # Decorrelate adaptation and sampling
-        draw_keys = random.split(ck_draw, draws)              # Use separate key stream
+        
+        # Process the first sample (already computed during precompilation)
+        if (0 % eval_every) == 0:
+            eval_t0 = tic() if stats else None
+            Ln_val = Ln_full64(state.position.astype(jnp.float64))
+            Ln = float(jax.device_get(Ln_val))
+            if stats:
+                hmc_eval_time += toc(eval_t0)
+            rm.update(Ln)
+            Lhist.append(Ln)
+            if stats:
+                stats.n_hmc_full_loss += 1
+        if (0 % thin) == 0:
+            vec = np.array(state.position)
+            if diag_dims is not None:
+                to_store = vec[diag_dims]
+            elif Rproj is not None:
+                to_store = Rproj @ vec
+            else:
+                to_store = None
+            if to_store is not None:
+                kept.append(to_store)
+        acc_chain.append(get_accept(info))
+        if stats:
+            steps = getattr(info, "num_integration_steps", num_integration_steps)
+            stats.n_hmc_leapfrog_grads += int(steps + 1)
+        if pbar:
+            pbar.set_postfix_str(f"acc≈{np.mean(acc_chain):.2f}, L̄≈{(rm.value()[0] if rm.n>0 else float('nan')):.4f}")
+            pbar.update(1)
 
-        @jit
-        def one(state, k):
-            return kernel(k, state)
-
-        for t in range(draws):
-            state, info = one(state, draw_keys[t])
+        # Continue with remaining samples
+        for t in range(1, draws):
+            state, info = compiled_step(draw_keys[t], state)
             if (t % eval_every) == 0:
                 # Time LLC evaluation separately from sampling
                 eval_t0 = tic() if stats else None
@@ -988,7 +1026,7 @@ def run_mclmc_online(
         )
         if stats:
             # tuner cost is part of "warmup" wall time for MCLMC
-            stats.t_hmc_warmup += toc(t0)  # reuse same bucket or add new one for MCLMC
+            stats.t_mclmc_warmup += toc(t0)
         
         # tuned_params has fields .L and .step_size (per docs)
         alg = blackjax.mclmc(logdensity_fn, L=tuned_params.L, step_size=tuned_params.step_size)
@@ -1008,7 +1046,7 @@ def run_mclmc_online(
                 Lhist.append(Ln)
                 if hasattr(info, "energy_change"):  # MCLMCInfo has energy_change in index
                     Ehist.append(float(info.energy_change))
-                if stats: stats.n_hmc_full_loss += 1   # count LLC evals (same bucket)
+                if stats: stats.n_mclmc_full_loss += 1   # count LLC evals
             if (t % thin) == 0:
                 vec = np.array(state.position)
                 if diag_dims is not None:
@@ -1026,9 +1064,8 @@ def run_mclmc_online(
         # end chain
         if stats:
             jax.block_until_ready(state.position)
-            stats.t_hmc_sampling += toc(t1)  # reuse bucket, or add a dedicated one if preferred
-            # crude "grad work" proxy: 1 integrator step per draw; set a multiplier if you calibrate later
-            stats.n_hmc_leapfrog_grads += draws  # you can scale by a factor after benchmarking
+            stats.t_mclmc_sampling += toc(t1)
+            stats.n_mclmc_steps += draws
 
         if pbar: pbar.close()
         
@@ -1170,11 +1207,18 @@ def _running_llc(Ln_histories, n, beta, L0):
 
 def plot_diagnostics(sgld_samples_thin, Ln_histories_sgld,
                      hmc_samples_thin, Ln_histories_hmc,
-                     accs_hmc, n, beta, L0, max_theta_dims=8, save_prefix=None):
+                     accs_hmc, n, beta, L0, 
+                     mclmc_samples_thin=None, Ln_histories_mclmc=None, 
+                     energy_deltas_mclmc=None,
+                     max_theta_dims=8, save_prefix=None):
     """Plot comprehensive convergence diagnostics"""
     
     # Running LLC plots
-    for name, H in [("SGLD", Ln_histories_sgld), ("HMC", Ln_histories_hmc)]:
+    samplers = [("SGLD", Ln_histories_sgld), ("HMC", Ln_histories_hmc)]
+    if Ln_histories_mclmc is not None:
+        samplers.append(("MCLMC", Ln_histories_mclmc))
+    
+    for name, H in samplers:
         lam, pooled = _running_llc(H, n, beta, L0)
         if lam is None:
             continue
@@ -1193,7 +1237,11 @@ def plot_diagnostics(sgld_samples_thin, Ln_histories_sgld,
         plt.show()
 
     # L_n trace, ACF, ESS, Rhat
-    for name, H in [("SGLD", Ln_histories_sgld), ("HMC", Ln_histories_hmc)]:
+    samplers = [("SGLD", Ln_histories_sgld), ("HMC", Ln_histories_hmc)]
+    if Ln_histories_mclmc is not None:
+        samplers.append(("MCLMC", Ln_histories_mclmc))
+    
+    for name, H in samplers:
         idata_L, T = _idata_from_L(H)
         if idata_L is None:
             continue
@@ -1227,7 +1275,7 @@ def plot_diagnostics(sgld_samples_thin, Ln_histories_sgld,
         
         # R-hat
         try:
-            az.plot_rank(idata_L, var_names=["L"])
+            az.plot_forest(idata_L, var_names=["L"], r_hat=True)
             plt.suptitle(f"{name}: R̂(L_n)", y=1.02)
             plt.tight_layout()
             if save_prefix:
@@ -1237,7 +1285,11 @@ def plot_diagnostics(sgld_samples_thin, Ln_histories_sgld,
             pass
 
     # Tiny theta diagnostics (only if we stored subset/proj)
-    for name, S in [("SGLD", sgld_samples_thin), ("HMC", hmc_samples_thin)]:
+    samplers = [("SGLD", sgld_samples_thin), ("HMC", hmc_samples_thin)]
+    if mclmc_samples_thin is not None:
+        samplers.append(("MCLMC", mclmc_samples_thin))
+    
+    for name, S in samplers:
         idata_th, idx = _idata_from_theta(S, max_dims=max_theta_dims)
         if idata_th is None:
             continue
@@ -1279,6 +1331,23 @@ def plot_diagnostics(sgld_samples_thin, Ln_histories_sgld,
             if save_prefix:
                 plt.savefig(f"{save_prefix}_hmc_acceptance.png", dpi=160)
             plt.show()
+    
+    # MCLMC energy change histogram
+    if energy_deltas_mclmc is not None:
+        try:
+            e = np.concatenate([np.asarray(eh) for eh in energy_deltas_mclmc if len(eh)])
+            if e.size:
+                plt.figure(figsize=(6, 4))
+                plt.hist(e, bins=20, density=True)
+                plt.xlabel("ΔH")
+                plt.ylabel("density")
+                plt.title("MCLMC energy change histogram")
+                plt.tight_layout()
+                if save_prefix:
+                    plt.savefig(f"{save_prefix}_mclmc_energy_hist.png", dpi=160)
+                plt.show()
+        except Exception:
+            pass
 
 
 # ----------------------------
@@ -1482,7 +1551,7 @@ def main(cfg: Config = CFG):
     # Compute WNV using gradient work only (loss evals are for LLC estimation, not sampling cost)
     wnv_sgld = work_normalized_variance(se_sgld, stats.t_sgld_sampling, sgld_grad_work)
     wnv_hmc = work_normalized_variance(se_hmc, stats.t_hmc_sampling, hmc_grad_work)
-    wnv_mclmc = work_normalized_variance(se_mclmc, stats.t_hmc_sampling, mclmc_grad_work)  # reuse HMC time bucket
+    wnv_mclmc = work_normalized_variance(se_mclmc, stats.t_mclmc_sampling, mclmc_grad_work)
 
     print(f"SGLD: λ̂={llc_sgld_mean:.4f}, SE={se_sgld:.4f}, ESS={ess_sgld:.1f}")
     print(f"      Time: {stats.t_sgld_sampling:.2f}s, WNV-time: {wnv_sgld['WNV_seconds']:.6f}")
@@ -1495,9 +1564,9 @@ def main(cfg: Config = CFG):
     print(f"      Loss evals: {stats.n_hmc_full_loss} (for LLC estimation)")
 
     print(f"MCLMC: λ̂={llc_mclmc_mean:.4f}, SE={se_mclmc:.4f}, ESS={ess_mclmc:.1f}")
-    print(f"      Time: {stats.t_hmc_sampling:.2f}s, WNV-time: {wnv_mclmc['WNV_seconds']:.6f}")
+    print(f"      Time: {stats.t_mclmc_sampling:.2f}s, WNV-time: {wnv_mclmc['WNV_seconds']:.6f}")
     print(f"      Grad work: {mclmc_grad_work}, WNV-grad: {wnv_mclmc['WNV_grads']:.6f}")
-    print(f"      Loss evals: {stats.n_hmc_full_loss} (for LLC estimation)")
+    print(f"      Loss evals: {stats.n_mclmc_full_loss} (for LLC estimation)")
 
     # WNV efficiency ratios
     wnv_ratio_hmc_sgld_time = wnv_hmc['WNV_seconds'] / wnv_sgld['WNV_seconds'] if wnv_sgld['WNV_seconds'] > 0 else float('inf')
@@ -1516,6 +1585,8 @@ def main(cfg: Config = CFG):
     print(f"SGLD Sampling:    {stats.t_sgld_sampling:.2f}")
     print(f"HMC Warmup:       {stats.t_hmc_warmup:.2f}")
     print(f"HMC Sampling:     {stats.t_hmc_sampling:.2f}")
+    print(f"MCLMC Warmup:     {stats.t_mclmc_warmup:.2f}")
+    print(f"MCLMC Sampling:   {stats.t_mclmc_sampling:.2f}")
     jax.block_until_ready(hmc_samples_thin)  # Sync before total runtime measurement
     print(f"Total Runtime:    {time.time() - t0:.2f}")
 
@@ -1525,6 +1596,8 @@ def main(cfg: Config = CFG):
     print(f"HMC - Leapfrog grads:   {stats.n_hmc_leapfrog_grads}")
     print(f"HMC - Full loss evals:  {stats.n_hmc_full_loss}")
     print(f"HMC - Warmup grads:     {stats.n_hmc_warmup_leapfrog_grads}")
+    print(f"MCLMC - Steps:          {stats.n_mclmc_steps}")
+    print(f"MCLMC - Full loss evals: {stats.n_mclmc_full_loss}")
 
     # Plot diagnostics if enabled
     if cfg.diag_mode != "none":
@@ -1532,6 +1605,8 @@ def main(cfg: Config = CFG):
         plot_diagnostics(sgld_samples_thin, Ln_histories_sgld,
                         hmc_samples_thin, Ln_histories_hmc,
                         accs_hmc, cfg.n_data, beta, L0,
+                        mclmc_samples_thin, Ln_histories_mclmc,
+                        energy_deltas_mclmc,
                         max_theta_dims=cfg.max_theta_plot_dims,
                         save_prefix=cfg.save_plots_prefix)
 
