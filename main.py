@@ -2,6 +2,7 @@
 import os
 
 os.environ.setdefault("JAX_ENABLE_X64", "true")  # HMC benefits from float64
+os.environ.setdefault("MPLBACKEND", "Agg")  # Headless rendering - no GUI windows
 
 import time
 from dataclasses import dataclass, replace
@@ -22,6 +23,8 @@ import optax
 from tqdm.auto import tqdm
 import pandas as pd
 import matplotlib.pyplot as plt
+
+plt.switch_backend("Agg")  # Ensure headless backend even if pyplot was already imported
 
 
 # ----------------------------
@@ -145,6 +148,7 @@ class Config:
     # Artifacts and visualization saving
     artifacts_dir: str = "artifacts"  # base directory for saving artifacts
     save_plots: bool = False  # whether to save all diagnostic plots
+    show_plots: bool = False  # whether to display plots (default: headless)
     auto_create_run_dir: bool = True  # create timestamped run directories
     save_manifest: bool = True  # save run configuration to manifest.txt
     save_readme_snippet: bool = True  # generate README_snippet.md
@@ -173,6 +177,11 @@ TEST_CFG = Config(
     mclmc_draws=80,
     mclmc_tune_steps=100,
     mclmc_thin=8,
+    # Enable headless plot saving for testing
+    save_plots=True,
+    show_plots=False,
+    save_manifest=True,
+    save_readme_snippet=True,
 )
 
 CFG = Config()  # Default full config
@@ -1441,6 +1450,86 @@ def _running_llc(Ln_histories, n, beta, L0):
     return lam, pooled
 
 
+# ----------------------------
+# Plotting helpers
+# ----------------------------
+def _finalize_figure(cfg: Config, save_prefix: str | None, save_dir: str | None, name: str):
+    """Save and/or show figure, then close it to prevent blocking"""
+    saved_paths = []
+    
+    # Save via legacy save_prefix (backward compatibility)
+    if save_prefix:
+        stem = f"{save_prefix}_{name}"
+        path = f"{stem}.png"
+        plt.savefig(path, dpi=160, bbox_inches="tight")
+        saved_paths.append(path)
+    
+    # Save via new save_dir system
+    if save_dir:
+        saved_paths.extend(save_plot(save_dir, name))
+    
+    # Show if requested (usually False for headless)
+    if cfg.show_plots:
+        plt.show()
+    else:
+        plt.close()  # Release memory, no GUI
+    
+    return saved_paths
+
+def save_plot(save_dir: str, name: str, fmt: str = "png") -> list[str]:
+    """Save current matplotlib figure to save_dir with consistent naming"""
+    from pathlib import Path
+    paths = []
+    stem = Path(save_dir) / name
+    
+    if fmt in ("png", "both"):
+        path = f"{stem}.png"
+        plt.savefig(path, dpi=160, bbox_inches="tight")
+        paths.append(path)
+    
+    if fmt in ("svg", "both"):
+        path = f"{stem}.svg"
+        plt.savefig(path, bbox_inches="tight")
+        paths.append(path)
+    
+    return paths
+
+def write_html_gallery(run_dir: str, images: list[str], title: str = "LLC Sampler Diagnostics"):
+    """Generate HTML gallery for viewing all saved plots"""
+    from pathlib import Path
+    rd = Path(run_dir)
+    rels = [os.path.relpath(p, start=rd) for p in images if os.path.exists(p)]
+    
+    items = []
+    for r in rels:
+        items.append(f'<div><img src="{r}" style="max-width: 720px; height: auto;"><br><small>{r}</small></div><hr/>')
+    
+    html = f"""<!doctype html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>{title}</title>
+    <style>
+        body {{ font-family: Arial, sans-serif; margin: 20px; }}
+        img {{ border: 1px solid #ddd; margin-bottom: 10px; }}
+        small {{ color: #666; }}
+    </style>
+</head>
+<body>
+    <h1>{title}</h1>
+    <p><strong>Run directory:</strong> {rd}</p>
+    <p><strong>Generated:</strong> {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}</p>
+    <p><strong>Total images:</strong> {len(rels)}</p>
+    <hr/>
+    {"".join(items)}
+</body>
+</html>"""
+    
+    gallery_path = rd / "index.html"
+    gallery_path.write_text(html)
+    return str(gallery_path)
+
+
 def plot_diagnostics(
     sgld_samples_thin,
     Ln_histories_sgld,
@@ -1450,6 +1539,7 @@ def plot_diagnostics(
     n,
     beta,
     L0,
+    cfg: Config,
     mclmc_samples_thin=None,
     Ln_histories_mclmc=None,
     energy_deltas_mclmc=None,
@@ -1458,6 +1548,7 @@ def plot_diagnostics(
     save_dir=None,
 ):
     """Plot comprehensive convergence diagnostics"""
+    saved_files = []
 
     def save_plot(filename):
         """Helper to save plot with consistent naming and location"""
@@ -1488,8 +1579,7 @@ def plot_diagnostics(
         plt.title(f"{name}: running LLC")
         plt.legend()
         plt.tight_layout()
-        save_plot(f"{name.lower()}_llc_running.png")
-        plt.show()
+        saved_files.extend(_finalize_figure(cfg, save_prefix, save_dir, f"{name.lower()}_llc_running"))
 
     # L_n trace, ACF, ESS, Rhat
     samplers = [("SGLD", Ln_histories_sgld), ("HMC", Ln_histories_hmc)]
@@ -1505,23 +1595,20 @@ def plot_diagnostics(
         az.plot_trace(idata_L, var_names=["L"])
         plt.suptitle(f"{name}: L_n trace", y=1.02)
         plt.tight_layout()
-        save_plot(f"{name.lower()}_L_trace.png")
-        plt.show()
+        saved_files.extend(_finalize_figure(cfg, save_prefix, save_dir, f"{name.lower()}_L_trace"))
 
         # Autocorrelation
         az.plot_autocorr(idata_L, var_names=["L"])
         plt.suptitle(f"{name}: L_n ACF", y=1.02)
         plt.tight_layout()
-        save_plot(f"{name.lower()}_L_acf.png")
-        plt.show()
+        saved_files.extend(_finalize_figure(cfg, save_prefix, save_dir, f"{name.lower()}_L_acf"))
 
         # ESS
         try:
             az.plot_ess(idata_L, var_names=["L"])
             plt.suptitle(f"{name}: ESS(L_n)", y=1.02)
             plt.tight_layout()
-            save_plot(f"{name.lower()}_L_ess.png")
-            plt.show()
+            saved_files.extend(_finalize_figure(cfg, save_prefix, save_dir, f"{name.lower()}_L_ess"))
         except:
             pass
 
@@ -1530,8 +1617,7 @@ def plot_diagnostics(
             az.plot_forest(idata_L, var_names=["L"], r_hat=True)
             plt.suptitle(f"{name}: R̂(L_n)", y=1.02)
             plt.tight_layout()
-            save_plot(f"{name.lower()}_L_rhat.png")
-            plt.show()
+            saved_files.extend(_finalize_figure(cfg, save_prefix, save_dir, f"{name.lower()}_L_rhat"))
         except:
             pass
 
@@ -1552,8 +1638,7 @@ def plot_diagnostics(
             az.plot_trace(idata_th, var_names=["theta"], coords=coords)
             plt.suptitle(f"{name}: θ trace (k={len(idx)})", y=1.02)
             plt.tight_layout()
-            save_plot(f"{name.lower()}_theta_trace.png")
-            plt.show()
+            saved_files.extend(_finalize_figure(cfg, save_prefix, save_dir, f"{name.lower()}_theta_trace"))
         except:
             pass
 
@@ -1562,8 +1647,7 @@ def plot_diagnostics(
             az.plot_rank(idata_th, var_names=["theta"], coords=coords)
             plt.suptitle(f"{name}: θ rank (k={len(idx)})", y=1.02)
             plt.tight_layout()
-            save_plot(f"{name.lower()}_theta_rank.png")
-            plt.show()
+            saved_files.extend(_finalize_figure(cfg, save_prefix, save_dir, f"{name.lower()}_theta_rank"))
         except:
             pass
 
@@ -1577,8 +1661,7 @@ def plot_diagnostics(
             plt.ylabel("density")
             plt.title("HMC acceptance")
             plt.tight_layout()
-            save_plot("hmc_acceptance.png")
-            plt.show()
+            saved_files.extend(_finalize_figure(cfg, save_prefix, save_dir, "hmc_acceptance"))
 
     # MCLMC energy change histogram
     if energy_deltas_mclmc is not None:
@@ -1593,10 +1676,11 @@ def plot_diagnostics(
                 plt.ylabel("density")
                 plt.title("MCLMC energy change histogram")
                 plt.tight_layout()
-                save_plot("mclmc_energy_hist.png")
-                plt.show()
+                saved_files.extend(_finalize_figure(cfg, save_prefix, save_dir, "mclmc_energy_hist"))
         except Exception:
             pass
+    
+    return saved_files
 
 
 # ----------------------------
@@ -2019,9 +2103,10 @@ def main(cfg: Config = CFG):
     print(f"MCLMC - Full loss evals: {stats.n_mclmc_full_loss}")
 
     # Plot diagnostics if enabled
+    saved_files = []
     if cfg.diag_mode != "none":
         print("\n=== Generating Diagnostic Plots ===")
-        plot_diagnostics(
+        saved_files = plot_diagnostics(
             sgld_samples_thin,
             Ln_histories_sgld,
             hmc_samples_thin,
@@ -2030,6 +2115,7 @@ def main(cfg: Config = CFG):
             cfg.n_data,
             beta,
             L0,
+            cfg,
             mclmc_samples_thin,
             Ln_histories_mclmc,
             energy_deltas_mclmc,
@@ -2043,6 +2129,12 @@ def main(cfg: Config = CFG):
         save_run_manifest(run_dir, cfg, stats)
         save_readme_snippet(run_dir, cfg)
         update_readme_with_run(run_dir, cfg)  # Optional auto-update
+        
+        # Generate HTML gallery if we have saved files
+        if saved_files:
+            gallery_path = write_html_gallery(run_dir, saved_files, title="LLC Sampler Diagnostics")
+            print(f"HTML gallery: {gallery_path}")
+        
         print(f"Artifacts saved to: {run_dir}")
 
     jax.block_until_ready(hmc_samples_thin)  # Final sync before runtime report
