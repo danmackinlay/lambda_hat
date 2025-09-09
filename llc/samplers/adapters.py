@@ -1,0 +1,212 @@
+# llc/samplers/adapters.py
+from __future__ import annotations
+from typing import Dict, Any, List, Optional, Tuple, Callable
+
+import jax
+import jax.numpy as jnp
+import numpy as np
+import blackjax
+from tqdm.auto import tqdm
+
+from .base import drive_chain, ChainResult, default_tiny_store
+
+Array = jnp.ndarray
+
+# ---------- SGLD (BlackJAX 1.2.5 returns new_position only) ----------
+
+def run_sgld_chain(
+    *,
+    rng_key: Array,
+    init_theta: Array,
+    grad_logpost_minibatch,            # (theta, (Xb,Yb)) -> grad
+    X: Array,
+    Y: Array,
+    n_data: int,
+    step_size: float,
+    n_steps: int,
+    warmup: int,
+    batch_size: int,
+    eval_every: int,
+    thin: int,
+    Ln_eval_f64,
+    tiny_store_fn=default_tiny_store,
+    use_tqdm=True,
+    progress_label="SGLD",
+    progress_update_every=50,
+    # Optional accounting callback: stats.n_sgld_minibatch_grads += 1 per step
+    work_bump: Callable | None = None,
+) -> ChainResult:
+    sgld = blackjax.sgld(grad_logpost_minibatch)
+    step = jax.jit(sgld.step)
+
+    def step_fn(key: Array, theta: Array):
+        # minibatch indices from key
+        k_noise, k_batch = jax.random.split(key)
+        idx = jax.random.randint(k_batch, (batch_size,), 0, n_data)
+        new_theta = step(k_noise, theta, (X[idx], Y[idx]), step_size)
+        if work_bump:
+            work_bump()  # one minibatch gradient
+        return new_theta  # no info
+
+    return drive_chain(
+        rng_key=rng_key,
+        init_state=init_theta,
+        step_fn=step_fn,
+        step_returns_info=False,
+        n_steps=n_steps,
+        warmup=warmup,
+        eval_every=eval_every,
+        thin=thin,
+        position_fn=lambda s: s,
+        Ln_eval_f64=Ln_eval_f64,
+        tiny_store_fn=tiny_store_fn,
+        use_tqdm=use_tqdm,
+        progress_label=progress_label,
+        progress_update_every=progress_update_every,
+    )
+
+# ---------- HMC (with window adaptation) ----------
+
+def run_hmc_chain(
+    *,
+    rng_key: Array,
+    init_theta: Array,
+    logpost_and_grad,                 # theta -> (logpost, grad)
+    draws: int,
+    warmup: int,
+    L: int,
+    eval_every: int,
+    thin: int,
+    Ln_eval_f64,
+    tiny_store_fn=default_tiny_store,
+    use_tqdm=True,
+    progress_label="HMC",
+    progress_update_every=50,
+    work_bump: Callable | None = None,   # bump by (L+1) per draw
+) -> ChainResult:
+    def logdensity(theta):
+        val, _ = logpost_and_grad(theta)
+        return val
+
+    wa = blackjax.window_adaptation(
+        blackjax.hmc, logdensity, is_mass_matrix_diagonal=True, num_integration_steps=L
+    )
+    (state, params), _ = wa.run(rng_key, init_theta, num_steps=warmup)
+    invM = params.get("inverse_mass_matrix", jnp.ones_like(init_theta))
+    if invM.ndim == 2:
+        invM = jnp.diag(invM)
+    kernel = blackjax.hmc(logdensity, step_size=params["step_size"], inverse_mass_matrix=invM, num_integration_steps=L).step
+    step = jax.jit(kernel)
+
+    # Prime compilation
+    k_pre, k_draws = jax.random.split(rng_key)
+    k_stream = jax.random.split(k_draws, max(1, draws))
+    state, info = step(k_stream[0], state)  # compile
+    if work_bump:
+        work_bump(L + 1)
+
+    def step_fn(key: Array, st):
+        st, inf = step(key, st)
+        if work_bump:
+            # Velocity-Verlet ~ (L+1) grad evals per draw
+            work_bump(getattr(inf, "num_integration_steps", L) + 1)
+        return st, inf
+
+    # info hook: record acceptance into extras["accept"]
+    def info_hook(info, ctx):
+        acc = getattr(info, "acceptance_rate", np.nan)
+        if not np.isnan(acc):
+            ctx["put_extra"]("accept", float(acc))
+
+    return drive_chain(
+        rng_key=k_draws,
+        init_state=state,
+        step_fn=step_fn,
+        step_returns_info=True,
+        n_steps=draws,
+        warmup=0,  # warmup already done above
+        eval_every=eval_every,
+        thin=thin,
+        position_fn=lambda st: st.position,
+        Ln_eval_f64=Ln_eval_f64,
+        tiny_store_fn=tiny_store_fn,
+        use_tqdm=use_tqdm,
+        progress_label=progress_label,
+        progress_update_every=progress_update_every,
+        info_hooks=[info_hook],
+    )
+
+# ---------- MCLMC (unadjusted; tuned L & step_size) ----------
+
+def run_mclmc_chain(
+    *,
+    rng_key: Array,
+    init_theta: Array,
+    logdensity_fn,                     # pure log π(θ)
+    draws: int,
+    eval_every: int,
+    thin: int,
+    Ln_eval_f64,
+    tiny_store_fn=default_tiny_store,
+    tuner_steps: int = 2000,
+    diagonal_preconditioning: bool = False,
+    desired_energy_var: float = 5e-4,
+    integrator_name: str = "isokinetic_mclachlan",
+    use_tqdm=True,
+    progress_label="MCLMC",
+    progress_update_every=50,
+    work_bump: Callable | None = None,   # if provided, bump per step
+) -> ChainResult:
+    integrator = getattr(blackjax.mcmc.integrators, integrator_name)
+    def build_kernel(inverse_mass_matrix):
+        return blackjax.mcmc.mclmc.build_kernel(
+            logdensity_fn=logdensity_fn,
+            integrator=integrator,
+            inverse_mass_matrix=inverse_mass_matrix,
+        )
+    state0 = blackjax.mcmc.mclmc.init(position=init_theta, logdensity_fn=logdensity_fn, rng_key=rng_key)
+    tuned_state, tuned_params, _ = blackjax.mclmc_find_L_and_step_size(
+        mclmc_kernel=build_kernel,
+        num_steps=tuner_steps,
+        state=state0,
+        rng_key=rng_key,
+        diagonal_preconditioning=diagonal_preconditioning,
+        desired_energy_var=desired_energy_var,
+    )
+    alg = blackjax.mclmc(logdensity_fn, L=tuned_params.L, step_size=tuned_params.step_size)
+    step = jax.jit(alg.step)
+
+    # Prime compilation
+    k_pre, k_draws = jax.random.split(rng_key)
+    ks = jax.random.split(k_draws, max(1, draws))
+    st, info = step(ks[0], tuned_state)
+
+    def step_fn(key: Array, st):
+        st, inf = step(key, st)
+        if work_bump:
+            work_bump(1)
+        return st, inf
+
+    # info hook: record energy change into extras["energy"]
+    def info_hook(info, ctx):
+        dE = getattr(info, "energy_change", None)
+        if dE is not None:
+            ctx["put_extra"]("energy", float(dE))
+
+    return drive_chain(
+        rng_key=k_draws,
+        init_state=tuned_state,
+        step_fn=step_fn,
+        step_returns_info=True,
+        n_steps=draws,
+        warmup=0,
+        eval_every=eval_every,
+        thin=thin,
+        position_fn=lambda st: st.position,
+        Ln_eval_f64=Ln_eval_f64,
+        tiny_store_fn=tiny_store_fn,
+        use_tqdm=use_tqdm,
+        progress_label=progress_label,
+        progress_update_every=progress_update_every,
+        info_hooks=[info_hook],
+    )

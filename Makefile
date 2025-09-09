@@ -50,7 +50,7 @@ artifacts:
 
 # Clean generated artifacts and outputs
 clean:
-	rm -rf artifacts/
+	rm -rf artifacts/*
 	rm -f *.png *.jpg *.jpeg *.pdf
 	rm -f llc_sweep_results.csv
 	rm -rf __pycache__/

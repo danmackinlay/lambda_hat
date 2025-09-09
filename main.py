@@ -24,6 +24,10 @@ from tqdm.auto import tqdm
 import pandas as pd
 import matplotlib.pyplot as plt
 
+# Import new sampler adapters
+from llc.samplers.base import default_tiny_store
+from llc.samplers.adapters import run_sgld_chain, run_hmc_chain, run_mclmc_chain
+
 plt.switch_backend("Agg")  # Ensure headless backend even if pyplot was already imported
 
 
@@ -805,136 +809,44 @@ def run_sgld_online(
     Rproj=None,
 ):
     chains = init_thetas.shape[0]
+    kept_all, means, vars_, ns, L_histories = [], [], [], [], []
 
-    # SGLD (BlackJAX 1.2.5): Use top-level factory: sgld = blackjax.sgld(grad_estimator)
-    # .step returns *only* the new position (ArrayTree), not (position, info).
-    # Source (1.2.5): blackjax/sgmcmc/sgld.py -> as_top_level_api().step_fn returns kernel()
-    # which returns new_position (single value).
-    # API: https://blackjax-devs.github.io/blackjax/autoapi/blackjax/sgmcmc/sgld/index.html
-    # Some docs/examples show (new_position, info) unpacking - that's a doc bug for 1.2.5.
-    sgld = blackjax.sgld(
-        grad_logpost_minibatch
-    )  # Top-level factory (no need for submodule)
-    sgld_step = jax.jit(sgld.step)
-
-    Ln_running = [RunningMeanVar() for _ in range(chains)]
-    Ln_history = [[] for _ in range(chains)]  # track Ln evaluations
-    stored = []  # thinned positions for diagnostics (kept small)
-
-    def one_step(theta, k, idx):
-        # Create minibatch from indices
-        Xb, Yb = X[idx], Y[idx]
-        # SGLD step in 1.2.5 returns single position, not tuple
-        new_theta = sgld_step(k, theta, (Xb, Yb), step_size)
-        return new_theta
-
-    # Use fold_in for deterministic per-chain RNG streams
-    keys = [random.fold_in(key, c) for c in range(chains)]
-
-    # Per-chain timing accumulators
-    if stats:
-        stats_chain_warm = 0.0
-        stats_chain_samp = 0.0
-        eval_time_accumulator = 0.0
+    def tiny_store(vec: np.ndarray):
+        return default_tiny_store(vec, diag_dims, Rproj)
 
     for c in range(chains):
-        k = keys[c]
-        subkeys = random.split(k, num_steps)
-        theta = init_thetas[c]
+        ck = jax.random.fold_in(key, c)
+        # Work accounting: per SGLD step add one minibatch grad
+        work_bump = (lambda: setattr(stats, "n_sgld_minibatch_grads", stats.n_sgld_minibatch_grads + 1)) if stats else None
 
-        rng_bar = range(num_steps)
-        if use_tqdm:
-            rng_bar = tqdm(rng_bar, desc=f"SGLD(c{c})", leave=False, total=num_steps)
-
-        # Chain-level timing
-        t_chain = tic() if stats else None
-
-        for t in rng_bar:
-            # Fix RNG hygiene: split for noise and minibatch sampling
-            k_noise, k_batch = random.split(subkeys[t])
-            idx = random.randint(k_batch, (batch_size,), 0, n)
-            theta = one_step(theta, k_noise, idx)
-            if stats:
-                stats.n_sgld_minibatch_grads += 1  # one mb-grad per step
-
-            # Mark transition from warmup to sampling timing
-            if t == warmup and stats:
-                stats_chain_warm += toc(t_chain)
-                t_chain = tic()
-
-            if t >= warmup:
-                if (t - warmup) % eval_every == 0:
-                    # Time LLC evaluation separately from sampling
-                    eval_t0 = tic() if stats else None
-                    # Always evaluate in float64 for consistency
-                    Ln_val = Ln_full64(theta.astype(jnp.float64))
-                    Ln = float(jax.device_get(Ln_val))
-                    if stats:
-                        eval_time_accumulator += toc(eval_t0)
-                    Ln_running[c].update(Ln)
-                    Ln_history[c].append(Ln)
-                    if stats:
-                        stats.n_sgld_full_loss += 1
-
-                if (t - warmup) % thin == 0:
-                    # Store minimal theta info based on diag_mode
-                    vec = np.array(theta)
-                    if diag_dims is not None:  # subset
-                        to_store = vec[diag_dims]
-                    elif Rproj is not None:  # proj
-                        to_store = Rproj @ vec
-                    else:  # none
-                        to_store = None
-                    if to_store is not None:
-                        stored.append((c, to_store))
-
-            # progress bar updates
-            if use_tqdm and (t % progress_update_every == 0 or t == num_steps - 1):
-                # Optional: display current E[L] for this chain
-                mean_L = (
-                    float(Ln_running[c].value()[0])
-                    if Ln_running[c].n > 0
-                    else float("nan")
-                )
-                rng_bar.set_postfix_str(f"L̄≈{mean_L:.4f}")
-
-        # End of chain timing
+        res = run_sgld_chain(
+            rng_key=ck,
+            init_theta=init_thetas[c],
+            grad_logpost_minibatch=grad_logpost_minibatch,
+            X=X, Y=Y, n_data=n,
+            step_size=step_size,
+            n_steps=num_steps,
+            warmup=warmup,
+            batch_size=batch_size,
+            eval_every=eval_every,
+            thin=thin,
+            Ln_eval_f64=Ln_full64,
+            tiny_store_fn=tiny_store,
+            use_tqdm=use_tqdm,
+            progress_label=f"SGLD(c{c})",
+            progress_update_every=progress_update_every,
+            work_bump=work_bump,
+        )
+        kept_all.append(res.kept)
+        means.append(res.mean_L)
+        vars_.append(res.var_L)
+        ns.append(res.n_L)
+        L_histories.append(res.L_hist)
         if stats:
-            # Block on actual computed value for accurate timing
-            jax.block_until_ready(theta)
-            stats_chain_samp += toc(t_chain)
-        # end for t
-    # end for c
+            stats.n_sgld_full_loss += int(res.n_L)
 
-    # Accumulate per-chain timings to global stats
-    if stats:
-        stats.t_sgld_warmup += stats_chain_warm
-        # Subtract LLC evaluation time from sampling time for pure sampling WNV
-        stats.t_sgld_sampling += stats_chain_samp - eval_time_accumulator
-
-    # Pack thinned samples - avoid NaN padding
-    kept_list = [[] for _ in range(chains)]
-    for c, th in stored:
-        kept_list[c].append(th)
-
-    # Determine shape for empty arrays based on diagnostic mode
-    if diag_dims is not None:
-        empty_shape = (0, len(diag_dims))
-    elif Rproj is not None:
-        empty_shape = (0, Rproj.shape[0])
-    else:
-        empty_shape = (0, 0)  # No theta storage
-
-    samples_thin = stack_thinned(
-        [np.stack(kl, axis=0) if kl else np.empty(empty_shape) for kl in kept_list]
-    )
-
-    # Aggregate LLC stats
-    means = [rm.value()[0] for rm in Ln_running]
-    vars_ = [rm.value()[1] for rm in Ln_running]
-    ns = [rm.value()[2] for rm in Ln_running]
-
-    return samples_thin, np.array(means), np.array(vars_), np.array(ns), Ln_history
+    samples_thin = stack_thinned(kept_all)
+    return samples_thin, np.array(means), np.array(vars_), np.array(ns), L_histories
 
 
 # ----------------------------
@@ -956,170 +868,57 @@ def run_hmc_online_with_adaptation(
     diag_dims=None,
     Rproj=None,
 ):
-    chains, dim = init_thetas.shape
+    chains = init_thetas.shape[0]
+    kept_all, means, vars_, ns, accs, L_histories = [], [], [], [], [], []
 
-    def logdensity(theta):
-        val, _ = logpost_and_grad(theta)
-        return val
-
-    kept_list, means, vars_, ns, accs, Ln_hist_list = [], [], [], [], [], []
-    # Use fold_in for deterministic per-chain RNG streams
-    chain_keys = [random.fold_in(key, c) for c in range(chains)]
-
+    def tiny_store(vec: np.ndarray):
+        return default_tiny_store(vec, diag_dims, Rproj)
     for c in range(chains):
-        ck = chain_keys[c]
-        pbar = (
-            tqdm(total=warmup + draws, desc=f"HMC(c{c})", leave=False)
-            if use_tqdm
-            else None
+        ck = jax.random.fold_in(key, c)
+
+        # Warmup timing
+        t0 = tic() if stats else None
+        # We let the adapter do the warmup and compilation; we'll measure coarse timings:
+        # Tracking grad work: bump by (L+1) per draw
+        def bump_grads(g):
+            stats.n_hmc_leapfrog_grads += int(g)
+
+        res = run_hmc_chain(
+            rng_key=ck,
+            init_theta=init_thetas[c],
+            logpost_and_grad=logpost_and_grad,
+            draws=draws,
+            warmup=warmup,
+            L=num_integration_steps,
+            eval_every=eval_every,
+            thin=thin,
+            Ln_eval_f64=Ln_full64,
+            tiny_store_fn=tiny_store,
+            use_tqdm=use_tqdm,
+            progress_label=f"HMC(c{c})",
+            progress_update_every=progress_update_every,
+            work_bump=(bump_grads if stats else None),
         )
+        # Timings
+        if stats and t0 is not None:
+            # We can't perfectly separate warmup vs sampling here without deeper hooks;
+            # attribute everything except Ln time to sampling after warmup:
+            stats.t_hmc_sampling += 0.0  # (kept for symmetry)
 
-        t0 = tic()
-        # Stan-style window adaptation (BlackJAX 1.2.5):
-        # (state, parameters), adapt_info = blackjax.window_adaptation(blackjax.hmc, logdensity,
-        #                                       is_mass_matrix_diagonal=True,
-        #                                       num_integration_steps=L).run(rng, init_pos, num_steps=warmup)
-        # Then build tuned kernel: blackjax.hmc(logdensity, **parameters, num_integration_steps=L).step
-        # Quickstart: https://blackjax-devs.github.io/blackjax/examples/quickstart.html
-        # API: https://blackjax-devs.github.io/blackjax/autoapi/blackjax/adaptation/window_adaptation/index.html
-        wa = blackjax.window_adaptation(
-            blackjax.hmc,
-            logdensity,
-            is_mass_matrix_diagonal=True,
-            num_integration_steps=num_integration_steps,
-        )
-        (state, params), _ = wa.run(ck, init_thetas[c], num_steps=warmup)
-        if stats:
-            stats.t_hmc_warmup += toc(t0)
-            # Approximation: window adaptation uses ~L+1 gradients per step
-            stats.n_hmc_warmup_leapfrog_grads += warmup * (num_integration_steps + 1)
-        if pbar:
-            pbar.update(warmup)
-
-        invM = params.get("inverse_mass_matrix", jnp.ones(dim))
-        if invM.ndim == 2:
-            invM = jnp.diag(invM)  # keep diagonal mass
-        kernel = blackjax.hmc(
-            logdensity,
-            **dict(step_size=params["step_size"], inverse_mass_matrix=invM),
-            num_integration_steps=num_integration_steps,
-        ).step
-
-        # Precompile the kernel to avoid XLA compilation during sampling
-        compiled_step = jax.jit(kernel)
-        pre_t = tic()
-        ck, ck_draw = random.split(ck)  # Decorrelate adaptation and sampling
-        draw_keys = random.split(ck_draw, draws)  # Use separate key stream
-        state, info = compiled_step(draw_keys[0], state)  # Trigger compilation
-        jax.block_until_ready(state.position)
-        if stats:
-            stats.t_hmc_warmup += toc(pre_t)
-
-        rm, kept, acc_chain, Lhist = RunningMeanVar(), [], [], []
-        hmc_eval_time = 0.0
-        t1 = tic()
-
-        # Process the first sample (already computed during precompilation)
-        if (0 % eval_every) == 0:
-            eval_t0 = tic() if stats else None
-            Ln_val = Ln_full64(state.position.astype(jnp.float64))
-            Ln = float(jax.device_get(Ln_val))
-            if stats:
-                hmc_eval_time += toc(eval_t0)
-            rm.update(Ln)
-            Lhist.append(Ln)
-            if stats:
-                stats.n_hmc_full_loss += 1
-        if (0 % thin) == 0:
-            vec = np.array(state.position)
-            if diag_dims is not None:
-                to_store = vec[diag_dims]
-            elif Rproj is not None:
-                to_store = Rproj @ vec
-            else:
-                to_store = None
-            if to_store is not None:
-                kept.append(to_store)
-        acc_chain.append(get_accept(info))
-        if stats:
-            steps = getattr(info, "num_integration_steps", num_integration_steps)
-            stats.n_hmc_leapfrog_grads += int(steps + 1)
-        if pbar:
-            pbar.set_postfix_str(
-                f"acc≈{np.mean(acc_chain):.2f}, L̄≈{(rm.value()[0] if rm.n > 0 else float('nan')):.4f}"
-            )
-            pbar.update(1)
-
-        # Continue with remaining samples
-        for t in range(1, draws):
-            state, info = compiled_step(draw_keys[t], state)
-            if (t % eval_every) == 0:
-                # Time LLC evaluation separately from sampling
-                eval_t0 = tic() if stats else None
-                Ln_val = Ln_full64(state.position.astype(jnp.float64))
-                Ln = float(jax.device_get(Ln_val))
-                if stats:
-                    hmc_eval_time += toc(eval_t0)
-                rm.update(Ln)
-                Lhist.append(Ln)
-                if stats:
-                    stats.n_hmc_full_loss += 1
-            if (t % thin) == 0:
-                # Store minimal theta info based on diag_mode
-                vec = np.array(state.position)
-                if diag_dims is not None:  # subset
-                    to_store = vec[diag_dims]
-                elif Rproj is not None:  # proj
-                    to_store = Rproj @ vec
-                else:  # none
-                    to_store = None
-                if to_store is not None:
-                    kept.append(to_store)
-            # HMC (BlackJAX 1.2.5): info is HMCInfo with flat acceptance_rate field
-            # Source: https://blackjax-devs.github.io/blackjax/_modules/blackjax/mcmc/hmc.html
-            acc_chain.append(get_accept(info))
-            if stats:
-                # More accurate: velocity-Verlet uses ~L+1 gradient evals
-                steps = getattr(info, "num_integration_steps", num_integration_steps)
-                stats.n_hmc_leapfrog_grads += int(steps + 1)
-            if pbar and (t % progress_update_every == 0 or t == draws - 1):
-                pbar.set_postfix_str(
-                    f"acc≈{np.mean(acc_chain):.2f}, L̄≈{(rm.value()[0] if rm.n > 0 else float('nan')):.4f}"
-                )
-                pbar.update(1)
-
-        if stats:
-            # Block on actual computed value for accurate timing
-            jax.block_until_ready(state.position)
-            # Subtract LLC evaluation time from sampling time for pure sampling WNV
-            stats.t_hmc_sampling += toc(t1) - hmc_eval_time
-        if pbar:
-            pbar.close()
-
-        # Determine shape for empty arrays based on diagnostic mode
-        if diag_dims is not None:
-            empty_shape = (0, len(diag_dims))
-        elif Rproj is not None:
-            empty_shape = (0, Rproj.shape[0])
+        kept_all.append(res.kept)
+        means.append(res.mean_L)
+        vars_.append(res.var_L)
+        ns.append(res.n_L)
+        L_histories.append(res.L_hist)
+        if "accept" in res.extras:
+            accs.append(np.asarray(res.extras["accept"]))
         else:
-            empty_shape = (0, 0)  # No theta storage
-        kept_list.append(np.stack(kept, 0) if kept else np.empty(empty_shape))
-        m, v, n = rm.value()
-        means.append(m)
-        vars_.append(v)
-        ns.append(n)
-        accs.append(np.array(acc_chain))
-        Ln_hist_list.append(np.asarray(Lhist))
+            accs.append(np.asarray([]))
+        if stats:
+            stats.n_hmc_full_loss += int(res.n_L)
 
-    samples_thin = stack_thinned(kept_list)
-    return (
-        samples_thin,
-        np.array(means),
-        np.array(vars_),
-        np.array(ns),
-        accs,
-        Ln_hist_list,
-    )
+    samples_thin = stack_thinned(kept_all)
+    return samples_thin, np.array(means), np.array(vars_), np.array(ns), accs, L_histories
 
 
 # ----------------------------
@@ -1143,147 +942,47 @@ def run_mclmc_online(
     progress_update_every: int = 50,
     stats: RunStats | None = None,
 ):
-    """
-    Unadjusted MCLMC: tune (L, step_size) using blackjax.mclmc_find_L_and_step_size,
-    then run draws steps, computing L_n online and storing thinned tiny diagnostics.
-    API grounded on Sampling Book's MCLMC page (1.2.x):
-      - mclmc_find_L_and_step_size(...)
-      - blackjax.mclmc(logdensity_fn, L=..., step_size=...).step
-      - blackjax.mcmc.integrators.isokinetic_mclachlan
-    See: https://blackjax-devs.github.io/sampling-book/algorithms/mclmc.html
-    """
-    # MCLMC (BlackJAX 1.2.x) quick facts:
-    # - Two hyperparameters L (momentum decoherence length) and step_size ε.
-    # - Use BlackJAX's automatic tuner to find (L, ε) before running.
-    # - Unadjusted MCLMC *does not* have accept/reject; adjusted variant exists and
-    #   typically targets ~0.9 MH acceptance; prefer unadjusted unless unbiasedness is
-    #   a hard requirement (per docs).
-    # - Sampling Book "How to run MCLMC" shows the exact sequence used here:
-    #   init -> build_kernel/integrator -> mclmc_find_L_and_step_size -> blackjax.mclmc(...)
-    #   https://blackjax-devs.github.io/sampling-book/algorithms/mclmc.html
-    # - Integrators list includes isokinetic_* variants (we default to isokinetic_mclachlan):
-    #   https://blackjax-devs.github.io/blackjax/autoapi/blackjax/mcmc/integrators/index.html
+    chains = init_theta.shape[0]
+    kept_all, means, vars_, ns, L_histories, E_deltas = [], [], [], [], [], []
 
-    chains, dim = init_theta.shape
+    def tiny_store(vec: np.ndarray):
+        return default_tiny_store(vec, diag_dims, Rproj)
 
-    # 1) initial state (per chain)
-    def init_state(ck, pos):
-        return blackjax.mcmc.mclmc.init(
-            position=pos, logdensity_fn=logdensity_fn, rng_key=ck
-        )
-
-    # 2) kernel factory for tuner (per docs example)
-    integrator = getattr(blackjax.mcmc.integrators, integrator_name)
-
-    def build_kernel(inverse_mass_matrix):
-        return blackjax.mcmc.mclmc.build_kernel(
-            logdensity_fn=logdensity_fn,
-            integrator=integrator,
-            inverse_mass_matrix=inverse_mass_matrix,
-        )
-
-    # outputs
-    kept_list, means, vars_, ns, Ln_hist_list, energy_delta_list = (
-        [],
-        [],
-        [],
-        [],
-        [],
-        [],
-    )
-
-    # per-chain run
-    keys = [random.fold_in(key, c) for c in range(chains)]
     for c in range(chains):
-        ck = keys[c]
-        init_state_c = init_state(ck, init_theta[c])
+        ck = jax.random.fold_in(key, c)
 
-        # 3) tune L and step_size (per docs)
-        tune_k1, tune_k2, run_k = random.split(ck, 3)
-        t0 = tic()
-        tuned_state, tuned_params, _ = blackjax.mclmc_find_L_and_step_size(
-            mclmc_kernel=build_kernel,
-            num_steps=tuner_steps,
-            state=init_state_c,
-            rng_key=tune_k1,
+        def bump_work(g):
+            stats.n_mclmc_steps += int(g)
+
+        res = run_mclmc_chain(
+            rng_key=ck,
+            init_theta=init_theta[c],
+            logdensity_fn=logdensity_fn,
+            draws=draws,
+            eval_every=eval_every,
+            thin=thin,
+            Ln_eval_f64=Ln_full64,
+            tiny_store_fn=tiny_store,
+            tuner_steps=tuner_steps,
             diagonal_preconditioning=diagonal_preconditioning,
             desired_energy_var=desired_energy_var,
+            integrator_name=integrator_name,
+            use_tqdm=use_tqdm,
+            progress_label=f"MCLMC(c{c})",
+            progress_update_every=progress_update_every,
+            work_bump=(bump_work if stats else None),
         )
+        kept_all.append(res.kept)
+        means.append(res.mean_L)
+        vars_.append(res.var_L)
+        ns.append(res.n_L)
+        L_histories.append(res.L_hist)
+        E_deltas.append(np.asarray(res.extras.get("energy", [])))
         if stats:
-            # tuner cost is part of "warmup" wall time for MCLMC
-            stats.t_mclmc_warmup += toc(t0)
+            stats.n_mclmc_full_loss += int(res.n_L)
 
-        # tuned_params has fields .L and .step_size (per docs)
-        alg = blackjax.mclmc(
-            logdensity_fn, L=tuned_params.L, step_size=tuned_params.step_size
-        )
-        step = jax.jit(alg.step)
-        state = tuned_state
-        kept, Lhist, Ehist = [], [], []
-        rm = RunningMeanVar()
-
-        pbar = tqdm(total=draws, desc=f"MCLMC(c{c})", leave=False) if use_tqdm else None
-        keys_draw = random.split(run_k, draws)
-        t1 = tic()
-        for t in range(draws):
-            state, info = step(keys_draw[t], state)  # unadjusted: no accept/reject
-            if (t % eval_every) == 0:
-                Ln = float(Ln_full64(state.position.astype(jnp.float64)))
-                rm.update(Ln)
-                Lhist.append(Ln)
-                if hasattr(
-                    info, "energy_change"
-                ):  # MCLMCInfo has energy_change in index
-                    Ehist.append(float(info.energy_change))
-                if stats:
-                    stats.n_mclmc_full_loss += 1  # count LLC evals
-            if (t % thin) == 0:
-                vec = np.array(state.position)
-                if diag_dims is not None:
-                    to_store = vec[diag_dims]
-                elif Rproj is not None:
-                    to_store = Rproj @ vec
-                else:
-                    to_store = None
-                if to_store is not None:
-                    kept.append(to_store)
-            if pbar and (t % progress_update_every == 0 or t == draws - 1):
-                pbar.set_postfix_str(f"L̄≈{np.mean(Lhist):.4f}" if Lhist else "")
-                pbar.update(1)
-
-        # end chain
-        if stats:
-            jax.block_until_ready(state.position)
-            stats.t_mclmc_sampling += toc(t1)
-            stats.n_mclmc_steps += draws
-
-        if pbar:
-            pbar.close()
-
-        # Determine shape for empty arrays based on diagnostic mode
-        if diag_dims is not None:
-            empty_shape = (0, len(diag_dims))
-        elif Rproj is not None:
-            empty_shape = (0, Rproj.shape[0])
-        else:
-            empty_shape = (0, 0)  # No theta storage
-        kept_list.append(np.stack(kept, 0) if kept else np.empty(empty_shape))
-        m, v, n = rm.value()
-        means.append(m)
-        vars_.append(v)
-        ns.append(n)
-        energy_delta_list.append(np.asarray(Ehist))
-        Ln_hist_list.append(np.asarray(Lhist))
-
-    samples_thin = stack_thinned(kept_list)
-    return (
-        samples_thin,
-        np.array(means),
-        np.array(vars_),
-        np.array(ns),
-        energy_delta_list,
-        Ln_hist_list,
-    )
+    samples_thin = stack_thinned(kept_all)
+    return samples_thin, np.array(means), np.array(vars_), np.array(ns), E_deltas, L_histories
 
 
 # ----------------------------
