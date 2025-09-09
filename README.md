@@ -72,14 +72,27 @@ These are examples from a recent run (promoted to `assets/readme/`).
 
 ## Installation
 
-We use [uv](https://docs.astral.sh/uv/) instead of pip:
+We use [uv](https://docs.astral.sh/uv/) for dependency management:
 
 ```bash
-uv sync
+uv sync                    # Core dependencies only
 ```
 
-GPU versions of libraries can occasionally be annoying with `uv`. We may switch to `pip`.
-For now, adjust the JAX/`jaxlib` version for GPU if needed.
+### Optional backends
+
+For distributed computing, install the appropriate backend:
+
+```bash
+uv sync --extra slurm      # SLURM/submitit support
+uv sync --extra modal      # Modal serverless support
+uv sync --all-extras       # Both backends
+```
+
+Or with pip:
+```bash
+pip install llc[slurm]     # SLURM support
+pip install llc[modal]     # Modal support
+```
 
 ---
 
@@ -176,6 +189,43 @@ uv run python main.py sweep
 
 * Iterates over depth/width/activation/data/noise settings (see `sweep_space()`),
 * logs per-run LLC results and saves to `llc_sweep_results.csv`.
+
+#### Distributed sweeps
+
+**Local (default):**
+```bash
+uv run python main.py sweep --backend=local --workers=4
+```
+
+**SLURM cluster:**
+```bash
+uv run python main.py sweep --backend=submitit \
+  --partition=gpu --gpus=1 --timeout-min=60 \
+  --save-artifacts --artifacts-dir=/shared/llc_results
+```
+
+**Modal serverless:**
+```bash
+uv run python main.py sweep --backend=modal \
+  --modal-timeout-s=3600 --save-artifacts
+```
+
+Use `--save-artifacts` to generate full diagnostic plots and data. Artifacts are saved locally (local backend), to shared storage (SLURM), or Modal volumes (modal backend).
+
+#### Retrieving Modal artifacts
+
+After running sweeps on Modal, download results locally:
+
+```bash
+# List available runs
+modal volume ls llc-artifacts
+
+# Download specific run
+modal volume get llc-artifacts /artifacts/20250909-172233 ./artifacts/20250909-172233
+
+# Download all results
+modal volume get llc-artifacts /artifacts ./artifacts
+```
 
 ---
 
