@@ -1,0 +1,238 @@
+# llc/diagnostics.py
+"""Diagnostic and plotting utilities for LLC analysis"""
+
+from typing import List, Optional, Tuple, Any
+import numpy as np
+import arviz as az
+import matplotlib.pyplot as plt
+from scipy.stats import norm
+import pandas as pd
+
+# ESS method constant for consistency
+ESS_METHOD = "bulk"
+
+
+def llc_mean_and_se_from_histories(Ln_histories: List[np.ndarray], n: int, beta: float, L0: float) -> Tuple[float, float, int]:
+    """Compute LLC mean and standard error from L_n evaluation histories"""
+    H = _stack_histories(Ln_histories)
+    if H is None:
+        return 0.0, np.nan, 0
+    
+    # Transform to LLC
+    lambda_vals = n * beta * (H - L0)  # (chains, evals)
+    
+    # Create ArviZ InferenceData
+    idata = az.from_dict(posterior={"lambda": lambda_vals})
+    
+    # Compute ESS and statistics
+    ess = az.ess(idata, method=ESS_METHOD)["lambda"].values
+    eff_sample_size = float(np.mean(ess)) if not np.isnan(ess).all() else 1.0
+    
+    # Pool across chains for final estimate
+    pooled = lambda_vals.flatten()
+    mean_llc = float(np.mean(pooled))
+    
+    # Standard error accounting for ESS
+    if len(pooled) > 1 and eff_sample_size > 1:
+        se_llc = float(np.std(pooled, ddof=1) / np.sqrt(eff_sample_size))
+    else:
+        se_llc = np.nan
+        
+    return mean_llc, se_llc, int(eff_sample_size)
+
+
+def llc_ci_from_histories(Ln_histories: List[np.ndarray], n: int, beta: float, L0: float, alpha: float = 0.05) -> Tuple[float, Tuple[float, float]]:
+    """Compute LLC with proper CI using ESS from Ln evaluation history"""
+    # Pack ragged histories to a rectangular array by truncating to min length
+    m = min(len(h) for h in Ln_histories if len(h) > 0)
+    if m == 0:
+        return 0.0, (0.0, 0.0)
+    H = np.stack([np.asarray(h[:m]) for h in Ln_histories], axis=0)  # (chains, m)
+    
+    idata = az.from_dict(posterior={"L": H})
+    ess_L = az.ess(idata, method=ESS_METHOD)["L"].values
+    eff_sample_size = float(np.mean(ess_L)) if not np.isnan(ess_L).all() else 1.0
+    
+    # Transform to LLC and compute stats
+    lam = n * beta * (H - L0)
+    pooled = lam.flatten()
+    mean_val = float(np.mean(pooled))
+    
+    if len(pooled) > 1 and eff_sample_size > 1:
+        se_val = float(np.std(pooled, ddof=1) / np.sqrt(eff_sample_size))
+        # Normal approximation CI
+        z = norm.ppf(1 - alpha/2)
+        ci = (mean_val - z * se_val, mean_val + z * se_val)
+    else:
+        ci = (mean_val, mean_val)
+        
+    return mean_val, ci
+
+
+def _stack_histories(Ln_histories: List[np.ndarray]) -> Optional[np.ndarray]:
+    """Stack ragged L_n histories into rectangular array"""
+    if not Ln_histories or all(len(h) == 0 for h in Ln_histories):
+        return None
+    
+    # Truncate to minimum length to avoid NaN padding
+    min_len = min(len(h) for h in Ln_histories if len(h) > 0)
+    if min_len == 0:
+        return None
+        
+    return np.stack([h[:min_len] for h in Ln_histories], axis=0)
+
+
+def _idata_from_L(Ln_histories: List[np.ndarray]) -> Tuple[Optional[Any], int]:
+    """Create ArviZ InferenceData from L_n histories"""
+    H = _stack_histories(Ln_histories)
+    return (
+        (az.from_dict(posterior={"L": H}), H.shape[1]) if H is not None else (None, 0)
+    )
+
+
+def _idata_from_theta(samples_thin: np.ndarray, max_dims: int = 8) -> Tuple[Optional[Any], List[int]]:
+    """Create ArviZ InferenceData from theta samples"""
+    S = np.asarray(samples_thin)
+    if S.size == 0 or S.shape[1] < 2:
+        return None, []
+    k = S.shape[-1]
+    idx = list(range(min(k, max_dims)))
+    idata = az.from_dict(
+        posterior={"theta": S},
+        coords={"theta_dim": np.arange(k)},
+        dims={"theta": ["theta_dim"]},
+    )
+    return idata, idx
+
+
+def _running_llc(Ln_histories: List[np.ndarray], n: int, beta: float, L0: float) -> Tuple[Optional[np.ndarray], Optional[np.ndarray]]:
+    """Compute running LLC estimates"""
+    H = _stack_histories(Ln_histories)
+    if H is None:
+        return None, None
+    cmean = np.cumsum(H, 1) / np.arange(1, H.shape[1] + 1)[None, :]
+    lam = n * float(beta) * (cmean - L0)
+    pooled = (
+        np.sum(H, 0) / H.shape[0] / np.arange(1, H.shape[1] + 1) 
+    )  # pooled running mean
+    lam_pooled = n * float(beta) * (pooled - L0)
+    return lam, lam_pooled
+
+
+def plot_diagnostics(
+    run_dir: str,
+    sampler_name: str,
+    Ln_histories: List[np.ndarray],
+    samples_thin: np.ndarray,
+    acceptance_rates: Optional[List[np.ndarray]] = None,
+    energy_deltas: Optional[List[np.ndarray]] = None,
+    n: int = 1000,
+    beta: float = 1.0,
+    L0: float = 0.0,
+    save_plots: bool = True
+) -> None:
+    """Generate comprehensive diagnostic plots for a sampler"""
+    
+    # L_n trace plots
+    if Ln_histories and any(len(h) > 0 for h in Ln_histories):
+        fig, ax = plt.subplots(1, 1, figsize=(8, 4))
+        for i, hist in enumerate(Ln_histories):
+            if len(hist) > 0:
+                ax.plot(hist, alpha=0.7, label=f'Chain {i}')
+        ax.set_xlabel('Evaluation')
+        ax.set_ylabel('L_n')
+        ax.set_title(f'{sampler_name} L_n Traces')
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+        if save_plots:
+            _finalize_figure(fig, f"{run_dir}/{sampler_name}_Ln_trace.png")
+        plt.close(fig)
+
+    # Running LLC plot
+    lam, lam_pooled = _running_llc(Ln_histories, n, beta, L0)
+    if lam is not None:
+        fig, ax = plt.subplots(1, 1, figsize=(8, 4))
+        for i in range(lam.shape[0]):
+            ax.plot(lam[i], alpha=0.7, label=f'Chain {i}')
+        if lam_pooled is not None:
+            ax.plot(lam_pooled, 'k-', linewidth=2, label='Pooled')
+        ax.set_xlabel('Evaluation')
+        ax.set_ylabel('Local Learning Coefficient')
+        ax.set_title(f'{sampler_name} Running LLC')
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+        if save_plots:
+            _finalize_figure(fig, f"{run_dir}/{sampler_name}_running_llc.png")
+        plt.close(fig)
+
+    # Theta trace plots (if available)
+    idata_theta, theta_idx = _idata_from_theta(samples_thin)
+    if idata_theta is not None and theta_idx:
+        fig, axes = plt.subplots(2, min(4, len(theta_idx)), figsize=(12, 6))
+        if len(theta_idx) == 1:
+            axes = axes.reshape(2, 1)
+        for j, idx in enumerate(theta_idx[:4]):
+            # Trace plot
+            az.plot_trace(idata_theta, var_names=["theta"], coords={"theta_dim": [idx]}, 
+                         axes=axes[:, j] if len(theta_idx) > 1 else axes)
+        plt.suptitle(f'{sampler_name} Parameter Traces')
+        plt.tight_layout()
+        if save_plots:
+            _finalize_figure(fig, f"{run_dir}/{sampler_name}_theta_trace.png")
+        plt.close(fig)
+
+    # Acceptance rate plot (HMC only)
+    if acceptance_rates is not None and any(len(acc) > 0 for acc in acceptance_rates):
+        fig, ax = plt.subplots(1, 1, figsize=(8, 4))
+        for i, acc in enumerate(acceptance_rates):
+            if len(acc) > 0:
+                ax.plot(acc, alpha=0.7, label=f'Chain {i}')
+        ax.set_xlabel('Draw')
+        ax.set_ylabel('Acceptance Rate')
+        ax.set_title(f'{sampler_name} Acceptance Rate')
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+        ax.axhline(0.8, color='red', linestyle='--', alpha=0.5, label='Target')
+        if save_plots:
+            _finalize_figure(fig, f"{run_dir}/{sampler_name}_acceptance.png")
+        plt.close(fig)
+
+    # Energy delta histogram (MCLMC only)
+    if energy_deltas is not None and any(len(e) > 0 for e in energy_deltas):
+        fig, ax = plt.subplots(1, 1, figsize=(8, 4))
+        all_deltas = np.concatenate([e for e in energy_deltas if len(e) > 0])
+        ax.hist(all_deltas, bins=50, alpha=0.7, density=True)
+        ax.set_xlabel('Energy Change')
+        ax.set_ylabel('Density')
+        ax.set_title(f'{sampler_name} Energy Changes')
+        ax.grid(True, alpha=0.3)
+        if save_plots:
+            _finalize_figure(fig, f"{run_dir}/{sampler_name}_energy_hist.png")
+        plt.close(fig)
+
+
+def _finalize_figure(fig: plt.Figure, path: str, dpi: int = 150, bbox_inches: str = "tight") -> None:
+    """Save and close a matplotlib figure"""
+    fig.savefig(path, dpi=dpi, bbox_inches=bbox_inches, facecolor="white")
+
+
+def create_summary_dataframe(results: dict, samplers: List[str]) -> pd.DataFrame:
+    """Create a summary dataframe from sampling results"""
+    summary_data = []
+    
+    for sampler in samplers:
+        if sampler in results:
+            res = results[sampler]
+            summary_data.append({
+                'sampler': sampler,
+                'llc_mean': res.get('llc_mean', np.nan),
+                'llc_se': res.get('llc_se', np.nan), 
+                'ess': res.get('ess', np.nan),
+                'wnv_time': res.get('wnv_time', np.nan),
+                'wnv_grad': res.get('wnv_grad', np.nan),
+                'acceptance': res.get('acceptance', np.nan) if sampler == 'hmc' else np.nan,
+                'time_sampling': res.get('time_sampling', np.nan),
+                'work_grads': res.get('work_grads', np.nan)
+            })
+    
+    return pd.DataFrame(summary_data)
