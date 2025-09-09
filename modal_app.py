@@ -16,12 +16,47 @@ image = (
     .add_local_python_source(".")   # ships your repo code
 )
 
+# Create persistent volume for artifacts
+artifacts_volume = modal.Volume.from_name("llc-artifacts", create_if_missing=True)
+
 app = modal.App("llc-experiments", image=image)
 
-@app.function(gpu=None, timeout=60*60)   # set gpu="L40S" if you want GPUs
+@app.function(
+    gpu=None, 
+    timeout=60*60,   # set gpu="L40S" if you want GPUs
+    volumes={"/artifacts": artifacts_volume},
+    retries=modal.Retries(
+        max_retries=2,
+        backoff_coefficient=2.0,
+        initial_delay=10.0,
+    ),
+)
 def run_experiment_remote(cfg_dict: dict) -> dict:
     """
-    Remote entrypoint: identical signature to local task.
+    Remote entrypoint: identical signature to local task but with artifact support.
     """
     from llc.tasks import run_experiment_task
-    return run_experiment_task(cfg_dict)
+    
+    # Run task and get result with run_dir
+    result = run_experiment_task(cfg_dict)
+    
+    # Sync artifacts to volume if run_dir was created
+    if "run_dir" in result and result["run_dir"]:
+        import shutil
+        import os
+        
+        run_dir = result["run_dir"]
+        if os.path.exists(run_dir):
+            # Copy to volume mount
+            volume_run_dir = f"/artifacts/{os.path.basename(run_dir)}"
+            if os.path.exists(volume_run_dir):
+                shutil.rmtree(volume_run_dir)
+            shutil.copytree(run_dir, volume_run_dir)
+            
+            # Update result to point to volume location  
+            result["run_dir"] = volume_run_dir
+            
+        # Commit volume changes
+        artifacts_volume.commit()
+    
+    return result

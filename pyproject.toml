@@ -11,3 +11,9 @@ dependencies = [
     "optax>=0.2.5",
     "tqdm>=4.67.1",
 ]
+
+[project.optional-dependencies]
+# SLURM backend
+slurm = ["submitit>=1.5"]        # Python 3.8+ and SLURM-friendly toolbox
+# Modal backend
+modal = ["modal>=0.64"]          # Modal's official SDK (Py 3.9–3.13)

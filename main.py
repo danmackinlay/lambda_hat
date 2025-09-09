@@ -2373,6 +2373,12 @@ if __name__ == "__main__":
     sweep_parser.add_argument("--account", type=str, default=None)
     sweep_parser.add_argument("--qos", type=str, default=None)
     sweep_parser.add_argument("--constraint", type=str, default=None)
+    
+    # timeout and artifact control
+    sweep_parser.add_argument("--timeout-s", type=int, default=None, help="Local executor timeout in seconds")
+    sweep_parser.add_argument("--modal-timeout-s", type=int, default=3600, help="Modal timeout in seconds")
+    sweep_parser.add_argument("--save-artifacts", action="store_true", help="Save full artifacts (plots, data, HTML)")
+    sweep_parser.add_argument("--artifacts-dir", type=str, default="artifacts", help="Base artifacts directory")
 
     # If no subcommand, default to single run behavior
     if len(sys.argv) == 1 or (len(sys.argv) > 1 and not sys.argv[1] in ["sweep", "run"]):
@@ -2402,14 +2408,20 @@ if __name__ == "__main__":
             # Transform to the minimal payload the executors expect
             items = []
             for name, param, val, seed, cfg in work:
+                cfg_dict = cfg.__dict__.copy()
+                # Add artifact configuration
+                if args.save_artifacts:
+                    cfg_dict["save_artifacts"] = True
+                    cfg_dict["artifacts_dir"] = args.artifacts_dir
+                    
                 items.append({
-                    "cfg": cfg.__dict__, 
+                    "cfg": cfg_dict, 
                     "tag": {"sweep": name, "param": param, "value": val, "seed": seed}
                 })
 
             # Pick executor and run
             if args.backend == "local":
-                ex = get_executor("local", workers=args.workers)
+                ex = get_executor("local", workers=args.workers, timeout_s=args.timeout_s)
                 results = ex.map(lambda it: run_experiment_task(it["cfg"]), items)
             elif args.backend == "submitit":
                 slurm_additional = {}
@@ -2437,7 +2449,13 @@ if __name__ == "__main__":
                     from modal_app import run_experiment_remote
                 except ImportError:
                     raise RuntimeError("Modal app not available. Ensure modal_app.py is present and modal is installed.")
-                ex = get_executor("modal", remote_fn=run_experiment_remote)
+                
+                # Configure Modal function with timeout
+                modal_options = {}
+                if args.modal_timeout_s:
+                    modal_options["timeout"] = args.modal_timeout_s
+                    
+                ex = get_executor("modal", remote_fn=run_experiment_remote, options=modal_options)
                 # pass only the cfg dict (modal function signature matches)
                 results = ex.map(None, [it["cfg"] for it in items])
             else:
