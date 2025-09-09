@@ -52,6 +52,64 @@ For now, adjust the JAX/`jaxlib` version for GPU if needed.
 
 ---
 
+## Visualization and Artifact Management
+
+The system includes comprehensive visualization saving capabilities for systematic analysis and documentation:
+
+### Automatic Run Organization
+
+- **Timestamped Directories**: Each run creates `artifacts/YYYYMMDD-HHMMSS/` directories
+- **Deterministic Naming**: Plots use consistent `<sampler>_<plotname>.png` format
+- **Run Manifest**: `manifest.txt` contains complete configuration and runtime statistics
+- **Documentation**: `README_snippet.md` provides formatted run summaries
+
+### Saved Diagnostic Plots
+
+For each sampler (SGLD, HMC, MCLMC), the system saves:
+
+- `*_llc_running.png` - Running LLC estimates over time
+- `*_L_trace.png` - Trace plots of loss function values
+- `*_L_acf.png` - Autocorrelation function plots
+- `*_L_ess.png` - Effective sample size plots
+- `*_L_rhat.png` - R-hat convergence diagnostics
+- `*_theta_trace.png` - Parameter trace plots (subset)
+- `*_theta_rank.png` - Rank plots for parameters
+
+Additional sampler-specific plots:
+- `hmc_acceptance.png` - HMC acceptance rate histogram
+- `mclmc_energy_hist.png` - MCLMC energy change distribution
+
+### Configuration Options
+
+Enable visualization saving in your config:
+
+```python
+from main import Config, main
+
+cfg = Config(
+    save_plots=True,              # Save all diagnostic plots
+    save_manifest=True,           # Generate run manifest
+    save_readme_snippet=True,     # Create documentation snippet
+    artifacts_dir="artifacts",    # Base directory (default)
+    auto_create_run_dir=True,     # Create timestamped subdirs
+)
+
+main(cfg)
+```
+
+### Makefile Targets
+
+The included Makefile provides convenient shortcuts:
+
+```bash
+make run-save      # Run with visualization saving enabled
+make diag          # Quick test run with plots
+make clean         # Remove all artifacts
+make artifacts     # Create artifacts directory
+```
+
+---
+
 ## Usage
 
 ### Run a single experiment

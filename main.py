@@ -6,6 +6,8 @@ os.environ.setdefault("JAX_ENABLE_X64", "true")  # HMC benefits from float64
 import time
 from dataclasses import dataclass, replace
 from typing import Literal, Optional
+from datetime import datetime
+import json
 
 import arviz as az
 import jax
@@ -135,6 +137,14 @@ class Config:
     max_theta_plot_dims: int = 8        # cap for plotting even if k is larger
     save_plots_prefix: Optional[str] = None  # e.g., "diag" to save PNGs
 
+    # Artifacts and visualization saving
+    artifacts_dir: str = "artifacts"    # base directory for saving artifacts
+    save_plots: bool = False            # whether to save all diagnostic plots
+    auto_create_run_dir: bool = True    # create timestamped run directories
+    save_manifest: bool = True          # save run configuration to manifest.txt
+    save_readme_snippet: bool = True    # generate README_snippet.md
+    auto_update_readme: bool = False    # auto-update README with markers (optional)
+
 
 # Small test config for quick verification
 TEST_CFG = Config(
@@ -200,7 +210,7 @@ def toc(t0): return time.perf_counter() - t0
 
 def get_accept(info):
     """Robust accessor for HMC acceptance rate across BlackJAX versions
-    
+
     BlackJAX >=1.2: HMCInfo.acceptance_rate (float)
     Some versions expose nested 'acceptance.rate'
     This function handles both patterns.
@@ -653,7 +663,7 @@ def make_logpost_and_score(loss_full, loss_minibatch, theta0, n, beta, gamma):
 
 def make_logdensity_for_mclmc(loss_full64, theta0_f64, n, beta, gamma):
     """Create log-density function for MCLMC sampler (f64 precision)
-    
+
     MCLMC expects a pure log-density function, not a gradient closure.
     This extracts the log posterior: log π(θ) = -nβ L_n(θ) - γ/2 ||θ-θ₀||²
     """
@@ -673,7 +683,7 @@ def run_sgld_online(key, init_thetas, grad_logpost_minibatch, X, Y, n, step_size
                     Ln_full64, use_tqdm=True, progress_update_every=50, stats: RunStats | None=None,
                     diag_dims=None, Rproj=None):
     chains = init_thetas.shape[0]
-    
+
     # SGLD (BlackJAX 1.2.5): Use top-level factory: sgld = blackjax.sgld(grad_estimator)
     # .step returns *only* the new position (ArrayTree), not (position, info).
     # Source (1.2.5): blackjax/sgmcmc/sgld.py -> as_top_level_api().step_fn returns kernel()
@@ -688,7 +698,7 @@ def run_sgld_online(key, init_thetas, grad_logpost_minibatch, X, Y, n, step_size
     stored = []  # thinned positions for diagnostics (kept small)
 
     def one_step(theta, k, idx):
-        # Create minibatch from indices  
+        # Create minibatch from indices
         Xb, Yb = X[idx], Y[idx]
         # SGLD step in 1.2.5 returns single position, not tuple
         new_theta = sgld_step(k, theta, (Xb, Yb), step_size)
@@ -765,7 +775,7 @@ def run_sgld_online(key, init_thetas, grad_logpost_minibatch, X, Y, n, step_size
             stats_chain_samp += toc(t_chain)
         # end for t
     # end for c
-    
+
     # Accumulate per-chain timings to global stats
     if stats:
         stats.t_sgld_warmup += stats_chain_warm
@@ -855,7 +865,7 @@ def run_hmc_online_with_adaptation(key, init_thetas, logpost_and_grad,
         rm, kept, acc_chain, Lhist = RunningMeanVar(), [], [], []
         hmc_eval_time = 0.0
         t1 = tic()
-        
+
         # Process the first sample (already computed during precompilation)
         if (0 % eval_every) == 0:
             eval_t0 = tic() if stats else None
@@ -1027,7 +1037,7 @@ def run_mclmc_online(
         if stats:
             # tuner cost is part of "warmup" wall time for MCLMC
             stats.t_mclmc_warmup += toc(t0)
-        
+
         # tuned_params has fields .L and .step_size (per docs)
         alg = blackjax.mclmc(logdensity_fn, L=tuned_params.L, step_size=tuned_params.step_size)
         step = jax.jit(alg.step)
@@ -1068,7 +1078,7 @@ def run_mclmc_online(
             stats.n_mclmc_steps += draws
 
         if pbar: pbar.close()
-        
+
         # Determine shape for empty arrays based on diagnostic mode
         if diag_dims is not None:
             empty_shape = (0, len(diag_dims))
@@ -1099,7 +1109,7 @@ def run_sampler(cfg, name: str, *,  # "sgld" | "hmc" | "mclmc"
     """Uniform interface for running any sampler with consistent inputs/outputs"""
     dim = init_theta_f64.shape[1]
     diag_targets = prepare_diag_targets(dim, cfg)
-    
+
     if name == "sgld":
         return run_sgld_online(
             random.PRNGKey(cfg.seed+10),
@@ -1207,17 +1217,27 @@ def _running_llc(Ln_histories, n, beta, L0):
 
 def plot_diagnostics(sgld_samples_thin, Ln_histories_sgld,
                      hmc_samples_thin, Ln_histories_hmc,
-                     accs_hmc, n, beta, L0, 
-                     mclmc_samples_thin=None, Ln_histories_mclmc=None, 
+                     accs_hmc, n, beta, L0,
+                     mclmc_samples_thin=None, Ln_histories_mclmc=None,
                      energy_deltas_mclmc=None,
-                     max_theta_dims=8, save_prefix=None):
+                     max_theta_dims=8, save_prefix=None, save_dir=None):
     """Plot comprehensive convergence diagnostics"""
-    
+
+    def save_plot(filename):
+        """Helper to save plot with consistent naming and location"""
+        if save_prefix or save_dir:
+            save_name = filename
+            if save_prefix:
+                save_name = f"{save_prefix}_{save_name}"
+            if save_dir:
+                save_name = os.path.join(save_dir, save_name)
+            plt.savefig(save_name, dpi=160, bbox_inches="tight")
+
     # Running LLC plots
     samplers = [("SGLD", Ln_histories_sgld), ("HMC", Ln_histories_hmc)]
     if Ln_histories_mclmc is not None:
         samplers.append(("MCLMC", Ln_histories_mclmc))
-    
+
     for name, H in samplers:
         lam, pooled = _running_llc(H, n, beta, L0)
         if lam is None:
@@ -1232,54 +1252,49 @@ def plot_diagnostics(sgld_samples_thin, Ln_histories_sgld,
         plt.title(f"{name}: running LLC")
         plt.legend()
         plt.tight_layout()
-        if save_prefix:
-            plt.savefig(f"{save_prefix}_{name.lower()}_llc_running.png", dpi=160)
+        save_plot(f"{name.lower()}_llc_running.png")
         plt.show()
 
     # L_n trace, ACF, ESS, Rhat
     samplers = [("SGLD", Ln_histories_sgld), ("HMC", Ln_histories_hmc)]
     if Ln_histories_mclmc is not None:
         samplers.append(("MCLMC", Ln_histories_mclmc))
-    
+
     for name, H in samplers:
         idata_L, T = _idata_from_L(H)
         if idata_L is None:
             continue
-        
+
         # Trace plot
         az.plot_trace(idata_L, var_names=["L"])
         plt.suptitle(f"{name}: L_n trace", y=1.02)
         plt.tight_layout()
-        if save_prefix:
-            plt.savefig(f"{save_prefix}_{name.lower()}_L_trace.png", dpi=160, bbox_inches="tight")
+        save_plot(f"{name.lower()}_L_trace.png")
         plt.show()
-        
+
         # Autocorrelation
         az.plot_autocorr(idata_L, var_names=["L"])
         plt.suptitle(f"{name}: L_n ACF", y=1.02)
         plt.tight_layout()
-        if save_prefix:
-            plt.savefig(f"{save_prefix}_{name.lower()}_L_acf.png", dpi=160, bbox_inches="tight")
+        save_plot(f"{name.lower()}_L_acf.png")
         plt.show()
-        
+
         # ESS
         try:
             az.plot_ess(idata_L, var_names=["L"])
             plt.suptitle(f"{name}: ESS(L_n)", y=1.02)
             plt.tight_layout()
-            if save_prefix:
-                plt.savefig(f"{save_prefix}_{name.lower()}_L_ess.png", dpi=160, bbox_inches="tight")
+            save_plot(f"{name.lower()}_L_ess.png")
             plt.show()
         except:
             pass
-        
+
         # R-hat
         try:
             az.plot_forest(idata_L, var_names=["L"], r_hat=True)
             plt.suptitle(f"{name}: R̂(L_n)", y=1.02)
             plt.tight_layout()
-            if save_prefix:
-                plt.savefig(f"{save_prefix}_{name.lower()}_L_rhat.png", dpi=160, bbox_inches="tight")
+            save_plot(f"{name.lower()}_L_rhat.png")
             plt.show()
         except:
             pass
@@ -1288,32 +1303,30 @@ def plot_diagnostics(sgld_samples_thin, Ln_histories_sgld,
     samplers = [("SGLD", sgld_samples_thin), ("HMC", hmc_samples_thin)]
     if mclmc_samples_thin is not None:
         samplers.append(("MCLMC", mclmc_samples_thin))
-    
+
     for name, S in samplers:
         idata_th, idx = _idata_from_theta(S, max_dims=max_theta_dims)
         if idata_th is None:
             continue
-        
+
         coords = {"theta_dim": idx}
-        
+
         # Theta trace
         try:
             az.plot_trace(idata_th, var_names=["theta"], coords=coords)
             plt.suptitle(f"{name}: θ trace (k={len(idx)})", y=1.02)
             plt.tight_layout()
-            if save_prefix:
-                plt.savefig(f"{save_prefix}_{name.lower()}_theta_trace.png", dpi=160, bbox_inches="tight")
+            save_plot(f"{name.lower()}_theta_trace.png")
             plt.show()
         except:
             pass
-        
+
         # Rank plot
         try:
             az.plot_rank(idata_th, var_names=["theta"], coords=coords)
             plt.suptitle(f"{name}: θ rank (k={len(idx)})", y=1.02)
             plt.tight_layout()
-            if save_prefix:
-                plt.savefig(f"{save_prefix}_{name.lower()}_theta_rank.png", dpi=160, bbox_inches="tight")
+            save_plot(f"{name.lower()}_theta_rank.png")
             plt.show()
         except:
             pass
@@ -1328,10 +1341,9 @@ def plot_diagnostics(sgld_samples_thin, Ln_histories_sgld,
             plt.ylabel("density")
             plt.title("HMC acceptance")
             plt.tight_layout()
-            if save_prefix:
-                plt.savefig(f"{save_prefix}_hmc_acceptance.png", dpi=160)
+            save_plot("hmc_acceptance.png")
             plt.show()
-    
+
     # MCLMC energy change histogram
     if energy_deltas_mclmc is not None:
         try:
@@ -1343,11 +1355,101 @@ def plot_diagnostics(sgld_samples_thin, Ln_histories_sgld,
                 plt.ylabel("density")
                 plt.title("MCLMC energy change histogram")
                 plt.tight_layout()
-                if save_prefix:
-                    plt.savefig(f"{save_prefix}_mclmc_energy_hist.png", dpi=160)
+                save_plot("mclmc_energy_hist.png")
                 plt.show()
         except Exception:
             pass
+
+
+# ----------------------------
+# Artifact Management
+# ----------------------------
+def create_run_directory(cfg: Config) -> str:
+    """Create timestamped run directory for artifacts"""
+    if not cfg.save_plots and not cfg.save_manifest and not cfg.save_readme_snippet:
+        return ""
+
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    run_dir = os.path.join(cfg.artifacts_dir, timestamp)
+    os.makedirs(run_dir, exist_ok=True)
+
+    return run_dir
+
+def save_run_manifest(run_dir: str, cfg: Config, stats: Optional[object] = None) -> None:
+    """Save run configuration and statistics to manifest.txt"""
+    if not run_dir or not cfg.save_manifest:
+        return
+
+    manifest_path = os.path.join(run_dir, "manifest.txt")
+
+    # Convert config to dict for serialization
+    config_dict = {
+        field.name: getattr(cfg, field.name)
+        for field in cfg.__dataclass_fields__.values()
+    }
+
+    with open(manifest_path, 'w') as f:
+        f.write("# LLC Run Configuration and Results\n")
+        f.write(f"# Generated: {datetime.now().isoformat()}\n\n")
+
+        f.write("## Configuration\n")
+        for key, value in config_dict.items():
+            f.write(f"{key}: {value}\n")
+
+        if stats:
+            f.write("\n## Runtime Statistics\n")
+            if hasattr(stats, '__dict__'):
+                for key, value in stats.__dict__.items():
+                    f.write(f"{key}: {value}\n")
+
+def save_readme_snippet(run_dir: str, cfg: Config, run_name: str = "") -> None:
+    """Generate README_snippet.md for easy documentation"""
+    if not run_dir or not cfg.save_readme_snippet:
+        return
+
+    snippet_path = os.path.join(run_dir, "README_snippet.md")
+    timestamp = os.path.basename(run_dir)
+
+    with open(snippet_path, 'w') as f:
+        f.write(f"### Run {run_name or timestamp}\n\n")
+        f.write(f"**Date:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+        f.write("**Key Configuration:**\n")
+        f.write(f"- Model: {cfg.depth}-layer MLP, {cfg.activation} activation\n")
+        f.write(f"- Parameters: ~{cfg.target_params:,} target\n")
+        f.write(f"- Data: n={cfg.n_data:,}, {cfg.x_dist} distribution\n")
+        f.write(f"- Samplers: {cfg.sampler}\n")
+        f.write(f"- Chains: {cfg.chains}\n\n")
+
+        f.write("**Diagnostic Plots:**\n")
+        # List plot files that should be generated
+        plot_types = [
+            "llc_running", "L_trace", "L_acf", "L_ess", "L_rhat",
+            "theta_trace", "theta_rank", "acceptance", "energy_hist"
+        ]
+        samplers = ["sgld", "hmc", "mclmc"]
+
+        for sampler in samplers:
+            for plot_type in plot_types:
+                if plot_type in ["acceptance"] and sampler != "hmc":
+                    continue
+                if plot_type in ["energy_hist"] and sampler != "mclmc":
+                    continue
+                f.write(f"- `{sampler}_{plot_type}.png`\n")
+
+        f.write(f"\n**Artifacts Location:** `{run_dir}/`\n\n")
+
+def update_readme_with_run(run_dir: str, cfg: Config) -> None:
+    """Optionally update main README with run information using markers"""
+    if not cfg.auto_update_readme:
+        return
+
+    readme_path = "README.md"
+    if not os.path.exists(readme_path):
+        return
+
+    # Implementation for auto-updating README would go here
+    # This is optional and more complex, so leaving as placeholder
+    pass
 
 
 # ----------------------------
@@ -1356,6 +1458,11 @@ def plot_diagnostics(sgld_samples_thin, Ln_histories_sgld,
 def main(cfg: Config = CFG):
     print("=== Building teacher and data ===")
     stats = RunStats()
+
+    # Create run directory for artifacts
+    run_dir = create_run_directory(cfg) if cfg.auto_create_run_dir else ""
+    if run_dir:
+        print(f"Artifacts will be saved to: {run_dir}")
 
     # Build timing
     t0 = tic()
@@ -1608,7 +1715,15 @@ def main(cfg: Config = CFG):
                         mclmc_samples_thin, Ln_histories_mclmc,
                         energy_deltas_mclmc,
                         max_theta_dims=cfg.max_theta_plot_dims,
-                        save_prefix=cfg.save_plots_prefix)
+                        save_prefix=cfg.save_plots_prefix,
+                        save_dir=run_dir if cfg.save_plots else None)
+
+    # Save run manifest and README snippet
+    if run_dir:
+        save_run_manifest(run_dir, cfg, stats)
+        save_readme_snippet(run_dir, cfg)
+        update_readme_with_run(run_dir, cfg)  # Optional auto-update
+        print(f"Artifacts saved to: {run_dir}")
 
     jax.block_until_ready(hmc_samples_thin)  # Final sync before runtime report
     print(f"\nDone in {time.time() - t0:.1f}s.")

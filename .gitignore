@@ -8,3 +8,10 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Artifacts and visualization outputs
+artifacts/
+*.png
+*.jpg
+*.jpeg
+*.pdf
