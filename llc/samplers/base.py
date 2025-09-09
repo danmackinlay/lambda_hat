@@ -19,6 +19,7 @@ class ChainResult:
     mean_L: float
     var_L: float
     n_L: int
+    eval_time_seconds: float       # time spent in L_n evaluations
 
 @dataclass
 class RunSummary:
@@ -166,7 +167,8 @@ def drive_chain(
         if use_tqdm and (t % progress_update_every == 0 or t == n_steps - 1):
             meanL = rm.value()[0] if rm.n > 0 else float("nan")
             pbar.set_postfix_str(f"L̄≈{meanL:.4f}")
-            pbar.update(progress_update_every if t % progress_update_every == 0 else 1)
+        if use_tqdm:
+            pbar.update(1)
 
     if use_tqdm and hasattr(pbar, "close"):
         pbar.close()
@@ -185,6 +187,7 @@ def drive_chain(
         mean_L=m,
         var_L=v,
         n_L=n,
+        eval_time_seconds=float(eval_time),
     )
 
 def make_tiny_store(dim: int, config) -> tuple[Callable, Any]:

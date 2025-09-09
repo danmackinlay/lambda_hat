@@ -30,7 +30,7 @@ from llc.samplers.base import default_tiny_store
 from llc.samplers.adapters import run_sgld_chain, run_hmc_chain, run_mclmc_chain
 from llc.diagnostics import (
     llc_mean_and_se_from_histories, llc_ci_from_histories, plot_diagnostics, 
-    create_summary_dataframe, ESS_METHOD
+    create_summary_dataframe, ESS_METHOD, _idata_from_L, _idata_from_theta, _running_llc
 )
 from llc.artifacts import (
     create_run_directory, save_config, save_idata_L, save_idata_theta,
@@ -94,7 +94,7 @@ class Config:
     gamma: float = 1.0  # used only if prior_radius None
 
     # Sampling
-    sampler: Literal["sgld", "hmc", "mclmc", "nuts"] = "sgld"
+    sampler: Literal["sgld", "hmc", "mclmc"] = "sgld"
     chains: int = 4
 
     # SGLD
@@ -136,12 +136,6 @@ class Config:
     mclmc_adjusted_target_accept: float = 0.90  # per docs' guidance
     mclmc_grad_per_step_override: Optional[float] = None  # work accounting calibration
 
-    # NUTS
-    nuts_draws: int = 1_000
-    nuts_warmup: int = 1_000
-    nuts_thin: int = 5
-    nuts_eval_every: int = 1
-    nuts_dtype: str = "float64"
 
     # Misc
     seed: int = 42
@@ -253,20 +247,6 @@ def get_accept(info):
 # ----------------------------
 # Work-Normalized Variance utilities
 # ----------------------------
-def llc_mean_and_se_from_histories(Ln_histories, n, beta, L0):
-    """Compute LLC mean and SE using ESS from ArviZ"""
-    valid = [h for h in Ln_histories if len(h) > 1]
-    if not valid:
-        return np.nan, np.nan, np.nan
-    m = min(len(h) for h in valid)
-    H = np.stack([np.asarray(h[:m]) for h in valid], axis=0)  # (chains, m)
-    idata = az.from_dict(posterior={"L": H})
-    ess = float(np.nanmedian(az.ess(idata, var_names=["L"]).data_vars["L"].values))
-    L_mean = float(np.nanmean(H))
-    L_std = float(np.nanstd(H, ddof=1))
-    lam_hat = n * float(beta) * (L_mean - L0)
-    se = n * float(beta) * (L_std / np.sqrt(max(1.0, ess)))
-    return lam_hat, se, ess
 
 
 def work_normalized_variance(se, time_seconds: float, grad_work: int):
@@ -690,25 +670,6 @@ def stack_thinned(kept_list):  # list of (draws, dim)
     return np.stack([k[:m] for k in kept_list], axis=0)
 
 
-def llc_ci_from_histories(Ln_histories, n, beta, L0, alpha=0.05):
-    """Compute LLC with proper CI using ESS from Ln evaluation history"""
-    # pack ragged histories to a rectangular array by truncating to min length
-    m = min(len(h) for h in Ln_histories if len(h) > 0)
-    if m == 0:
-        return 0.0, (0.0, 0.0)
-    H = np.stack([np.asarray(h[:m]) for h in Ln_histories], axis=0)  # (chains, m)
-    idata = az.from_dict(posterior={"L": H})
-    ess = float(np.nanmedian(az.ess(idata, var_names=["L"], method="bulk").L.values))
-    L_mean = float(np.nanmean(H))
-    L_std = float(np.nanstd(H, ddof=1))
-    # variance of mean adjusted by ESS
-    se = L_std / np.sqrt(max(1.0, ess))
-    z = norm.ppf(1 - alpha / 2)
-    llc_mean = n * float(beta) * (L_mean - L0)
-    return llc_mean, (
-        llc_mean - z * n * float(beta) * se,
-        llc_mean + z * n * float(beta) * se,
-    )
 
 
 def scalar_chain_diagnostics(series_per_chain, name="L"):
@@ -1081,33 +1042,6 @@ def run_sampler(
 
 
 # ----------------------------
-# NUTS chains (BlackJAX) - Online memory-efficient version
-# ----------------------------
-def run_nuts_online(
-    key, init_thetas, logpost_and_grad, warmup, draws, thin, eval_every, Ln_full64
-):
-    """NUTS with automatic step size tuning - INCOMPLETE IMPLEMENTATION"""
-    # TODO: Fix BlackJAX API usage - current implementation has issues with:
-    # 1. wa.run() parameter count (expecting 2 vs 3 arguments)
-    # 2. Return value unpacking from window adaptation
-    # 3. Proper NUTS state handling and iteration
-    raise NotImplementedError(
-        "NUTS sampler implementation needs fixing. "
-        "BlackJAX API usage is incorrect. Use 'sgld' or 'hmc' samplers for now."
-    )
-
-    # Incomplete reference implementation below:
-    # chains, dim = init_thetas.shape
-    # def logdensity(theta):
-    #     val, _ = logpost_and_grad(theta)
-    #     return val
-    #
-    # def warm_and_sample(key, theta_init):
-    #     wa = blackjax.window_adaptation(blackjax.nuts, logdensity)
-    #     (state, params), _ = wa.run(key, theta_init)  # API issue here
-    #     nuts = blackjax.nuts(logdensity, **params)
-    #     # ... rest of sampling logic
-    #     return states
 
 
 # ----------------------------
@@ -1115,326 +1049,25 @@ def run_nuts_online(
 # ----------------------------
 
 
-def _idata_from_L(Ln_histories):
-    """Create ArviZ InferenceData from L_n histories"""
-    H = _stack_histories(Ln_histories)
-    return (
-        (az.from_dict(posterior={"L": H}), H.shape[1]) if H is not None else (None, 0)
-    )
 
 
-def _idata_from_theta(samples_thin, max_dims=8):
-    """Create ArviZ InferenceData from theta samples"""
-    S = np.asarray(samples_thin)
-    if S.size == 0 or S.shape[1] < 2:
-        return None, []
-    k = S.shape[-1]
-    idx = list(range(min(k, max_dims)))
-    idata = az.from_dict(
-        posterior={"theta": S},
-        coords={"theta_dim": np.arange(k)},
-        dims={"theta": ["theta_dim"]},
-    )
-    return idata, idx
 
-
-def _running_llc(Ln_histories, n, beta, L0):
-    """Compute running LLC estimates"""
-    H = _stack_histories(Ln_histories)
-    if H is None:
-        return None, None
-    cmean = np.cumsum(H, 1) / np.arange(1, H.shape[1] + 1)[None, :]
-    lam = n * float(beta) * (cmean - L0)
-    pooled = (
-        n * float(beta) * (np.cumsum(H.mean(0)) / np.arange(1, H.shape[1] + 1) - L0)
-    )
-    return lam, pooled
 
 
 # ----------------------------
 # Plotting helpers
 # ----------------------------
-def _finalize_figure(
-    cfg: Config, save_prefix: str | None, save_dir: str | None, name: str
-):
-    """Save and/or show figure, then close it to prevent blocking"""
-    saved_paths = []
-
-    # Save via legacy save_prefix (backward compatibility)
-    if save_prefix:
-        stem = f"{save_prefix}_{name}"
-        path = f"{stem}.png"
-        plt.savefig(path, dpi=160, bbox_inches="tight")
-        saved_paths.append(path)
-
-    # Save via new save_dir system
-    if save_dir:
-        saved_paths.extend(save_plot(save_dir, name))
-
-    # Show if requested (usually False for headless)
-    if cfg.show_plots:
-        plt.show()
-    else:
-        plt.close()  # Release memory, no GUI
-
-    return saved_paths
 
 
-def save_plot(save_dir: str, name: str, fmt: str = "png") -> list[str]:
-    """Save current matplotlib figure to save_dir with consistent naming"""
-    from pathlib import Path
-
-    paths = []
-    stem = Path(save_dir) / name
-
-    if fmt in ("png", "both"):
-        path = f"{stem}.png"
-        plt.savefig(path, dpi=160, bbox_inches="tight")
-        paths.append(path)
-
-    if fmt in ("svg", "both"):
-        path = f"{stem}.svg"
-        plt.savefig(path, bbox_inches="tight")
-        paths.append(path)
-
-    return paths
 
 
-def write_html_gallery(
-    run_dir: str, images: list[str], title: str = "LLC Sampler Diagnostics"
-):
-    """Generate HTML gallery for viewing all saved plots"""
-    from pathlib import Path
-
-    rd = Path(run_dir)
-    rels = [os.path.relpath(p, start=rd) for p in images if os.path.exists(p)]
-
-    items = []
-    for r in rels:
-        items.append(
-            f'<div><img src="{r}" style="max-width: 720px; height: auto;"><br><small>{r}</small></div><hr/>'
-        )
-
-    html = f"""<!doctype html>
-<html>
-<head>
-    <meta charset="utf-8">
-    <title>{title}</title>
-    <style>
-        body {{ font-family: Arial, sans-serif; margin: 20px; }}
-        img {{ border: 1px solid #ddd; margin-bottom: 10px; }}
-        small {{ color: #666; }}
-    </style>
-</head>
-<body>
-    <h1>{title}</h1>
-    <p><strong>Run directory:</strong> {rd}</p>
-    <p><strong>Generated:</strong> {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}</p>
-    <p><strong>Total images:</strong> {len(rels)}</p>
-    <hr/>
-    {"".join(items)}
-</body>
-</html>"""
-
-    gallery_path = rd / "index.html"
-    gallery_path.write_text(html)
-    return str(gallery_path)
 
 
-def plot_diagnostics(
-    sgld_samples_thin,
-    Ln_histories_sgld,
-    hmc_samples_thin,
-    Ln_histories_hmc,
-    accs_hmc,
-    n,
-    beta,
-    L0,
-    cfg: Config,
-    mclmc_samples_thin=None,
-    Ln_histories_mclmc=None,
-    energy_deltas_mclmc=None,
-    max_theta_dims=8,
-    save_prefix=None,
-    save_dir=None,
-):
-    """Plot comprehensive convergence diagnostics"""
-    saved_files = []
-
-    def save_plot(filename):
-        """Helper to save plot with consistent naming and location"""
-        if save_prefix or save_dir:
-            save_name = filename
-            if save_prefix:
-                save_name = f"{save_prefix}_{save_name}"
-            if save_dir:
-                save_name = os.path.join(save_dir, save_name)
-            plt.savefig(save_name, dpi=160, bbox_inches="tight")
-
-    # Running LLC plots
-    samplers = [("SGLD", Ln_histories_sgld), ("HMC", Ln_histories_hmc)]
-    if Ln_histories_mclmc is not None:
-        samplers.append(("MCLMC", Ln_histories_mclmc))
-
-    for name, H in samplers:
-        lam, pooled = _running_llc(H, n, beta, L0)
-        if lam is None:
-            continue
-        T = lam.shape[1]
-        plt.figure(figsize=(7, 4))
-        for c in range(lam.shape[0]):
-            plt.plot(np.arange(1, T + 1), lam[c], alpha=0.4, lw=1)
-        plt.plot(np.arange(1, T + 1), pooled, lw=2, label="pooled")
-        plt.xlabel("L_n evaluations")
-        plt.ylabel(r"$\hat\lambda_t$")
-        plt.title(f"{name}: running LLC")
-        plt.legend()
-        plt.tight_layout()
-        saved_files.extend(
-            _finalize_figure(cfg, save_prefix, save_dir, f"{name.lower()}_llc_running")
-        )
-
-    # L_n trace, ACF, ESS, Rhat
-    samplers = [("SGLD", Ln_histories_sgld), ("HMC", Ln_histories_hmc)]
-    if Ln_histories_mclmc is not None:
-        samplers.append(("MCLMC", Ln_histories_mclmc))
-
-    for name, H in samplers:
-        idata_L, T = _idata_from_L(H)
-        if idata_L is None:
-            continue
-
-        # Trace plot
-        az.plot_trace(idata_L, var_names=["L"])
-        plt.suptitle(f"{name}: L_n trace", y=1.02)
-        plt.tight_layout()
-        saved_files.extend(
-            _finalize_figure(cfg, save_prefix, save_dir, f"{name.lower()}_L_trace")
-        )
-
-        # Autocorrelation
-        az.plot_autocorr(idata_L, var_names=["L"])
-        plt.suptitle(f"{name}: L_n ACF", y=1.02)
-        plt.tight_layout()
-        saved_files.extend(
-            _finalize_figure(cfg, save_prefix, save_dir, f"{name.lower()}_L_acf")
-        )
-
-        # ESS
-        try:
-            az.plot_ess(idata_L, var_names=["L"])
-            plt.suptitle(f"{name}: ESS(L_n)", y=1.02)
-            plt.tight_layout()
-            saved_files.extend(
-                _finalize_figure(cfg, save_prefix, save_dir, f"{name.lower()}_L_ess")
-            )
-        except:
-            pass
-
-        # R-hat
-        try:
-            az.plot_forest(idata_L, var_names=["L"], r_hat=True)
-            plt.suptitle(f"{name}: R̂(L_n)", y=1.02)
-            plt.tight_layout()
-            saved_files.extend(
-                _finalize_figure(cfg, save_prefix, save_dir, f"{name.lower()}_L_rhat")
-            )
-        except:
-            pass
-
-    # Tiny theta diagnostics (only if we stored subset/proj)
-    samplers = [("SGLD", sgld_samples_thin), ("HMC", hmc_samples_thin)]
-    if mclmc_samples_thin is not None:
-        samplers.append(("MCLMC", mclmc_samples_thin))
-
-    for name, S in samplers:
-        idata_th, idx = _idata_from_theta(S, max_dims=max_theta_dims)
-        if idata_th is None:
-            continue
-
-        coords = {"theta_dim": idx}
-
-        # Theta trace
-        try:
-            az.plot_trace(idata_th, var_names=["theta"], coords=coords)
-            plt.suptitle(f"{name}: θ trace (k={len(idx)})", y=1.02)
-            plt.tight_layout()
-            saved_files.extend(
-                _finalize_figure(
-                    cfg, save_prefix, save_dir, f"{name.lower()}_theta_trace"
-                )
-            )
-        except:
-            pass
-
-        # Rank plot
-        try:
-            az.plot_rank(idata_th, var_names=["theta"], coords=coords)
-            plt.suptitle(f"{name}: θ rank (k={len(idx)})", y=1.02)
-            plt.tight_layout()
-            saved_files.extend(
-                _finalize_figure(
-                    cfg, save_prefix, save_dir, f"{name.lower()}_theta_rank"
-                )
-            )
-        except:
-            pass
-
-    # HMC acceptance histogram
-    if accs_hmc:
-        acc = np.concatenate([np.asarray(a).ravel() for a in accs_hmc if len(a)])
-        if acc.size:
-            plt.figure(figsize=(6, 4))
-            plt.hist(acc, bins=20, density=True)
-            plt.xlabel("acceptance_rate")
-            plt.ylabel("density")
-            plt.title("HMC acceptance")
-            plt.tight_layout()
-            saved_files.extend(
-                _finalize_figure(cfg, save_prefix, save_dir, "hmc_acceptance")
-            )
-
-    # MCLMC energy change histogram
-    if energy_deltas_mclmc is not None:
-        try:
-            e = np.concatenate(
-                [np.asarray(eh) for eh in energy_deltas_mclmc if len(eh)]
-            )
-            if e.size:
-                plt.figure(figsize=(6, 4))
-                plt.hist(e, bins=20, density=True)
-                plt.xlabel("ΔH")
-                plt.ylabel("density")
-                plt.title("MCLMC energy change histogram")
-                plt.tight_layout()
-                saved_files.extend(
-                    _finalize_figure(cfg, save_prefix, save_dir, "mclmc_energy_hist")
-                )
-        except Exception:
-            pass
-
-    return saved_files
 
 
 # ----------------------------
 # Data Artifact Saving (Analysis-Ready Format)
 # ----------------------------
-def save_idata_L(run_dir: str, name: str, Ln_histories) -> str | None:
-    """Save L_n histories as ArviZ InferenceData NetCDF for dynamic plotting"""
-    if not Ln_histories:
-        return None
-
-    from pathlib import Path
-
-    H = _stack_histories(Ln_histories)
-    if H is None:
-        return None
-
-    # Create ArviZ InferenceData from L_n histories
-    idata = az.from_dict(posterior={"L": H})
-    path = Path(run_dir) / f"{name}_L.nc"
-    idata.to_netcdf(str(path))
-    return str(path)
 
 
 def save_theta_thin(run_dir: str, name: str, samples_thin) -> str | None:
@@ -1451,25 +1084,8 @@ def save_theta_thin(run_dir: str, name: str, samples_thin) -> str | None:
     return str(path)
 
 
-def save_metrics(run_dir: str, name: str, metrics: dict) -> str:
-    """Save sampler metrics as JSON"""
-    from pathlib import Path
-    import json
-
-    path = Path(run_dir) / f"{name}_metrics.json"
-    path.write_text(json.dumps(metrics, indent=2, default=str))
-    return str(path)
 
 
-def save_config(run_dir: str, cfg: Config) -> str:
-    """Save configuration as JSON"""
-    from pathlib import Path
-    import json
-    from dataclasses import asdict
-
-    path = Path(run_dir) / "config.json"
-    path.write_text(json.dumps(asdict(cfg), indent=2, default=str))
-    return str(path)
 
 
 def save_L0(run_dir: str, L0: float) -> str:
@@ -1481,42 +1097,11 @@ def save_L0(run_dir: str, L0: float) -> str:
     return str(path)
 
 
-def _stack_histories(Ln_histories) -> np.ndarray | None:
-    """Convert list of L_n histories to (chains, draws) array for ArviZ"""
-    if not Ln_histories:
-        return None
-
-    # Filter out empty histories
-    valid_histories = [h for h in Ln_histories if len(h) > 0]
-    if not valid_histories:
-        return None
-
-    # Stack into (chains, draws) format
-    try:
-        H = np.array(valid_histories)  # (chains, draws)
-        return H
-    except ValueError:
-        # Handle different length histories by padding to max length
-        max_len = max(len(h) for h in valid_histories)
-        H = np.full((len(valid_histories), max_len), np.nan)
-        for i, h in enumerate(valid_histories):
-            H[i, : len(h)] = h
-        return H
 
 
 # ----------------------------
 # Artifact Management
 # ----------------------------
-def create_run_directory(cfg: Config) -> str:
-    """Create timestamped run directory for artifacts"""
-    if not cfg.save_plots and not cfg.save_manifest and not cfg.save_readme_snippet:
-        return ""
-
-    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    run_dir = os.path.join(cfg.artifacts_dir, timestamp)
-    os.makedirs(run_dir, exist_ok=True)
-
-    return run_dir
 
 
 def save_run_manifest(
@@ -2139,12 +1724,14 @@ def main(cfg: Config = CFG):
         save_readme_snippet(run_dir, cfg)
         update_readme_with_run(run_dir, cfg)  # Optional auto-update
 
-        # Generate HTML gallery if we have saved files
-        if saved_files:
-            gallery_path = write_html_gallery(
-                run_dir, saved_files, title="LLC Sampler Diagnostics"
-            )
-            print(f"HTML gallery: {gallery_path}")
+        # Generate HTML gallery
+        metrics = {
+            "llc_sgld_mean": float(llc_sgld_mean),
+            "llc_hmc_mean": float(llc_hmc_mean), 
+            "llc_mclmc_mean": float(llc_mclmc_mean)
+        }
+        gallery_path = generate_gallery_html(run_dir, cfg, metrics)
+        print(f"HTML gallery: {gallery_path}")
 
         print(f"Artifacts saved to: {run_dir}")
 

@@ -146,10 +146,10 @@ main(cfg)
 The included Makefile provides convenient shortcuts:
 
 ```bash
-make run-save      # Run with visualization saving enabled
-make diag          # Quick test run with plots
-make clean         # Remove all artifacts
-make artifacts     # Create artifacts directory
+make run-save       # Run with visualization saving enabled
+make diag           # Quick test run with plots
+make clean          # Remove all artifacts
+make artifacts      # Create artifacts directory
 make promote-readme # Copy plots from latest run to README assets
 ```
 
