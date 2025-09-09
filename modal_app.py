@@ -1,20 +1,18 @@
 # modal_app.py
 import modal
 
-# --- image: keep it simple. Add your libs; GPU optional ---
+# --- image: install from pyproject.toml + modal extra ---
 image = (
     modal.Image.debian_slim(python_version="3.11")
-    .pip_install(
-        # core
-        "numpy", "scipy", "tqdm", "pandas", "matplotlib",
-        "arviz~=0.22.0", "blackjax~=1.2.5", "optax>=0.2.5",
-        # jax: pick one; CPU (safe) or CUDA variant if you want GPUs
-        "jax[cpu]>=0.4.26",
-        # if you need GPU: replace the above with the matching CUDA wheel,
-        # e.g. "jax[cuda12_local]" and ensure the correct cuda libs are present.
-    )
+    # Install all dependencies from pyproject.toml with modal extra
+    # (includes JAX via blackjax dependency - CPU by default)
+    .pip_install_from_pyproject("pyproject.toml", optional_dependencies=["modal"])
     .add_local_python_source(".")   # ships your repo code
 )
+
+# For GPU support, users can create a custom image:
+# gpu_image = image.pip_install("jax[cuda12_local]", force_build=True)
+# Then use: @app.function(image=gpu_image, gpu="L40S")
 
 # Create persistent volume for artifacts
 artifacts_volume = modal.Volume.from_name("llc-artifacts", create_if_missing=True)
