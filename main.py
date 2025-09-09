@@ -30,12 +30,20 @@ from llc.samplers.base import default_tiny_store
 from llc.samplers.adapters import run_sgld_chain, run_hmc_chain, run_mclmc_chain
 from llc.diagnostics import (
     llc_mean_and_se_from_histories, llc_ci_from_histories, plot_diagnostics, 
-    create_summary_dataframe, ESS_METHOD, _idata_from_L, _idata_from_theta, _running_llc
+    create_summary_dataframe, ESS_METHOD
 )
 from llc.artifacts import (
     create_run_directory, save_config, save_idata_L, save_idata_theta,
     save_metrics, save_summary_csv, create_manifest, generate_gallery_html, save_plot
 )
+
+# Simple utility function to save L0 value
+def save_L0(run_dir: str, L0: float) -> str:
+    """Save L0 value for running LLC reconstruction"""
+    from pathlib import Path
+    path = Path(run_dir) / "L0.txt"
+    path.write_text(f"{L0:.10f}")
+    return str(path)
 
 plt.switch_backend("Agg")  # Ensure headless backend even if pyplot was already imported
 
@@ -789,6 +797,8 @@ def run_sgld_online(
         # Work accounting: per SGLD step add one minibatch grad
         work_bump = (lambda: setattr(stats, "n_sgld_minibatch_grads", stats.n_sgld_minibatch_grads + 1)) if stats else None
 
+        # Time the sampling
+        t0 = time.time()
         res = run_sgld_chain(
             rng_key=ck,
             init_theta=init_thetas[c],
@@ -807,6 +817,11 @@ def run_sgld_online(
             progress_update_every=progress_update_every,
             work_bump=work_bump,
         )
+        # Accumulate sampling time (subtract eval time)
+        elapsed = time.time() - t0
+        if stats and hasattr(res, 'eval_time_seconds'):
+            stats.t_sgld_sampling += max(0.0, elapsed - res.eval_time_seconds)
+        
         kept_all.append(res.kept)
         means.append(res.mean_L)
         vars_.append(res.var_L)
@@ -846,12 +861,12 @@ def run_hmc_online_with_adaptation(
     for c in range(chains):
         ck = jax.random.fold_in(key, c)
 
-        # Warmup timing
-        t0 = tic() if stats else None
-        # We let the adapter do the warmup and compilation; we'll measure coarse timings:
+        # Time the sampling
+        t0 = time.time()
         # Tracking grad work: bump by (L+1) per draw
         def bump_grads(g):
-            stats.n_hmc_leapfrog_grads += int(g)
+            if stats:
+                stats.n_hmc_leapfrog_grads += int(g)
 
         res = run_hmc_chain(
             rng_key=ck,
@@ -869,11 +884,10 @@ def run_hmc_online_with_adaptation(
             progress_update_every=progress_update_every,
             work_bump=(bump_grads if stats else None),
         )
-        # Timings
-        if stats and t0 is not None:
-            # We can't perfectly separate warmup vs sampling here without deeper hooks;
-            # attribute everything except Ln time to sampling after warmup:
-            stats.t_hmc_sampling += 0.0  # (kept for symmetry)
+        # Accumulate sampling time (subtract eval time)
+        elapsed = time.time() - t0
+        if stats and hasattr(res, 'eval_time_seconds'):
+            stats.t_hmc_sampling += max(0.0, elapsed - res.eval_time_seconds)
 
         kept_all.append(res.kept)
         means.append(res.mean_L)
@@ -921,8 +935,12 @@ def run_mclmc_online(
     for c in range(chains):
         ck = jax.random.fold_in(key, c)
 
+        # Time the sampling
+        t0 = time.time()
+        
         def bump_work(g):
-            stats.n_mclmc_steps += int(g)
+            if stats:
+                stats.n_mclmc_steps += int(g)
 
         res = run_mclmc_chain(
             rng_key=ck,
@@ -942,6 +960,11 @@ def run_mclmc_online(
             progress_update_every=progress_update_every,
             work_bump=(bump_work if stats else None),
         )
+        # Accumulate sampling time (subtract eval time)  
+        elapsed = time.time() - t0
+        if stats and hasattr(res, 'eval_time_seconds'):
+            stats.t_mclmc_sampling += max(0.0, elapsed - res.eval_time_seconds)
+            
         kept_all.append(res.kept)
         means.append(res.mean_L)
         vars_.append(res.var_L)
@@ -1070,33 +1093,6 @@ def run_sampler(
 # ----------------------------
 
 
-def save_theta_thin(run_dir: str, name: str, samples_thin) -> str | None:
-    """Save thinned theta samples as compressed npz"""
-    from pathlib import Path
-
-    # samples_thin: list of arrays, convert to (chains, draws, k)
-    S = np.array(samples_thin) if samples_thin is not None else np.array([])
-    if S.size == 0:
-        return None
-
-    path = Path(run_dir) / f"{name}_theta_thin.npz"
-    np.savez_compressed(str(path), samples=S)
-    return str(path)
-
-
-
-
-
-
-def save_L0(run_dir: str, L0: float) -> str:
-    """Save L0 value for running LLC reconstruction"""
-    from pathlib import Path
-
-    path = Path(run_dir) / "L0.txt"
-    path.write_text(f"{L0:.10f}")
-    return str(path)
-
-
 
 
 # ----------------------------
@@ -1104,92 +1100,7 @@ def save_L0(run_dir: str, L0: float) -> str:
 # ----------------------------
 
 
-def save_run_manifest(
-    run_dir: str, cfg: Config, stats: Optional[object] = None
-) -> None:
-    """Save run configuration and statistics to manifest.txt"""
-    if not run_dir or not cfg.save_manifest:
-        return
 
-    manifest_path = os.path.join(run_dir, "manifest.txt")
-
-    # Convert config to dict for serialization
-    config_dict = {
-        field.name: getattr(cfg, field.name)
-        for field in cfg.__dataclass_fields__.values()
-    }
-
-    with open(manifest_path, "w") as f:
-        f.write("# LLC Run Configuration and Results\n")
-        f.write(f"# Generated: {datetime.now().isoformat()}\n\n")
-
-        f.write("## Configuration\n")
-        for key, value in config_dict.items():
-            f.write(f"{key}: {value}\n")
-
-        if stats:
-            f.write("\n## Runtime Statistics\n")
-            if hasattr(stats, "__dict__"):
-                for key, value in stats.__dict__.items():
-                    f.write(f"{key}: {value}\n")
-
-
-def save_readme_snippet(run_dir: str, cfg: Config, run_name: str = "") -> None:
-    """Generate README_snippet.md for easy documentation"""
-    if not run_dir or not cfg.save_readme_snippet:
-        return
-
-    snippet_path = os.path.join(run_dir, "README_snippet.md")
-    timestamp = os.path.basename(run_dir)
-
-    with open(snippet_path, "w") as f:
-        f.write(f"### Run {run_name or timestamp}\n\n")
-        f.write(f"**Date:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
-        f.write("**Key Configuration:**\n")
-        f.write(f"- Model: {cfg.depth}-layer MLP, {cfg.activation} activation\n")
-        f.write(f"- Parameters: ~{cfg.target_params:,} target\n")
-        f.write(f"- Data: n={cfg.n_data:,}, {cfg.x_dist} distribution\n")
-        f.write(f"- Samplers: {cfg.sampler}\n")
-        f.write(f"- Chains: {cfg.chains}\n\n")
-
-        f.write("**Diagnostic Plots:**\n")
-        # List plot files that should be generated
-        plot_types = [
-            "llc_running",
-            "L_trace",
-            "L_acf",
-            "L_ess",
-            "L_rhat",
-            "theta_trace",
-            "theta_rank",
-            "acceptance",
-            "energy_hist",
-        ]
-        samplers = ["sgld", "hmc", "mclmc"]
-
-        for sampler in samplers:
-            for plot_type in plot_types:
-                if plot_type in ["acceptance"] and sampler != "hmc":
-                    continue
-                if plot_type in ["energy_hist"] and sampler != "mclmc":
-                    continue
-                f.write(f"- `{sampler}_{plot_type}.png`\n")
-
-        f.write(f"\n**Artifacts Location:** `{run_dir}/`\n\n")
-
-
-def update_readme_with_run(run_dir: str, cfg: Config) -> None:
-    """Optionally update main README with run information using markers"""
-    if not cfg.auto_update_readme:
-        return
-
-    readme_path = "README.md"
-    if not os.path.exists(readme_path):
-        return
-
-    # Implementation for auto-updating README would go here
-    # This is optional and more complex, so leaving as placeholder
-    pass
 
 
 # ----------------------------
@@ -1664,73 +1575,57 @@ def main(cfg: Config = CFG):
         save_idata_L(run_dir, "hmc", Ln_histories_hmc)
         save_idata_L(run_dir, "mclmc", Ln_histories_mclmc)
 
-        # Save thinned theta samples
-        save_theta_thin(run_dir, "sgld", sgld_samples_thin)
-        save_theta_thin(run_dir, "hmc", hmc_samples_thin)
-        save_theta_thin(run_dir, "mclmc", mclmc_samples_thin)
+        # Save thinned theta samples as ArviZ InferenceData
+        save_idata_theta(run_dir, "sgld", sgld_samples_thin)
+        save_idata_theta(run_dir, "hmc", hmc_samples_thin)
+        save_idata_theta(run_dir, "mclmc", mclmc_samples_thin)
 
-        # Save metrics for each sampler
-        save_metrics(
-            run_dir,
-            "sgld",
-            {
-                "llc_mean": float(llc_sgld_mean),
-                "llc_se": float(se_sgld),
-                "ess": float(ess_sgld),
-                "timing_warmup": float(stats.t_sgld_warmup),
-                "timing_sampling": float(stats.t_sgld_sampling),
-                "n_steps": int(stats.n_sgld_minibatch_grads),
-                "n_full_loss": int(stats.n_sgld_full_loss),
-            },
-        )
-
-        save_metrics(
-            run_dir,
-            "hmc",
-            {
-                "llc_mean": float(llc_hmc_mean),
-                "llc_se": float(se_hmc),
-                "ess": float(ess_hmc),
-                "timing_warmup": float(stats.t_hmc_warmup),
-                "timing_sampling": float(stats.t_hmc_sampling),
-                "n_leapfrog_grads": int(stats.n_hmc_leapfrog_grads),
-                "n_full_loss": int(stats.n_hmc_full_loss),
-                "mean_acceptance": float(
-                    np.mean([np.mean(a) for a in accs_hmc if len(a)])
-                )
-                if accs_hmc
-                else 0.0,
-            },
-        )
-
-        save_metrics(
-            run_dir,
-            "mclmc",
-            {
-                "llc_mean": float(llc_mclmc_mean),
-                "llc_se": float(se_mclmc),
-                "ess": float(ess_mclmc),
-                "timing_warmup": float(stats.t_mclmc_warmup),
-                "timing_sampling": float(stats.t_mclmc_sampling),
-                "n_steps": int(stats.n_mclmc_steps),
-                "n_full_loss": int(stats.n_mclmc_full_loss),
-            },
-        )
+        # Collect all metrics for consolidated saving
+        all_metrics = {
+            "sgld_llc_mean": float(llc_sgld_mean),
+            "sgld_llc_se": float(se_sgld),
+            "sgld_ess": float(ess_sgld),
+            "sgld_timing_warmup": float(stats.t_sgld_warmup),
+            "sgld_timing_sampling": float(stats.t_sgld_sampling),
+            "sgld_n_steps": int(stats.n_sgld_minibatch_grads),
+            "sgld_n_full_loss": int(stats.n_sgld_full_loss),
+            "hmc_llc_mean": float(llc_hmc_mean),
+            "hmc_llc_se": float(se_hmc),
+            "hmc_ess": float(ess_hmc),
+            "hmc_timing_warmup": float(stats.t_hmc_warmup),
+            "hmc_timing_sampling": float(stats.t_hmc_sampling),
+            "hmc_n_leapfrog_grads": int(stats.n_hmc_leapfrog_grads),
+            "hmc_n_full_loss": int(stats.n_hmc_full_loss),
+            "hmc_mean_acceptance": float(
+                np.mean([np.mean(a) for a in accs_hmc if len(a)])
+            )
+            if accs_hmc
+            else 0.0,
+            "mclmc_llc_mean": float(llc_mclmc_mean),
+            "mclmc_llc_se": float(se_mclmc),
+            "mclmc_ess": float(ess_mclmc),
+            "mclmc_timing_warmup": float(stats.t_mclmc_warmup),
+            "mclmc_timing_sampling": float(stats.t_mclmc_sampling),
+            "mclmc_n_steps": int(stats.n_mclmc_steps),
+            "mclmc_n_full_loss": int(stats.n_mclmc_full_loss),
+        }
+        
+        # Save all metrics
+        save_metrics(run_dir, all_metrics)
 
         # Save configuration
         save_config(run_dir, cfg)
 
-        save_run_manifest(run_dir, cfg, stats)
-        save_readme_snippet(run_dir, cfg)
-        update_readme_with_run(run_dir, cfg)  # Optional auto-update
+        # Create manifest (replaces save_run_manifest)
+        artifact_files = [
+            "config.json", "metrics.json", "L0.txt",
+            "sgld_Ln.nc", "hmc_Ln.nc", "mclmc_Ln.nc",
+            "sgld_theta.nc", "hmc_theta.nc", "mclmc_theta.nc"
+        ]
+        create_manifest(run_dir, cfg, all_metrics, artifact_files)
 
-        # Generate HTML gallery
-        metrics = {
-            "llc_sgld_mean": float(llc_sgld_mean),
-            "llc_hmc_mean": float(llc_hmc_mean), 
-            "llc_mclmc_mean": float(llc_mclmc_mean)
-        }
-        gallery_path = generate_gallery_html(run_dir, cfg, metrics)
+        # Generate HTML gallery (replaces save_readme_snippet functionality)
+        gallery_path = generate_gallery_html(run_dir, cfg, all_metrics)
         print(f"HTML gallery: {gallery_path}")
 
         print(f"Artifacts saved to: {run_dir}")
