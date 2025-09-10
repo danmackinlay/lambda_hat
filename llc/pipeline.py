@@ -6,6 +6,7 @@ Replaces duplicated logic between main.py, experiments.py, and tasks.py.
 from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, Any, Optional
+import logging
 import time
 import os
 
@@ -17,6 +18,9 @@ import numpy as np
 
 from .config import Config
 from .cache import run_id, load_cached_outputs
+
+# Set up logger
+logger = logging.getLogger(__name__)
 from .models import infer_widths, init_mlp_params
 from .data import make_dataset
 from .losses import as_dtype, make_loss_fns
@@ -94,7 +98,7 @@ def run_one(
     else:
         run_dir = ""  # Don't save if not requested
     
-    print("=== Building teacher and data ===")
+    logger.info("Building teacher and data")
     stats = RunStats()
 
     # Build timing
@@ -115,7 +119,7 @@ def run_one(
     stats.t_build = toc(t0)
 
     # Train to empirical minimizer (ERM) - center the local prior there
-    print("Training to empirical minimizer...")
+    logger.info("Training to empirical minimizer...")
     t1 = tic()
     theta_star_f64, unravel_star_f64 = train_erm(
         w0_pytree, cfg, X.astype(jnp.float64), Y.astype(jnp.float64)
@@ -170,7 +174,7 @@ def run_one(
     histories = {}
     
     # ===== SGLD (Online) =====
-    print("\n=== SGLD (BlackJAX, online) ===")
+    logger.info("Running SGLD (BlackJAX, online)")
     k_sgld = random.split(key, 1)[0]
     # simple overdispersed inits around w0
     init_thetas_sgld = theta0_f32 + 0.01 * random.normal(
@@ -216,7 +220,7 @@ def run_one(
     histories["sgld"] = Ln_histories_sgld
 
     # ===== HMC (Online) =====
-    print("\n=== HMC (BlackJAX, online) ===")
+    logger.info("Running HMC (BlackJAX, online)")
     k_hmc = random.fold_in(key, 123)
     init_thetas_hmc = theta0_f64 + 0.01 * random.normal(k_hmc, (cfg.chains, dim))
 
@@ -266,7 +270,7 @@ def run_one(
     histories["hmc"] = Ln_histories_hmc
 
     # ===== MCLMC (Online) =====
-    print("\n=== MCLMC (BlackJAX, online) ===")
+    logger.info("Running MCLMC (BlackJAX, online)")
     k_mclmc = random.fold_in(key, 456)
     init_thetas_mclmc = theta0_f64 + 0.01 * random.normal(k_mclmc, (cfg.chains, dim))
 
@@ -322,7 +326,7 @@ def run_one(
 
     # Save artifacts if requested
     if save_artifacts and run_dir:
-        print("\n=== Saving Artifacts ===")
+        logger.info("Saving artifacts")
         
         # Save L0 for running LLC reconstruction
         save_L0(run_dir, L0)
@@ -345,7 +349,7 @@ def run_one(
 
         # Generate diagnostic plots if enabled
         if cfg.diag_mode != "none" and cfg.save_plots:
-            print("Generating diagnostic plots...")
+            logger.info("Generating diagnostic plots...")
 
             # Call single-sampler plot_diagnostics for each sampler
             if sgld_samples_thin.size > 0:

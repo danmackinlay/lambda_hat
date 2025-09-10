@@ -13,6 +13,8 @@ from typing import Optional
 os.environ.setdefault("JAX_ENABLE_X64", "true")  # HMC benefits from float64
 os.environ.setdefault("MPLBACKEND", "Agg")  # Headless rendering - no GUI windows
 
+import logging
+
 from llc.config import Config, CFG
 from llc.pipeline import run_one
 
@@ -285,6 +287,13 @@ def main() -> None:
     """Main CLI entry point"""
     parser = create_parser()
     args = parser.parse_args()
+    
+    # Set up logging based on verbosity
+    log_level = logging.DEBUG if getattr(args, 'verbose', False) else logging.INFO
+    logging.basicConfig(
+        level=log_level,
+        format='%(levelname)s: %(message)s'
+    )
     
     # Handle subcommands
     if args.cmd == "sweep":

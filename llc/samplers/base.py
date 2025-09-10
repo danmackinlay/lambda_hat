@@ -51,22 +51,6 @@ class RunningMeanVar:
         return float(self.mean), float(var), int(self.n)
 
 
-def stack_thinned_per_chain(
-    ch_kept: List[List[np.ndarray]], empty_shape: Tuple[int, ...]
-) -> np.ndarray:
-    """Return (C, draws, k) without NaN padding (truncate to per-chain length)."""
-    out = []
-    for kept in ch_kept:
-        out.append(np.stack(kept, 0) if kept else np.empty(empty_shape))
-    # Truncate to common draw count across chains
-    if not out:
-        return np.empty((0, 0, 0))
-    m = min(k.shape[0] for k in out)
-    if m == 0:
-        # preserve k
-        kdim = out[0].shape[-1] if out[0].ndim == 2 else 0
-        return np.empty((len(out), 0, kdim))
-    return np.stack([k[:m] for k in out], axis=0)
 
 
 def default_tiny_store(

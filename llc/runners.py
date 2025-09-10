@@ -2,6 +2,7 @@
 """Sampler orchestration and runner utilities"""
 
 import time
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 import jax
 import numpy as np
@@ -16,6 +17,7 @@ else:
     Config = "Config"
 
 
+@dataclass
 class RunStats:
     """Statistics tracking for computational work and timing"""
 
