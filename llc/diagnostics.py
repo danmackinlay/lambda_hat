@@ -8,14 +8,29 @@ import matplotlib.pyplot as plt
 from scipy.stats import norm
 import pandas as pd
 
-# ESS method constant for consistency
+# ESS method constant for consistency - using ArviZ "bulk" ESS estimator
+# This is the recommended method for effective sample size estimation
 ESS_METHOD = "bulk"
 
 
 def llc_mean_and_se_from_histories(
     Ln_histories: List[np.ndarray], n: int, beta: float, L0: float
 ) -> Tuple[float, float, int]:
-    """Compute LLC mean and standard error from L_n evaluation histories"""
+    """
+    Compute LLC mean and standard error from L_n evaluation histories using ESS.
+    
+    This is the primary method for LLC estimation, using ArviZ bulk ESS for 
+    proper uncertainty quantification that accounts for autocorrelation.
+    
+    Args:
+        Ln_histories: Per-chain histories of L_n evaluations
+        n: Number of data points
+        beta: Inverse temperature 
+        L0: Loss at empirical minimizer
+        
+    Returns:
+        Tuple of (llc_mean, standard_error, effective_sample_size)
+    """
     H = _stack_histories(Ln_histories)
     if H is None:
         return 0.0, np.nan, 0
@@ -46,7 +61,21 @@ def llc_mean_and_se_from_histories(
 def llc_ci_from_histories(
     Ln_histories: List[np.ndarray], n: int, beta: float, L0: float, alpha: float = 0.05
 ) -> Tuple[float, Tuple[float, float]]:
-    """Compute LLC with proper CI using ESS from Ln evaluation history"""
+    """
+    Compute LLC with confidence interval using ESS-based standard error.
+    
+    Uses the same ESS methodology as llc_mean_and_se_from_histories for consistency.
+    
+    Args:
+        Ln_histories: Per-chain histories of L_n evaluations
+        n: Number of data points
+        beta: Inverse temperature
+        L0: Loss at empirical minimizer  
+        alpha: Significance level for CI (default 0.05 for 95% CI)
+        
+    Returns:
+        Tuple of (llc_mean, (ci_lower, ci_upper))
+    """
     # Pack ragged histories to a rectangular array by truncating to min length
     m = min(len(h) for h in Ln_histories if len(h) > 0)
     if m == 0:
