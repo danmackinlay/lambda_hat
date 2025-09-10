@@ -35,19 +35,19 @@ MAIN_PY = main.py
 
 # Run full benchmark with default configuration
 run:
-	$(PYTHON) $(MAIN_PY)
+	$(PYTHON) $(MAIN_PY) run
 
-# Run with plot saving enabled
+# Run with plot saving enabled and no skip
 run-save:
-	$(PYTHON) -c "from main import main; from llc.config import Config; main(Config(save_plots=True, save_manifest=True, save_readme_snippet=True))"
+	$(PYTHON) $(MAIN_PY) run --no-skip
 
 # Run diagnostics with quick test config
 diag:
-	$(PYTHON) -c "from main import main; from dataclasses import replace; from llc.config import TEST_CFG; main(replace(TEST_CFG, save_plots=True, save_manifest=True, save_readme_snippet=True))"
+	$(PYTHON) $(MAIN_PY) run --preset=quick
 
-# Run minimal test (fastest)
+# Run minimal test (fastest) 
 test:
-	$(PYTHON) -c "from main import main; from llc.config import TEST_CFG; main(TEST_CFG)"
+	$(PYTHON) $(MAIN_PY) run --preset=quick --no-artifacts
 
 # Run parameter sweep
 sweep:
@@ -80,13 +80,13 @@ dev-clean:
 
 # Examples of running with specific configurations
 example-small:
-	$(PYTHON) -c "from main import main; from llc.config import Config; main(Config(n_data=1000, sgld_steps=500, hmc_draws=200, save_plots=True))"
+	$(PYTHON) $(MAIN_PY) run --n-data=1000 --sgld-steps=500 --hmc-draws=200
 
 example-deep:
-	$(PYTHON) -c "from main import main; from llc.config import Config; main(Config(depth=3, target_params=50000, save_plots=True))"
+	$(PYTHON) $(MAIN_PY) run --depth=3 --target-params=50000
 
-example-mclmc-only:
-	$(PYTHON) -c "from main import main; from llc.config import Config; main(Config(sampler='mclmc', save_plots=True))"
+example-quick:
+	$(PYTHON) $(MAIN_PY) run --preset=quick --seed=42
 
 # Promote plots from latest run to README assets
 promote-readme:
@@ -112,7 +112,7 @@ modal-get-all:
 	@echo "Downloaded all Modal artifacts to ./artifacts"
 
 modal-sweep:
-	$(PYTHON) main.py sweep --backend=modal --save-artifacts
+	$(PYTHON) $(MAIN_PY) sweep --backend=modal
 	@echo "Modal sweep completed"
 
 modal-stop:

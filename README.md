@@ -96,6 +96,34 @@ pip install llc[modal]     # Modal support
 
 ---
 
+## Run Caching
+
+Each configuration produces a deterministic run ID (hash of config + code version) to avoid re-running completed experiments:
+
+```bash
+# Use caching (default behavior)
+python main.py run --preset=quick
+
+# Skip cache and force re-run  
+python main.py run --preset=quick --no-skip
+
+# Check cache behavior in sweep mode
+python main.py sweep --backend=local  # Caching enabled by default
+```
+
+**How it works:**
+- Run ID combines normalized config parameters + git commit hash
+- Cache hits load existing results in milliseconds vs. minutes of computation
+- Any change to mathematical parameters or code invalidates the cache
+- Non-mathematical flags (like `--no-artifacts`) don't affect the run ID
+
+**Benefits:**
+- **Reproducibility**: Run IDs bake in code version for honest caching
+- **Efficiency**: Avoid expensive re-computation during parameter exploration
+- **Simplicity**: No external database - just deterministic directory names
+
+---
+
 ## Visualization and Artifact Management
 
 The system includes comprehensive visualization saving capabilities for systematic analysis and documentation:
