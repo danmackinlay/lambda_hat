@@ -36,6 +36,17 @@ from llc.artifacts import (
     create_run_directory, save_config, save_idata_L, save_idata_theta,
     save_metrics, save_summary_csv, create_manifest, generate_gallery_html, save_plot
 )
+from llc.models import (
+    infer_widths, act_fn, fan_in_init, init_mlp_params, mlp_forward, count_params
+)
+from llc.data import sample_X, build_teacher, add_noise, make_dataset
+from llc.losses import as_dtype, make_loss_fns
+from llc.posterior import compute_beta_gamma, make_logpost_and_score, make_logdensity_for_mclmc
+from llc.runners import (
+    RunStats, tic, toc, llc_from_running_mean, stack_thinned,
+    run_sgld_online, run_hmc_online_with_adaptation, run_mclmc_online, run_sampler
+)
+from llc.config import Config, TEST_CFG, CFG
 
 # Simple utility function to save L0 value
 def save_L0(run_dir: str, L0: float) -> str:
@@ -51,192 +62,14 @@ plt.switch_backend("Agg")  # Ensure headless backend even if pyplot was already 
 # ----------------------------
 # Config
 # ----------------------------
-@dataclass
-class Config:
-    # Model architecture
-    in_dim: int = 32
-    out_dim: int = 1
-    depth: int = 1  # number of hidden layers
-    widths: Optional[list[int]] = None  # per-layer widths; if None, auto-infer
-    activation: Literal["relu", "tanh", "gelu", "identity"] = "relu"
-    bias: bool = True
-    skip_connections: bool = False
-    residual_period: int = 2  # every k layers add skip if enabled
-    layernorm: bool = False  # (default False; can destabilize HMC)
-    init: Literal["he", "xavier", "lecun", "orthogonal"] = "he"
-
-    # Size control
-    target_params: Optional[int] = 10_000  # if provided, fix total d and infer widths
-    # keep old 'hidden' for backward compatibility
-    hidden: int = 300  # used only if target_params=None and widths=None
-
-    # Data
-    n_data: int = 20_000
-    x_dist: Literal[
-        "gauss_iso", "gauss_aniso", "mixture", "lowdim_manifold", "heavy_tail"
-    ] = "gauss_iso"
-    cov_decay: float = 0.95  # for anisotropy: eigvals ~ cov_decay**i
-    mixture_k: int = 4
-    mixture_spread: float = 2.0
-    x_dim_latent: int = 2  # for low-dim manifold
-    noise_model: Literal["gauss", "hetero", "student_t", "outliers"] = "gauss"
-    noise_scale: float = 0.1
-    hetero_scale: float = 0.1
-    student_df: float = 4.0
-    outlier_frac: float = 0.05
-    outlier_scale: float = 2.0
-
-    # Teacher (can differ from student)
-    teacher_depth: Optional[int] = None
-    teacher_widths: Optional[list[int]] = None
-    teacher_activation: Optional[str] = None
-    teacher_dropout_rate: float = 0.0  # stochastic teacher if >0 (only during data gen)
-
-    # Loss / likelihood
-    loss: Literal["mse", "t_regression"] = "mse"
-
-    # Local posterior (tempering + prior)
-    beta_mode: Literal["1_over_log_n", "fixed"] = "1_over_log_n"
-    beta0: float = 1.0
-    prior_radius: Optional[float] = None  # if set, gamma = d / prior_radius**2
-    gamma: float = 1.0  # used only if prior_radius None
-
-    # Sampling
-    sampler: Literal["sgld", "hmc", "mclmc"] = "sgld"
-    chains: int = 4
-
-    # SGLD
-    sgld_steps: int = 4_000
-    sgld_warmup: int = 1_000
-    sgld_batch_size: int = 256
-    sgld_step_size: float = 1e-6
-    sgld_thin: int = 20  # store every k-th draw for diagnostics only
-    sgld_eval_every: int = 10  # compute full-data L_n(w) every k steps (for LLC mean)
-    sgld_dtype: str = "float32"  # reduce memory
-
-    # HMC
-    hmc_draws: int = 1_000
-    hmc_warmup: int = 1_000
-    hmc_num_integration_steps: int = 10
-    hmc_thin: int = 5  # store every k-th draw for diagnostics
-    hmc_eval_every: int = 1  # compute L_n(w) every k draws (usually 1 for HMC)
-    hmc_dtype: str = "float64"
-
-    # MCLMC (unadjusted)
-    mclmc_draws: int = 2_000  # post-tuning steps (MCLMC yields 1 sample per step)
-    mclmc_eval_every: int = 1
-    mclmc_thin: int = 10
-    mclmc_dtype: str = "float64"  # keep f64 for stability (like HMC)
-
-    # MCLMC tuning
-    mclmc_tune_steps: int = 2_000  # steps used by the automatic tuner
-    mclmc_diagonal_preconditioning: bool = False
-    mclmc_desired_energy_var: float = 5e-4  # target EEV (per Sampling Book)
-    mclmc_integrator: Literal[
-        "isokinetic_mclachlan",
-        "isokinetic_velocity_verlet",
-        "isokinetic_yoshida",
-        "isokinetic_omelyan",
-    ] = "isokinetic_mclachlan"
-
-    # (optional) adjusted MCLMC
-    mclmc_adjusted: bool = False
-    mclmc_adjusted_target_accept: float = 0.90  # per docs' guidance
-    mclmc_grad_per_step_override: Optional[float] = None  # work accounting calibration
-
-
-    # Misc
-    seed: int = 42
-    use_tqdm: bool = True
-    progress_update_every: int = 50  # step/draw interval for bar postfix refresh
-    profile_adaptation: bool = True  # time warmup/adaptation separately
-
-    # Diagnostics and plotting
-    diag_mode: Literal["none", "subset", "proj"] = (
-        "proj"  # default: tiny random projections
-    )
-    diag_k: int = 16  # number of dimensions/projections to track
-    diag_seed: int = 1234  # seed for dimension selection/projections
-    max_theta_plot_dims: int = 8  # cap for plotting even if k is larger
-    save_plots_prefix: Optional[str] = None  # e.g., "diag" to save PNGs
-
-    # Artifacts and visualization saving
-    artifacts_dir: str = "artifacts"  # base directory for saving artifacts
-    save_plots: bool = False  # whether to save all diagnostic plots
-    show_plots: bool = False  # whether to display plots (default: headless)
-    auto_create_run_dir: bool = True  # create timestamped run directories
-    save_manifest: bool = True  # save run configuration to manifest.txt
-    save_readme_snippet: bool = True  # generate README_snippet.md
-    auto_update_readme: bool = False  # auto-update README with markers (optional)
-
-
-# Small test config for quick verification
-TEST_CFG = Config(
-    # Small model
-    in_dim=4,
-    out_dim=1,
-    target_params=50,  # ~50 params only
-    # Small data
-    n_data=100,
-    # Minimal sampling
-    chains=2,
-    sgld_steps=100,
-    sgld_warmup=20,
-    sgld_eval_every=5,
-    sgld_thin=10,
-    # Minimal HMC
-    hmc_draws=50,
-    hmc_warmup=20,
-    hmc_thin=5,
-    # Minimal MCLMC
-    mclmc_draws=80,
-    mclmc_tune_steps=100,
-    mclmc_thin=8,
-    # Enable headless plot saving for testing
-    save_plots=True,
-    show_plots=False,
-    save_manifest=True,
-    save_readme_snippet=True,
-)
-
-CFG = Config()  # Default full config
 
 
 # ----------------------------
 # Timing and work counters
 # ----------------------------
 @dataclass
-class RunStats:
-    # wall-clock
-    t_build: float = 0.0
-    t_train: float = 0.0
-    t_sgld_warmup: float = 0.0
-    t_sgld_sampling: float = 0.0
-    t_hmc_warmup: float = 0.0
-    t_hmc_sampling: float = 0.0
-    t_mclmc_warmup: float = 0.0
-    t_mclmc_sampling: float = 0.0
-
-    # work counters (proxy for computational work)
-    # Count "gradient-equivalent" evaluations to compare samplers.
-    # - SGLD: ~1 minibatch gradient per step -> +1
-    # - HMC: ~num_integration_steps gradients per draw (leapfrog) -> +L
-    # - Add full-data loss evals and log-prob grads as separate counters for transparency.
-    n_sgld_minibatch_grads: int = 0
-    n_sgld_full_loss: int = 0
-    n_hmc_leapfrog_grads: int = 0
-    n_hmc_full_loss: int = 0
-    n_hmc_warmup_leapfrog_grads: int = 0  # estimated during adaptation
-    n_mclmc_steps: int = 0
-    n_mclmc_full_loss: int = 0
 
 
-def tic():
-    return time.perf_counter()
-
-
-def toc(t0):
-    return time.perf_counter() - t0
 
 
 def get_accept(info):
@@ -268,46 +101,13 @@ def work_normalized_variance(se, time_seconds: float, grad_work: int):
 # ----------------------------
 # Helper: Infer hidden size from target params
 # ----------------------------
-def infer_widths(
-    in_dim: int,
-    out_dim: int,
-    depth: int,
-    target_params: Optional[int],
-    fallback_width: int = 128,
-) -> list[int]:
-    """Infer widths to hit target_params, or use fallback"""
-    if target_params is None:
-        return [fallback_width] * depth
-    # For simplicity, use constant width h and solve approximately:
-    # P(h) = (in_dim+1)h + (L-1)(h+1)h + (h+1)out_dim ≈ target_params
-    L = depth
-    a = L - 1  # coefficient of h^2
-    b = (in_dim + 1) + (L - 1) + out_dim + 1  # coefficient of h
-    if a == 0:
-        h = max(1, (target_params - out_dim) // (in_dim + 1))
-    else:
-        disc = b * b + 4 * a * target_params
-        h = int((-b + jnp.sqrt(disc)) / (2 * a))
-        h = int(max(1, h))
-    return [h] * L
 
 
-def compute_beta_gamma(cfg: Config, d: int) -> tuple[float, float]:
-    """Compute beta and gamma from config and dimension"""
-    beta = (
-        cfg.beta0 / jnp.log(cfg.n_data)
-        if cfg.beta_mode == "1_over_log_n"
-        else cfg.beta0
-    )
-    gamma = (d / (cfg.prior_radius**2)) if (cfg.prior_radius is not None) else cfg.gamma
-    return float(beta), float(gamma)
 
 
 # ----------------------------
 # Dtype helper
 # ----------------------------
-def as_dtype(x, dtype_str):  # 'float32' or 'float64'
-    return x.astype(jnp.float32 if dtype_str == "float32" else jnp.float64)
 
 
 # ----------------------------
@@ -356,291 +156,16 @@ def train_to_erm(w_init, X, Y, steps=2000, lr=1e-2):
 # ----------------------------
 # Flexible MLP with arbitrary depth and activations
 # ----------------------------
-def act_fn(name: str):
-    """Activation function factory"""
-    activations = {
-        "relu": jax.nn.relu,
-        "tanh": jnp.tanh,
-        "gelu": jax.nn.gelu,
-        "identity": (lambda x: x),
-    }
-    return activations[name]
-
-
-def fan_in_init(key, shape, scheme: str, fan_in: int):
-    """Weight initialization schemes"""
-    if scheme == "he":
-        scale = jnp.sqrt(2.0 / fan_in)
-    elif scheme == "xavier":
-        scale = jnp.sqrt(1.0 / fan_in)
-    elif scheme == "lecun":
-        scale = jnp.sqrt(1.0 / fan_in)
-    elif scheme == "orthogonal":
-        # Use He scaling instead of true orthogonal for robustness
-        scale = jnp.sqrt(2.0 / fan_in)
-        return random.normal(key, shape) * scale
-    else:
-        scale = 1.0
-    return random.normal(key, shape) * scale
-
-
-def init_mlp_params(
-    key,
-    in_dim: int,
-    widths: list[int],
-    out_dim: int,
-    activation: str,
-    bias: bool,
-    init: str,
-):
-    """Initialize MLP with arbitrary depth"""
-    keys = random.split(key, len(widths) + 1)
-    layers = []
-    prev = in_dim
-
-    for i, h in enumerate(widths):
-        W = fan_in_init(keys[i], (h, prev), init, prev)
-        b = jnp.zeros((h,)) if bias else None
-        layers.append({"W": W, "b": b})
-        prev = h
-
-    # Output layer (linear)
-    W = fan_in_init(keys[-1], (out_dim, prev), "xavier", prev)
-    b = jnp.zeros((out_dim,)) if bias else None
-    out_layer = {"W": W, "b": b}
-
-    return {"layers": layers, "out": out_layer}
-
-
-def mlp_forward(
-    params,
-    x,
-    activation: str = "relu",
-    skip: bool = False,
-    residual_period: int = 2,
-    layernorm: bool = False,
-):
-    """Forward pass with optional residuals and layer norm"""
-    act = act_fn(activation)
-
-    h = x
-    for i, lyr in enumerate(params["layers"]):
-        z = h @ lyr["W"].T + (lyr["b"] if lyr["b"] is not None else 0.0)
-
-        if layernorm:
-            mu = jnp.mean(z, axis=-1, keepdims=True)
-            sig = jnp.std(z, axis=-1, keepdims=True) + 1e-6
-            z = (z - mu) / sig
-
-        h_new = act(z)
-
-        if skip and (i % residual_period == residual_period - 1):
-            # Project if dimensions differ
-            if h.shape[-1] != h_new.shape[-1]:
-                P = jnp.eye(h_new.shape[-1], h.shape[-1])[
-                    : h_new.shape[-1], : h.shape[-1]
-                ]
-                h = h @ P.T
-            h = h + h_new
-        else:
-            h = h_new
-
-    # Output layer
-    y = h @ params["out"]["W"].T + (
-        params["out"]["b"] if params["out"]["b"] is not None else 0.0
-    )
-    return y
-
-
-def count_params(params):
-    """Count total parameters in MLP"""
-    leaves = []
-    for lyr in params["layers"]:
-        leaves.append(lyr["W"])
-        if lyr["b"] is not None:
-            leaves.append(lyr["b"])
-    leaves.append(params["out"]["W"])
-    if params["out"]["b"] is not None:
-        leaves.append(params["out"]["b"])
-    return sum(p.size for p in leaves)
 
 
 # ----------------------------
 # Flexible data generation
 # ----------------------------
-def sample_X(key, cfg: Config, n: int, in_dim: int):
-    """Sample inputs according to various distributions"""
-    if cfg.x_dist == "gauss_iso":
-        return random.normal(key, (n, in_dim))
-    elif cfg.x_dist == "gauss_aniso":
-        vals = jnp.array([cfg.cov_decay**i for i in range(in_dim)])
-        A = jnp.diag(jnp.sqrt(vals))
-        Z = random.normal(key, (n, in_dim))
-        return Z @ A.T
-    elif cfg.x_dist == "mixture":
-        keys = random.split(key, 2)
-        centers = random.normal(keys[0], (cfg.mixture_k, in_dim))
-        centers = (
-            cfg.mixture_spread
-            * centers
-            / (1e-6 + jnp.linalg.norm(centers, axis=1, keepdims=True))
-        )
-        comp = random.randint(keys[1], (n,), 0, cfg.mixture_k)
-        eps = random.normal(key, (n, in_dim))
-        return centers[comp] + eps
-    elif cfg.x_dist == "lowdim_manifold":
-        kz, ka = random.split(key)
-        Z = random.normal(kz, (n, cfg.x_dim_latent))
-        A = random.normal(ka, (cfg.x_dim_latent, in_dim))
-        X_low = jnp.tanh(Z @ A)  # non-linear embedding
-        return X_low
-    elif cfg.x_dist == "heavy_tail":
-        # Student-t via scaled normal / sqrt(gamma)
-        k1, k2 = random.split(key)
-        g = random.gamma(k1, cfg.student_df / 2, (n, 1)) / (cfg.student_df / 2)
-        Z = random.normal(k2, (n, in_dim)) / jnp.sqrt(g)
-        return Z
-    else:
-        raise ValueError(f"Unknown x_dist: {cfg.x_dist}")
-
-
-def build_teacher(key, cfg: Config):
-    """Build teacher network (can differ from student)"""
-    t_depth = cfg.teacher_depth or cfg.depth
-    t_widths = cfg.teacher_widths
-    if t_widths is None:
-        t_widths = infer_widths(
-            cfg.in_dim, cfg.out_dim, t_depth, cfg.target_params, cfg.hidden
-        )
-    t_act = cfg.teacher_activation or cfg.activation
-
-    params = init_mlp_params(
-        key, cfg.in_dim, t_widths, cfg.out_dim, t_act, bias=True, init=cfg.init
-    )
-
-    def forward(X):
-        Y = mlp_forward(
-            params,
-            X,
-            t_act,
-            skip=False,
-            residual_period=cfg.residual_period,
-            layernorm=False,
-        )
-        return Y
-
-    return params, forward
-
-
-def add_noise(key, y_clean, cfg: Config, X):
-    """Add noise according to various models"""
-    if cfg.noise_model == "gauss":
-        return y_clean + cfg.noise_scale * random.normal(key, y_clean.shape)
-    elif cfg.noise_model == "hetero":
-        scale = cfg.noise_scale * (
-            1.0 + cfg.hetero_scale * jnp.linalg.norm(X, axis=1, keepdims=True)
-        )
-        return y_clean + scale * random.normal(key, y_clean.shape)
-    elif cfg.noise_model == "student_t":
-        # Draw t noise via normal / sqrt(gamma)
-        k1, k2 = random.split(key)
-        g = random.gamma(k1, cfg.student_df / 2, y_clean.shape) / (cfg.student_df / 2)
-        return y_clean + cfg.noise_scale * random.normal(k2, y_clean.shape) / jnp.sqrt(
-            g
-        )
-    elif cfg.noise_model == "outliers":
-        k1, k2, k3 = random.split(key, 3)
-        base = cfg.noise_scale * random.normal(k1, y_clean.shape)
-        mask = random.uniform(k2, y_clean.shape) < cfg.outlier_frac
-        outl = cfg.outlier_scale * random.normal(k3, y_clean.shape)
-        return y_clean + jnp.where(mask, outl, base)
-    else:
-        raise ValueError(f"Unknown noise_model: {cfg.noise_model}")
-
-
-def make_dataset(key, cfg: Config):
-    """End-to-end data generation"""
-    kx, kt, kn = random.split(key, 3)
-    X = sample_X(kx, cfg, cfg.n_data, cfg.in_dim)
-    teacher_params, teacher_forward = build_teacher(kt, cfg)
-    y_clean = teacher_forward(X)
-
-    if cfg.teacher_dropout_rate > 0.0:
-        kd = random.split(kt, 1)[0]
-        mask = (random.uniform(kd, y_clean.shape) > cfg.teacher_dropout_rate).astype(
-            y_clean.dtype
-        )
-        y_clean = y_clean * mask
-
-    Y = add_noise(kn, y_clean, cfg, X)
-    return X, Y, teacher_params, teacher_forward
 
 
 # ----------------------------
 # Loss / likelihood factory
 # ----------------------------
-def make_loss_fns(unravel, cfg: Config, X, Y):
-    """Create loss functions for both full data and minibatch"""
-    if cfg.loss == "mse":
-
-        def full(theta):
-            params = unravel(theta)
-            pred = mlp_forward(
-                params,
-                X,
-                cfg.activation,
-                cfg.skip_connections,
-                cfg.residual_period,
-                cfg.layernorm,
-            )
-            return jnp.mean((pred - Y) ** 2)
-
-        def minibatch(theta, Xb, Yb):
-            params = unravel(theta)
-            pred = mlp_forward(
-                params,
-                Xb,
-                cfg.activation,
-                cfg.skip_connections,
-                cfg.residual_period,
-                cfg.layernorm,
-            )
-            return jnp.mean((pred - Yb) ** 2)
-
-    elif cfg.loss == "t_regression":
-        s2 = cfg.noise_scale**2
-        nu = cfg.student_df
-
-        def neglogt(resid):
-            return 0.5 * (nu + 1) * jnp.log1p((resid**2) / (nu * s2))
-
-        def full(theta):
-            params = unravel(theta)
-            pred = mlp_forward(
-                params,
-                X,
-                cfg.activation,
-                cfg.skip_connections,
-                cfg.residual_period,
-                cfg.layernorm,
-            )
-            return jnp.mean(neglogt(pred - Y))
-
-        def minibatch(theta, Xb, Yb):
-            params = unravel(theta)
-            pred = mlp_forward(
-                params,
-                Xb,
-                cfg.activation,
-                cfg.skip_connections,
-                cfg.residual_period,
-                cfg.layernorm,
-            )
-            return jnp.mean(neglogt(pred - Yb))
-    else:
-        raise ValueError(f"Unknown loss: {cfg.loss}")
-
-    return full, minibatch
 
 
 # ----------------------------
@@ -666,16 +191,6 @@ class RunningMeanVar:
         return self.mean, var, self.n
 
 
-def llc_from_running_mean(E_L, L0, n, beta):
-    return float(n * beta * (E_L - L0))
-
-
-def stack_thinned(kept_list):  # list of (draws, dim)
-    """Stack thinned samples, truncating to common length to avoid NaN padding"""
-    m = min(k.shape[0] for k in kept_list)
-    if m == 0:
-        return np.empty((len(kept_list), 0, kept_list[0].shape[1]))
-    return np.stack([k[:m] for k in kept_list], axis=0)
 
 
 
@@ -728,110 +243,11 @@ def prepare_diag_targets(dim, cfg):
 # ----------------------------
 # Updated log posterior & score factory
 # ----------------------------
-def make_logpost_and_score(loss_full, loss_minibatch, theta0, n, beta, gamma):
-    """Create log posterior using flexible loss functions"""
-
-    def logpost(theta):
-        Ln = loss_full(theta)
-        lp = -0.5 * gamma * jnp.sum((theta - theta0) ** 2)
-        return lp - n * beta * Ln
-
-    logpost_and_grad = value_and_grad(logpost)
-
-    @jit
-    def grad_logpost_minibatch(theta, minibatch):  # <- accepts (Xb, Yb)
-        Xb, Yb = minibatch
-        g_Lb = grad(lambda th: loss_minibatch(th, Xb, Yb))(theta)
-        return -gamma * (theta - theta0) - beta * n * g_Lb
-
-    return logpost_and_grad, grad_logpost_minibatch
-
-
-def make_logdensity_for_mclmc(loss_full64, theta0_f64, n, beta, gamma):
-    """Create log-density function for MCLMC sampler (f64 precision)
-
-    MCLMC expects a pure log-density function, not a gradient closure.
-    This extracts the log posterior: log π(θ) = -nβ L_n(θ) - γ/2 ||θ-θ₀||²
-    """
-
-    @jit
-    def logdensity(theta64):
-        Ln = loss_full64(theta64)  # already f64 X,Y inside loss_full64
-        lp = -0.5 * gamma * jnp.sum((theta64 - theta0_f64) ** 2)
-        return lp - n * beta * Ln
-
-    return logdensity
 
 
 # ----------------------------
 # SGLD chains (BlackJAX) - Online memory-efficient version
 # ----------------------------
-def run_sgld_online(
-    key,
-    init_thetas,
-    grad_logpost_minibatch,
-    X,
-    Y,
-    n,
-    step_size,
-    num_steps,
-    warmup,
-    batch_size,
-    eval_every,
-    thin,
-    Ln_full64,
-    use_tqdm=True,
-    progress_update_every=50,
-    stats: RunStats | None = None,
-    diag_dims=None,
-    Rproj=None,
-):
-    chains = init_thetas.shape[0]
-    kept_all, means, vars_, ns, L_histories = [], [], [], [], []
-
-    def tiny_store(vec: np.ndarray):
-        return default_tiny_store(vec, diag_dims, Rproj)
-
-    for c in range(chains):
-        ck = jax.random.fold_in(key, c)
-        # Work accounting: per SGLD step add one minibatch grad
-        work_bump = (lambda: setattr(stats, "n_sgld_minibatch_grads", stats.n_sgld_minibatch_grads + 1)) if stats else None
-
-        # Time the sampling
-        t0 = time.time()
-        res = run_sgld_chain(
-            rng_key=ck,
-            init_theta=init_thetas[c],
-            grad_logpost_minibatch=grad_logpost_minibatch,
-            X=X, Y=Y, n_data=n,
-            step_size=step_size,
-            n_steps=num_steps,
-            warmup=warmup,
-            batch_size=batch_size,
-            eval_every=eval_every,
-            thin=thin,
-            Ln_eval_f64=Ln_full64,
-            tiny_store_fn=tiny_store,
-            use_tqdm=use_tqdm,
-            progress_label=f"SGLD(c{c})",
-            progress_update_every=progress_update_every,
-            work_bump=work_bump,
-        )
-        # Accumulate sampling time (subtract eval time)
-        elapsed = time.time() - t0
-        if stats and hasattr(res, 'eval_time_seconds'):
-            stats.t_sgld_sampling += max(0.0, elapsed - res.eval_time_seconds)
-        
-        kept_all.append(res.kept)
-        means.append(res.mean_L)
-        vars_.append(res.var_L)
-        ns.append(res.n_L)
-        L_histories.append(res.L_hist)
-        if stats:
-            stats.n_sgld_full_loss += int(res.n_L)
-
-    samples_thin = stack_thinned(kept_all)
-    return samples_thin, np.array(means), np.array(vars_), np.array(ns), L_histories
 
 
 # ----------------------------
