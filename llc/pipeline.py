@@ -16,6 +16,7 @@ from jax.flatten_util import ravel_pytree
 import numpy as np
 
 from .config import Config
+from .cache import run_id, load_cached_outputs
 from .models import infer_widths, init_mlp_params
 from .data import make_dataset
 from .losses import as_dtype, make_loss_fns
@@ -64,18 +65,37 @@ def run_one(
     Args:
         cfg: Experiment configuration
         save_artifacts: Whether to save plots, data files, and HTML gallery
-        skip_if_exists: Whether to skip if results already exist (future: PR2)
+        skip_if_exists: Whether to skip if results already exist
         
     Returns:
         RunOutputs with metrics, histories, run_dir, and L0
     """
+    # Compute deterministic run ID
+    rid = run_id(cfg)
+    run_dir = os.path.join(cfg.artifacts_dir, rid)
+    
+    # Check if we should skip (results already exist)
+    if skip_if_exists and os.path.exists(os.path.join(run_dir, "metrics.json")):
+        cached = load_cached_outputs(run_dir)
+        if cached:
+            print(f"Skipping run {rid} - results already exist in {run_dir}")
+            return RunOutputs(
+                run_dir=run_dir,
+                metrics=cached["metrics"],
+                histories={},  # Don't reload full histories for cache hits
+                L0=cached["L0"],
+            )
+    
+    # Create run directory
+    if save_artifacts:
+        os.makedirs(run_dir, exist_ok=True)
+        print(f"Run ID: {rid}")
+        print(f"Artifacts will be saved to: {run_dir}")
+    else:
+        run_dir = ""  # Don't save if not requested
+    
     print("=== Building teacher and data ===")
     stats = RunStats()
-
-    # Create run directory for artifacts (for now, use original logic)
-    run_dir = create_run_directory(cfg) if cfg.auto_create_run_dir else ""
-    if run_dir:
-        print(f"Artifacts will be saved to: {run_dir}")
 
     # Build timing
     t0 = tic()
