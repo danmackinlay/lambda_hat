@@ -164,7 +164,7 @@ def run_experiment(cfg: Config, verbose=True):
         loss_full64, loss_minibatch64, theta_star64, cfg.n_data, beta, gamma
     )
 
-    _, _, _, _, Ln_hist_hmc = run_hmc_online_with_adaptation(
+    _, _, _, _, _, Ln_hist_hmc = run_hmc_online_with_adaptation(
         k_hmc,
         init_hmc,
         logpost_grad64,
