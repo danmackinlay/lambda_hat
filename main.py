@@ -6,52 +6,43 @@ os.environ.setdefault("MPLBACKEND", "Agg")  # Headless rendering - no GUI window
 
 import time
 import argparse
-from dataclasses import dataclass, replace
-from typing import Literal, Optional
-from datetime import datetime
+from dataclasses import replace
 
 import arviz as az
 import jax
 import jax.numpy as jnp
-from jax import random, jit, value_and_grad, grad
+from jax import random, jit
 from jax.flatten_util import ravel_pytree
-from scipy.stats import norm
 import scipy.stats as st
 
-import blackjax
 import numpy as np
-import optax
-from tqdm.auto import tqdm
 import pandas as pd
 import matplotlib.pyplot as plt
 
 # Import new sampler adapters and utility modules
-from llc.samplers.base import default_tiny_store, prepare_diag_targets
-from llc.samplers.adapters import run_sgld_chain, run_hmc_chain, run_mclmc_chain
+from llc.samplers.base import prepare_diag_targets
 from llc.diagnostics import (
-    llc_mean_and_se_from_histories, llc_ci_from_histories, plot_diagnostics,
-    create_summary_dataframe, ESS_METHOD
+    llc_mean_and_se_from_histories, llc_ci_from_histories, plot_diagnostics, ESS_METHOD
 )
 from llc.artifacts import (
     create_run_directory, save_config, save_idata_L, save_idata_theta,
-    save_metrics, save_summary_csv, create_manifest, generate_gallery_html, save_plot, save_L0
+    save_metrics, create_manifest, generate_gallery_html, save_L0
 )
 from llc.models import (
-    infer_widths, act_fn, fan_in_init, init_mlp_params, mlp_forward, count_params
+    infer_widths, init_mlp_params
 )
-from llc.data import sample_X, build_teacher, add_noise, make_dataset
+from llc.data import  make_dataset
 from llc.losses import as_dtype, make_loss_fns
 from llc.posterior import compute_beta_gamma, make_logpost_and_score, make_logdensity_for_mclmc
 from llc.runners import (
-    RunStats, tic, toc, llc_from_running_mean, stack_thinned,
-    run_sgld_online, run_hmc_online_with_adaptation, run_mclmc_online, run_sampler
+    RunStats, tic, toc,
+    run_sgld_online, run_hmc_online_with_adaptation, run_mclmc_online
 )
-from llc.config import Config, TEST_CFG, CFG
-from llc.experiments import train_erm, sweep_space, build_sweep_worklist, run_experiment, run_sweep
+from llc.config import Config, CFG
+from llc.experiments import train_erm, sweep_space, build_sweep_worklist
 
 
 plt.switch_backend("Agg")  # Ensure headless backend even if pyplot was already imported
-
 
 
 
@@ -80,24 +71,6 @@ def work_normalized_variance(se, time_seconds: float, grad_work: int):
 
 
 
-# Legacy ERM training for backward compatibility
-def train_to_erm(w_init, X, Y, steps=2000, lr=1e-2):
-    theta, unravel = ravel_pytree(w_init)
-    opt = optax.adam(lr)
-    opt_state = opt.init(theta)
-
-    @jit
-    def step(theta, opt_state):
-        loss, g = value_and_grad(
-            lambda th: jnp.mean((mlp_forward(unravel(th), X) - Y) ** 2)
-        )(theta)
-        updates, opt_state = opt.update(g, opt_state, theta)
-        theta = optax.apply_updates(theta, updates)
-        return theta, opt_state, loss
-
-    for _ in range(steps):
-        theta, opt_state, _ = step(theta, opt_state)
-    return theta, unravel  # θ⋆ and unravel that matches θ⋆
 
 
 
@@ -564,7 +537,6 @@ def main(cfg: Config = CFG):
     print(f"MCLMC - Full loss evals: {stats.n_mclmc_full_loss}")
 
     # Plot diagnostics if enabled
-    saved_files = []
     if cfg.diag_mode != "none":
         print("\n=== Generating Diagnostic Plots ===")
 
@@ -685,7 +657,6 @@ def main(cfg: Config = CFG):
 if __name__ == "__main__":
     import sys
     import argparse
-    import json
     import pandas as pd
 
     # Create main parser
