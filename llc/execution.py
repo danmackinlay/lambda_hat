@@ -64,20 +64,19 @@ class LocalExecutor(BaseExecutor):
 class _SubmititExperiment:
     """Small checkpointable wrapper for submitit with timeout handling"""
 
-    def __init__(self, payload):
-        # payload is a dict with {"cfg": {...}}
-        self.payload = payload
+    def __init__(self, fn, item):
+        # Store the function and item to call
+        self.fn = fn
+        self.item = item
 
     def __call__(self):
-        from llc.tasks import run_experiment_task
-
-        return run_experiment_task(self.payload["cfg"])
+        return self.fn(self.item)
 
     def checkpoint(self):
         # Requeue same work on preemption/timeout
         import submitit
 
-        return submitit.helpers.DelayedSubmission(_SubmititExperiment(self.payload))
+        return submitit.helpers.DelayedSubmission(_SubmititExperiment(self.fn, self.item))
 
 
 class SubmititExecutor(BaseExecutor):
@@ -127,7 +126,9 @@ class SubmititExecutor(BaseExecutor):
         self.executor.update_parameters(**base)
 
     def map(self, fn, items):
-        jobs = self.executor.map_array(_SubmititExperiment, list(items))
+        # Create wrapper jobs that call fn(item) for each item
+        items_list = list(items)
+        jobs = [self.executor.submit(_SubmititExperiment, fn, item) for item in items_list]
         return [j.result() for j in jobs]
 
 
@@ -171,8 +172,9 @@ class ModalExecutor(BaseExecutor):
                 # Non-fatal; ignore autoscaler tweak failures.
                 pass
 
-    def map(self, fn_ignored, items):
-        # We ignore `fn` and call the remote Modal function directly.
+    def map(self, fn, items):
+        # For Modal, we assume remote_fn has the same signature as fn
+        # The caller should pass a remote_fn that matches the intended function
         return list(self.remote_fn.map(list(items)))
 
 
