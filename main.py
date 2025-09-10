@@ -728,9 +728,7 @@ if __name__ == "__main__":
     sweep_parser.add_argument(
         "--timeout-s", type=int, default=None, help="Local executor timeout in seconds"
     )
-    sweep_parser.add_argument(
-        "--modal-timeout-s", type=int, default=3600, help="Modal timeout in seconds"
-    )
+    # Note: Modal timeouts are set in modal_app.py decorator, not at runtime
     sweep_parser.add_argument(
         "--save-artifacts",
         action="store_true",
@@ -828,14 +826,9 @@ if __name__ == "__main__":
                         "Modal app not available. Ensure modal_app.py is present and modal is installed."
                     )
 
-                # Configure Modal function with timeout
-                modal_options = {}
-                if args.modal_timeout_s:
-                    modal_options["timeout"] = args.modal_timeout_s
-
-                ex = get_executor(
-                    "modal", remote_fn=run_experiment_remote, options=modal_options
-                )
+                # Modal timeouts/resources are set on the decorator in modal_app.py.
+                # Use generous defaults there; do not pass runtime options here.
+                ex = get_executor("modal", remote_fn=run_experiment_remote)
                 # pass only the cfg dict (modal function signature matches)
                 results = ex.map(None, [it["cfg"] for it in items])
             else:

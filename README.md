@@ -205,7 +205,9 @@ uv run python main.py sweep --backend=submitit \
 ```
 
 **Modal serverless:**
+
 ```bash
+uv run modal volume create llc-artifacts
 uv run python main.py sweep --backend=modal \
   --modal-timeout-s=3600 --save-artifacts
 ```

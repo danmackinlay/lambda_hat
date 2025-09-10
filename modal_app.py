@@ -22,10 +22,12 @@ app = modal.App("llc-experiments", image=image)
 
 @app.function(
     gpu=None,
-    timeout=60 * 60,  # set gpu="L40S" if you want GPUs
+    timeout=3
+    * 60
+    * 60,  # generous 3 hours, jobs may terminate early & we're OK with it
     volumes={"/artifacts": artifacts_volume},
     retries=modal.Retries(
-        max_retries=2,
+        max_retries=3,
         backoff_coefficient=2.0,
         initial_delay=10.0,
     ),

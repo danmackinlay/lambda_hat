@@ -148,8 +148,28 @@ class ModalExecutor(BaseExecutor):
                 "or `pip install llc[modal]`"
             ) from e
 
-        # options e.g. {"gpu": "L40S", "timeout": 60*60, "cpu": 8, "memory": "24Gi"}
-        self.remote_fn = remote_fn.options(**options) if options else remote_fn
+        # Runtime `.options(...)` is not supported on modal.Function.
+        # All resource/timeout/volume settings must be set on the decorator in modal_app.py.
+        self.remote_fn = remote_fn
+        self._options = options or {}
+
+        # (Optional) Only autoscaler hints are adjustable at runtime.
+        ac = {
+            k: self._options[k]
+            for k in (
+                "min_containers",
+                "max_containers",
+                "buffer_containers",
+                "scaledown_window",
+            )
+            if k in self._options
+        }
+        if ac:
+            try:
+                self.remote_fn.update_autoscaler(**ac)
+            except Exception:
+                # Non-fatal; ignore autoscaler tweak failures.
+                pass
 
     def map(self, fn_ignored, items):
         # We ignore `fn` and call the remote Modal function directly.
