@@ -131,10 +131,13 @@ def create_manifest(
     run_dir: str, cfg, metrics: Dict[str, Any], files: List[str]
 ) -> str:
     """Create a manifest file describing the run"""
+    # Determine which samplers actually ran based on metrics
+    samplers_run = [s for s in ("sgld", "hmc", "mclmc") if f"{s}_llc_mean" in metrics]
+    
     manifest = {
         "timestamp": datetime.now().isoformat(),
         "config_summary": {
-            "samplers": getattr(cfg, "samplers", [cfg.sampler]),
+            "samplers": samplers_run,
             "n_data": cfg.n_data,
             "chains": cfg.chains,
             "loss": cfg.loss,
@@ -148,7 +151,7 @@ def create_manifest(
                 "wnv_time": metrics.get(f"{sampler}_wnv_time", None),
                 "wnv_grad": metrics.get(f"{sampler}_wnv_grad", None),
             }
-            for sampler in getattr(cfg, "samplers", [cfg.sampler])
+            for sampler in samplers_run
         },
         "artifacts": {
             "plots": [f for f in files if f.endswith(".png")],
