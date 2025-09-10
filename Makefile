@@ -1,6 +1,6 @@
 # LLC Sampler Benchmark Makefile
 
-.PHONY: help run diag test clean artifacts promote-readme
+.PHONY: help run diag test clean artifacts promote-readme modal-deploy modal-ls modal-get modal-get-all modal-sweep modal-stop modal-clean modal-rm
 
 # Default target
 help:
@@ -14,6 +14,16 @@ help:
 	@echo "  clean      - Clean generated artifacts"
 	@echo "  artifacts  - Create artifacts directory"
 	@echo "  promote-readme - Copy plots from latest run to README assets"
+	@echo ""
+	@echo "Modal deployment targets:"
+	@echo "  modal-deploy   - Deploy Modal app (uv run modal deploy modal_app.py)"
+	@echo "  modal-sweep    - Run sweep on Modal backend"
+	@echo "  modal-ls       - List Modal volume contents"
+	@echo "  modal-get      - Download specific run (requires SRC and DST vars)"
+	@echo "  modal-get-all  - Download all Modal artifacts"
+	@echo "  modal-rm       - Remove specific run (requires RMPATH var)"
+	@echo "  modal-stop     - Stop Modal app"
+	@echo "  modal-clean    - Clean Modal volume (interactive confirmation)"
 	@echo ""
 	@echo "Configuration:"
 	@echo "  PYTHON     - Python command (default: uv run python)"
@@ -82,3 +92,41 @@ example-mclmc-only:
 promote-readme:
 	$(PYTHON) scripts/promote_readme_images.py
 	@git status --short assets/readme/
+
+# Modal deployment and management targets (CLI via uv)
+modal-deploy:
+	uv run modal deploy modal_app.py
+	@echo "Modal app deployed successfully"
+
+modal-ls:
+	uv run modal volume ls llc-artifacts
+
+modal-get:
+	# Usage: make modal-get SRC=/artifacts/20250909-172233 DST=./artifacts/20250909-172233
+	@test -n "$(SRC)" && test -n "$(DST)" || (echo "Usage: make modal-get SRC=/artifacts/run-dir DST=./artifacts/run-dir"; exit 1)
+	uv run modal volume get llc-artifacts $(SRC) $(DST)
+	@echo "Downloaded $(SRC) to $(DST)"
+
+modal-get-all:
+	uv run modal volume get llc-artifacts /artifacts ./artifacts
+	@echo "Downloaded all Modal artifacts to ./artifacts"
+
+modal-sweep:
+	$(PYTHON) main.py sweep --backend=modal --save-artifacts
+	@echo "Modal sweep completed"
+
+modal-stop:
+	uv run modal app stop llc-experiments
+	@echo "Modal app stopped"
+
+modal-clean:
+	# Warning: This removes ALL artifacts from the Modal volume
+	@echo "This will delete ALL artifacts in the Modal volume. Are you sure? [y/N]" && read ans && [ $${ans:-N} = y ]
+	uv run modal volume rm llc-artifacts /artifacts
+	@echo "Modal volume cleaned"
+
+modal-rm:
+	# Usage: make modal-rm RMPATH=/artifacts/20250909-172233
+	@test -n "$(RMPATH)" || (echo "Usage: make modal-rm RMPATH=/artifacts/<run-id>"; exit 1)
+	uv run modal volume rm llc-artifacts $(RMPATH)
+	@echo "Removed $(RMPATH) from Modal volume"

@@ -7,7 +7,7 @@ image = (
     # Install all dependencies from pyproject.toml with modal extra
     # (includes JAX via blackjax dependency - CPU by default)
     .pip_install_from_pyproject("pyproject.toml", optional_dependencies=["modal"])
-    .add_local_python_source(".")  # ships your repo code
+    .add_local_python_source("llc")  # ship the local Python package 'llc'
 )
 
 # For GPU support, users can create a custom image:

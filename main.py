@@ -820,15 +820,24 @@ if __name__ == "__main__":
                 results = ex.map(lambda it: run_experiment_task(it["cfg"]), items)
             elif args.backend == "modal":
                 try:
-                    from modal_app import run_experiment_remote
+                    import modal
+
+                    # Look up the deployed function by app & function name
+                    f = modal.Function.from_name(
+                        "llc-experiments", "run_experiment_remote"
+                    )
+                    ex = get_executor(
+                        "modal", remote_fn=f
+                    )  # no runtime options; decorator controls resources
                 except ImportError:
                     raise RuntimeError(
-                        "Modal app not available. Ensure modal_app.py is present and modal is installed."
+                        "Modal is not installed. Install with: uv sync --extra modal"
                     )
-
-                # Modal timeouts/resources are set on the decorator in modal_app.py.
-                # Use generous defaults there; do not pass runtime options here.
-                ex = get_executor("modal", remote_fn=run_experiment_remote)
+                except Exception as e:
+                    raise RuntimeError(
+                        f"Failed to look up deployed Modal function. "
+                        f"Make sure you've deployed with 'modal deploy modal_app.py'. Error: {e}"
+                    )
                 # pass only the cfg dict (modal function signature matches)
                 results = ex.map(None, [it["cfg"] for it in items])
             else:
