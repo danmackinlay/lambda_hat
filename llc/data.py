@@ -2,7 +2,6 @@
 """Data generation utilities for teacher-student experiments"""
 
 from typing import TYPE_CHECKING
-import jax
 import jax.numpy as jnp
 from jax import random
 

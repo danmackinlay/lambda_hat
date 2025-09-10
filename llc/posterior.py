@@ -2,7 +2,6 @@
 """Posterior construction utilities for tempered local posteriors"""
 
 from typing import TYPE_CHECKING
-import jax
 import jax.numpy as jnp
 from jax import grad, value_and_grad, jit
 

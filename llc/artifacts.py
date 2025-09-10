@@ -22,13 +22,13 @@ def create_run_directory(cfg) -> str:
 def save_config(run_dir: str, cfg) -> str:
     """Save configuration to JSON file"""
     config_path = f"{run_dir}/config.json"
-    
+
     # Convert config to dict, handling special types
     config_dict = {}
     for key, value in cfg.__dict__.items():
         if isinstance(value, np.ndarray):
             config_dict[key] = value.tolist()
-        elif hasattr(value, '__dict__'):  # nested dataclass
+        elif hasattr(value, "__dict__"):  # nested dataclass
             config_dict[key] = value.__dict__
         else:
             try:
@@ -36,44 +36,48 @@ def save_config(run_dir: str, cfg) -> str:
                 config_dict[key] = value
             except (TypeError, ValueError):
                 config_dict[key] = str(value)
-    
-    with open(config_path, 'w') as f:
+
+    with open(config_path, "w") as f:
         json.dump(config_dict, f, indent=2)
-    
+
     return config_path
 
 
-def save_idata_L(run_dir: str, name: str, Ln_histories: List[np.ndarray]) -> Optional[str]:
+def save_idata_L(
+    run_dir: str, name: str, Ln_histories: List[np.ndarray]
+) -> Optional[str]:
     """Save L_n histories as ArviZ InferenceData"""
     if not Ln_histories or all(len(h) == 0 for h in Ln_histories):
         return None
-    
+
     # Stack histories (truncate to minimum length)
     min_len = min(len(h) for h in Ln_histories if len(h) > 0)
     if min_len == 0:
         return None
-        
+
     H = np.stack([h[:min_len] for h in Ln_histories], axis=0)
     idata = az.from_dict(posterior={"L": H})
-    
-    path = f"{run_dir}/{name}_Ln.nc"
+
+    path = f"{run_dir}/{name}_L.nc"
     idata.to_netcdf(path)
     return path
 
 
-def save_idata_theta(run_dir: str, name: str, samples_thin: np.ndarray) -> Optional[str]:
+def save_idata_theta(
+    run_dir: str, name: str, samples_thin: np.ndarray
+) -> Optional[str]:
     """Save thinned theta samples as ArviZ InferenceData"""
     S = np.asarray(samples_thin)
     if S.size == 0 or S.shape[1] < 2:
         return None
-    
+
     k = S.shape[-1]
     idata = az.from_dict(
         posterior={"theta": S},
         coords={"theta_dim": np.arange(k)},
         dims={"theta": ["theta_dim"]},
     )
-    
+
     path = f"{run_dir}/{name}_theta.nc"
     idata.to_netcdf(path)
     return path
@@ -82,7 +86,7 @@ def save_idata_theta(run_dir: str, name: str, samples_thin: np.ndarray) -> Optio
 def save_metrics(run_dir: str, metrics: Dict[str, Any]) -> str:
     """Save comprehensive metrics to JSON"""
     metrics_path = f"{run_dir}/metrics.json"
-    
+
     # Convert numpy types to Python natives for JSON serialization
     def convert_numpy(obj):
         if isinstance(obj, np.ndarray):
@@ -97,38 +101,40 @@ def save_metrics(run_dir: str, metrics: Dict[str, Any]) -> str:
             return [convert_numpy(v) for v in obj]
         else:
             return obj
-    
+
     clean_metrics = convert_numpy(metrics)
-    
-    with open(metrics_path, 'w') as f:
+
+    with open(metrics_path, "w") as f:
         json.dump(clean_metrics, f, indent=2)
-    
+
     return metrics_path
 
 
 def save_summary_csv(run_dir: str, summary_df: pd.DataFrame) -> str:
     """Save summary statistics to CSV"""
     csv_path = f"{run_dir}/run_summary.csv"
-    
+
     # Check if file exists and append mode is desired
     if os.path.exists("run_summary.csv"):
         # Append to main summary file
-        summary_df.to_csv("run_summary.csv", mode='a', header=False, index=False)
+        summary_df.to_csv("run_summary.csv", mode="a", header=False, index=False)
     else:
         # Create new main summary file
         summary_df.to_csv("run_summary.csv", index=False)
-    
+
     # Also save to run-specific directory
     summary_df.to_csv(csv_path, index=False)
     return csv_path
 
 
-def create_manifest(run_dir: str, cfg, metrics: Dict[str, Any], files: List[str]) -> str:
+def create_manifest(
+    run_dir: str, cfg, metrics: Dict[str, Any], files: List[str]
+) -> str:
     """Create a manifest file describing the run"""
     manifest = {
         "timestamp": datetime.now().isoformat(),
         "config_summary": {
-            "samplers": getattr(cfg, 'samplers', [cfg.sampler]),
+            "samplers": getattr(cfg, "samplers", [cfg.sampler]),
             "n_data": cfg.n_data,
             "chains": cfg.chains,
             "loss": cfg.loss,
@@ -137,52 +143,52 @@ def create_manifest(run_dir: str, cfg, metrics: Dict[str, Any], files: List[str]
         "results": {
             sampler: {
                 "llc_mean": metrics.get(f"{sampler}_llc_mean", None),
-                "llc_se": metrics.get(f"{sampler}_llc_se", None), 
+                "llc_se": metrics.get(f"{sampler}_llc_se", None),
                 "ess": metrics.get(f"{sampler}_ess", None),
                 "wnv_time": metrics.get(f"{sampler}_wnv_time", None),
                 "wnv_grad": metrics.get(f"{sampler}_wnv_grad", None),
             }
-            for sampler in getattr(cfg, 'samplers', [cfg.sampler])
+            for sampler in getattr(cfg, "samplers", [cfg.sampler])
         },
         "artifacts": {
-            "plots": [f for f in files if f.endswith('.png')],
-            "data": [f for f in files if f.endswith(('.nc', '.json', '.csv'))],
-            "gallery": "index.html"
+            "plots": [f for f in files if f.endswith(".png")],
+            "data": [f for f in files if f.endswith((".nc", ".json", ".csv"))],
+            "gallery": "index.html",
         },
         "notes": {
             "gradient_work_definition": "SGLD: minibatch gradients, HMC: leapfrog steps, MCLMC: integration steps",
             "llc_scale_caveat": f"LLC computed with respect to {cfg.loss} energy; for SLT-compatible LLC use proper NLL",
             "eval_density": {
                 sampler: getattr(cfg, f"{sampler}_eval_every", "N/A")
-                for sampler in getattr(cfg, 'samplers', [cfg.sampler])
-            }
-        }
+                for sampler in getattr(cfg, "samplers", [cfg.sampler])
+            },
+        },
     }
-    
+
     manifest_path = f"{run_dir}/manifest.json"
-    with open(manifest_path, 'w') as f:
+    with open(manifest_path, "w") as f:
         json.dump(manifest, f, indent=2)
-    
+
     return manifest_path
 
 
 def generate_gallery_html(run_dir: str, cfg, metrics: Dict[str, Any]) -> str:
     """Generate HTML gallery index page"""
-    
+
     # Find all PNG files in the directory
-    png_files = [f for f in os.listdir(run_dir) if f.endswith('.png')]
+    png_files = [f for f in os.listdir(run_dir) if f.endswith(".png")]
     png_files.sort()
-    
+
     # Group plots by sampler
-    samplers = getattr(cfg, 'samplers', [cfg.sampler])
+    samplers = getattr(cfg, "samplers", [cfg.sampler])
     plot_groups = {sampler: [] for sampler in samplers}
-    
+
     for png_file in png_files:
         for sampler in samplers:
             if sampler.lower() in png_file.lower():
                 plot_groups[sampler].append(png_file)
                 break
-    
+
     html_content = f"""
 <!DOCTYPE html>
 <html lang="en">
@@ -292,7 +298,7 @@ def generate_gallery_html(run_dir: str, cfg, metrics: Dict[str, Any]) -> str:
             </thead>
             <tbody>
     """
-    
+
     # Add metrics rows
     for sampler in samplers:
         llc_mean = metrics.get(f"{sampler}_llc_mean", "N/A")
@@ -300,14 +306,22 @@ def generate_gallery_html(run_dir: str, cfg, metrics: Dict[str, Any]) -> str:
         ess = metrics.get(f"{sampler}_ess", "N/A")
         wnv_time = metrics.get(f"{sampler}_wnv_time", "N/A")
         wnv_grad = metrics.get(f"{sampler}_wnv_grad", "N/A")
-        
+
         # Format values properly for display
-        llc_mean_str = f"{llc_mean:.4f}" if isinstance(llc_mean, (int, float)) else str(llc_mean)
-        llc_se_str = f"{llc_se:.4f}" if isinstance(llc_se, (int, float)) else str(llc_se)
+        llc_mean_str = (
+            f"{llc_mean:.4f}" if isinstance(llc_mean, (int, float)) else str(llc_mean)
+        )
+        llc_se_str = (
+            f"{llc_se:.4f}" if isinstance(llc_se, (int, float)) else str(llc_se)
+        )
         ess_str = f"{ess:.1f}" if isinstance(ess, (int, float)) else str(ess)
-        wnv_time_str = f"{wnv_time:.6f}" if isinstance(wnv_time, (int, float)) else str(wnv_time)
-        wnv_grad_str = f"{wnv_grad:.6f}" if isinstance(wnv_grad, (int, float)) else str(wnv_grad)
-        
+        wnv_time_str = (
+            f"{wnv_time:.6f}" if isinstance(wnv_time, (int, float)) else str(wnv_time)
+        )
+        wnv_grad_str = (
+            f"{wnv_grad:.6f}" if isinstance(wnv_grad, (int, float)) else str(wnv_grad)
+        )
+
         html_content += f"""
                 <tr>
                     <td><strong>{sampler.upper()}</strong></td>
@@ -318,7 +332,7 @@ def generate_gallery_html(run_dir: str, cfg, metrics: Dict[str, Any]) -> str:
                     <td>{wnv_grad_str}</td>
                 </tr>
         """
-    
+
     html_content += """
             </tbody>
         </table>
@@ -329,7 +343,7 @@ def generate_gallery_html(run_dir: str, cfg, metrics: Dict[str, Any]) -> str:
         
         <h2>Diagnostic Plots</h2>
     """
-    
+
     # Add plot sections for each sampler
     for sampler in samplers:
         if plot_groups[sampler]:
@@ -338,21 +352,26 @@ def generate_gallery_html(run_dir: str, cfg, metrics: Dict[str, Any]) -> str:
             <h3>{sampler.upper()} Diagnostics</h3>
             <div class="plot-grid">
             """
-            
+
             for plot_file in plot_groups[sampler]:
-                plot_title = plot_file.replace(f"{sampler}_", "").replace(".png", "").replace("_", " ").title()
+                plot_title = (
+                    plot_file.replace(f"{sampler}_", "")
+                    .replace(".png", "")
+                    .replace("_", " ")
+                    .title()
+                )
                 html_content += f"""
                 <div class="plot-item">
                     <h3>{plot_title}</h3>
                     <img src="{plot_file}" alt="{plot_title}">
                 </div>
                 """
-            
+
             html_content += """
             </div>
         </div>
             """
-    
+
     html_content += f"""
         
         <h2>Configuration</h2>
@@ -361,7 +380,7 @@ def generate_gallery_html(run_dir: str, cfg, metrics: Dict[str, Any]) -> str:
             <li><strong>Chains:</strong> {cfg.chains}</li>
             <li><strong>Loss function:</strong> {cfg.loss}</li>
             <li><strong>Model depth:</strong> {cfg.depth}</li>
-            <li><strong>Parameter count:</strong> {getattr(cfg, 'target_params', 'N/A')}</li>
+            <li><strong>Parameter count:</strong> {getattr(cfg, "target_params", "N/A")}</li>
         </ul>
         
         <div class="note">
@@ -371,17 +390,17 @@ def generate_gallery_html(run_dir: str, cfg, metrics: Dict[str, Any]) -> str:
 </body>
 </html>
     """
-    
+
     gallery_path = f"{run_dir}/index.html"
-    with open(gallery_path, 'w') as f:
+    with open(gallery_path, "w") as f:
         f.write(html_content)
-    
+
     return gallery_path
 
 
 def save_L0(run_dir: str, L0: float) -> str:
     """Save L0 value for running LLC reconstruction"""
-    from pathlib import Path
+
     path = Path(run_dir) / "L0.txt"
     path.write_text(f"{L0:.10f}")
     return str(path)

@@ -2,7 +2,7 @@
 """Sampler orchestration and runner utilities"""
 
 import time
-from typing import Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING
 import jax
 import numpy as np
 
@@ -18,6 +18,7 @@ else:
 
 class RunStats:
     """Statistics tracking for computational work and timing"""
+
     # wall-clock
     t_build: float = 0.0
     t_train: float = 0.0
@@ -95,7 +96,15 @@ def run_sgld_online(
     for c in range(chains):
         ck = jax.random.fold_in(key, c)
         # Work accounting: per SGLD step add one minibatch grad
-        work_bump = (lambda: setattr(stats, "n_sgld_minibatch_grads", stats.n_sgld_minibatch_grads + 1)) if stats else None
+        work_bump = (
+            (
+                lambda: setattr(
+                    stats, "n_sgld_minibatch_grads", stats.n_sgld_minibatch_grads + 1
+                )
+            )
+            if stats
+            else None
+        )
 
         # Time the sampling
         t0 = time.time()
@@ -103,7 +112,9 @@ def run_sgld_online(
             rng_key=ck,
             init_theta=init_thetas[c],
             grad_logpost_minibatch=grad_logpost_minibatch,
-            X=X, Y=Y, n_data=n,
+            X=X,
+            Y=Y,
+            n_data=n,
             step_size=step_size,
             n_steps=num_steps,
             warmup=warmup,
@@ -119,9 +130,9 @@ def run_sgld_online(
         )
         # Accumulate sampling time (subtract eval time)
         elapsed = time.time() - t0
-        if stats and hasattr(res, 'eval_time_seconds'):
+        if stats and hasattr(res, "eval_time_seconds"):
             stats.t_sgld_sampling += max(0.0, elapsed - res.eval_time_seconds)
-        
+
         kept_all.append(res.kept)
         means.append(res.mean_L)
         vars_.append(res.var_L)
@@ -160,9 +171,17 @@ def run_hmc_online_with_adaptation(
     for c in range(chains):
         ck = jax.random.fold_in(key, c)
         # Work accounting
-        work_bump = (lambda n_grads=1: setattr(stats, "n_hmc_leapfrog_grads", stats.n_hmc_leapfrog_grads + n_grads)) if stats else None
+        work_bump = (
+            (
+                lambda n_grads=1: setattr(
+                    stats, "n_hmc_leapfrog_grads", stats.n_hmc_leapfrog_grads + n_grads
+                )
+            )
+            if stats
+            else None
+        )
 
-        # Time the sampling  
+        # Time the sampling
         t0 = time.time()
         res = run_hmc_chain(
             rng_key=ck,
@@ -182,7 +201,7 @@ def run_hmc_online_with_adaptation(
         )
         # Accumulate sampling time (subtract eval time)
         elapsed = time.time() - t0
-        if stats and hasattr(res, 'eval_time_seconds'):
+        if stats and hasattr(res, "eval_time_seconds"):
             stats.t_hmc_sampling += max(0.0, elapsed - res.eval_time_seconds)
 
         kept_all.append(res.kept)
@@ -204,7 +223,14 @@ def run_hmc_online_with_adaptation(
                 stats.n_hmc_warmup_leapfrog_grads += int(res.extras["warmup_grads"][0])
 
     samples_thin = stack_thinned(kept_all)
-    return samples_thin, np.array(means), np.array(vars_), np.array(ns), accs, L_histories
+    return (
+        samples_thin,
+        np.array(means),
+        np.array(vars_),
+        np.array(ns),
+        accs,
+        L_histories,
+    )
 
 
 def run_mclmc_online(
@@ -235,7 +261,15 @@ def run_mclmc_online(
     for c in range(chains):
         ck = jax.random.fold_in(key, c)
         # Work accounting
-        work_bump = (lambda n_steps=1: setattr(stats, "n_mclmc_steps", stats.n_mclmc_steps + n_steps)) if stats else None
+        work_bump = (
+            (
+                lambda n_steps=1: setattr(
+                    stats, "n_mclmc_steps", stats.n_mclmc_steps + n_steps
+                )
+            )
+            if stats
+            else None
+        )
 
         # Time the sampling
         t0 = time.time()
@@ -259,7 +293,7 @@ def run_mclmc_online(
         )
         # Accumulate sampling time (subtract eval time)
         elapsed = time.time() - t0
-        if stats and hasattr(res, 'eval_time_seconds'):
+        if stats and hasattr(res, "eval_time_seconds"):
             stats.t_mclmc_sampling += max(0.0, elapsed - res.eval_time_seconds)
 
         kept_all.append(res.kept)
@@ -276,7 +310,14 @@ def run_mclmc_online(
             stats.n_mclmc_full_loss += int(res.n_L)
 
     samples_thin = stack_thinned(kept_all)
-    return samples_thin, np.array(means), np.array(vars_), np.array(ns), energy_deltas, L_histories
+    return (
+        samples_thin,
+        np.array(means),
+        np.array(vars_),
+        np.array(ns),
+        energy_deltas,
+        L_histories,
+    )
 
 
 def run_sampler(sampler_name: str, sampler_cfg, **shared_kwargs):

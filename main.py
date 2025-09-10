@@ -22,28 +22,41 @@ import matplotlib.pyplot as plt
 # Import new sampler adapters and utility modules
 from llc.samplers.base import prepare_diag_targets
 from llc.diagnostics import (
-    llc_mean_and_se_from_histories, llc_ci_from_histories, plot_diagnostics, ESS_METHOD
+    llc_mean_and_se_from_histories,
+    llc_ci_from_histories,
+    plot_diagnostics,
 )
 from llc.artifacts import (
-    create_run_directory, save_config, save_idata_L, save_idata_theta,
-    save_metrics, create_manifest, generate_gallery_html, save_L0
+    create_run_directory,
+    save_config,
+    save_idata_L,
+    save_idata_theta,
+    save_metrics,
+    create_manifest,
+    generate_gallery_html,
+    save_L0,
 )
-from llc.models import (
-    infer_widths, init_mlp_params
-)
-from llc.data import  make_dataset
+from llc.models import infer_widths, init_mlp_params
+from llc.data import make_dataset
 from llc.losses import as_dtype, make_loss_fns
-from llc.posterior import compute_beta_gamma, make_logpost_and_score, make_logdensity_for_mclmc
+from llc.posterior import (
+    compute_beta_gamma,
+    make_logpost_and_score,
+    make_logdensity_for_mclmc,
+)
 from llc.runners import (
-    RunStats, tic, toc,
-    run_sgld_online, run_hmc_online_with_adaptation, run_mclmc_online
+    RunStats,
+    tic,
+    toc,
+    run_sgld_online,
+    run_hmc_online_with_adaptation,
+    run_mclmc_online,
 )
 from llc.config import Config, CFG
 from llc.experiments import train_erm, sweep_space, build_sweep_worklist
 
 
 plt.switch_backend("Agg")  # Ensure headless backend even if pyplot was already imported
-
 
 
 def get_accept(info):
@@ -59,24 +72,12 @@ def get_accept(info):
     return float(getattr(acc, "rate", np.nan)) if acc is not None else np.nan
 
 
-
-
 def work_normalized_variance(se, time_seconds: float, grad_work: int):
     """Compute WNV in both time and gradient units"""
     return dict(
         WNV_seconds=float(se**2 * max(1e-12, time_seconds)),
         WNV_grads=float(se**2 * max(1.0, grad_work)),
     )
-
-
-
-
-
-
-
-
-
-
 
 
 def scalar_chain_diagnostics(series_per_chain, name="L"):
@@ -95,8 +96,6 @@ def scalar_chain_diagnostics(series_per_chain, name="L"):
     return dict(ess=ess, rhat=rhat)
 
 
-
-
 # ----------------------------
 # CLI Argument Parsing
 # ----------------------------
@@ -105,50 +104,74 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Local Learning Coefficient Analysis")
 
     # Sampler selection
-    parser.add_argument("--samplers", type=str, default=None,
-                       help="Comma-separated list of samplers (sgld,hmc,mclmc)")
+    parser.add_argument(
+        "--samplers",
+        type=str,
+        default=None,
+        help="Comma-separated list of samplers (sgld,hmc,mclmc)",
+    )
 
     # Data parameters
-    parser.add_argument("--n-data", type=int, default=None,
-                       help="Number of data points")
+    parser.add_argument(
+        "--n-data", type=int, default=None, help="Number of data points"
+    )
 
     # Sampling parameters
-    parser.add_argument("--chains", type=int, default=None,
-                       help="Number of chains to run")
+    parser.add_argument(
+        "--chains", type=int, default=None, help="Number of chains to run"
+    )
 
     # SGLD parameters
-    parser.add_argument("--sgld-steps", type=int, default=None,
-                       help="Number of SGLD steps")
-    parser.add_argument("--sgld-warmup", type=int, default=None,
-                       help="SGLD warmup steps")
-    parser.add_argument("--sgld-step-size", type=float, default=None,
-                       help="SGLD step size")
+    parser.add_argument(
+        "--sgld-steps", type=int, default=None, help="Number of SGLD steps"
+    )
+    parser.add_argument(
+        "--sgld-warmup", type=int, default=None, help="SGLD warmup steps"
+    )
+    parser.add_argument(
+        "--sgld-step-size", type=float, default=None, help="SGLD step size"
+    )
 
     # HMC parameters
-    parser.add_argument("--hmc-draws", type=int, default=None,
-                       help="Number of HMC draws")
-    parser.add_argument("--hmc-warmup", type=int, default=None,
-                       help="HMC warmup steps")
-    parser.add_argument("--hmc-steps", type=int, default=None,
-                       help="HMC integration steps")
+    parser.add_argument(
+        "--hmc-draws", type=int, default=None, help="Number of HMC draws"
+    )
+    parser.add_argument("--hmc-warmup", type=int, default=None, help="HMC warmup steps")
+    parser.add_argument(
+        "--hmc-steps", type=int, default=None, help="HMC integration steps"
+    )
 
     # MCLMC parameters
-    parser.add_argument("--mclmc-draws", type=int, default=None,
-                       help="Number of MCLMC draws")
+    parser.add_argument(
+        "--mclmc-draws", type=int, default=None, help="Number of MCLMC draws"
+    )
 
     # Output control
-    parser.add_argument("--save-plots", action="store_true", default=None,
-                       help="Save diagnostic plots")
-    parser.add_argument("--no-save-plots", action="store_true", default=None,
-                       help="Don't save diagnostic plots")
+    parser.add_argument(
+        "--save-plots", action="store_true", default=None, help="Save diagnostic plots"
+    )
+    parser.add_argument(
+        "--no-save-plots",
+        action="store_true",
+        default=None,
+        help="Don't save diagnostic plots",
+    )
 
     # Presets
-    parser.add_argument("--preset", choices=["quick", "full"], default=None,
-                       help="Use quick or full preset")
+    parser.add_argument(
+        "--preset",
+        choices=["quick", "full"],
+        default=None,
+        help="Use quick or full preset",
+    )
 
     # Model parameters
-    parser.add_argument("--target-params", type=int, default=None,
-                       help="Target parameter count for model")
+    parser.add_argument(
+        "--target-params",
+        type=int,
+        default=None,
+        help="Target parameter count for model",
+    )
 
     return parser.parse_args()
 
@@ -157,7 +180,8 @@ def apply_preset(cfg: Config, preset: str) -> Config:
     """Apply quick or full preset configurations"""
     if preset == "quick":
         # Quick preset: fewer steps, larger eval_every, more thinning
-        return replace(cfg,
+        return replace(
+            cfg,
             sgld_steps=1000,
             sgld_warmup=200,
             sgld_eval_every=20,
@@ -169,7 +193,7 @@ def apply_preset(cfg: Config, preset: str) -> Config:
             mclmc_draws=500,
             mclmc_eval_every=10,
             mclmc_thin=5,
-            progress_update_every=100
+            progress_update_every=100,
         )
     elif preset == "full":
         # Full preset: current defaults (no changes)
@@ -184,38 +208,38 @@ def override_config(cfg: Config, args) -> Config:
 
     # Handle samplers list
     if args.samplers:
-        samplers = [s.strip() for s in args.samplers.split(',')]
+        samplers = [s.strip() for s in args.samplers.split(",")]
         # For now, just set the primary sampler to the first one
         if samplers:
-            overrides['sampler'] = samplers[0]
+            overrides["sampler"] = samplers[0]
 
     # Simple parameter overrides
     if args.n_data is not None:
-        overrides['n_data'] = args.n_data
+        overrides["n_data"] = args.n_data
     if args.chains is not None:
-        overrides['chains'] = args.chains
+        overrides["chains"] = args.chains
     if args.sgld_steps is not None:
-        overrides['sgld_steps'] = args.sgld_steps
+        overrides["sgld_steps"] = args.sgld_steps
     if args.sgld_warmup is not None:
-        overrides['sgld_warmup'] = args.sgld_warmup
+        overrides["sgld_warmup"] = args.sgld_warmup
     if args.sgld_step_size is not None:
-        overrides['sgld_step_size'] = args.sgld_step_size
+        overrides["sgld_step_size"] = args.sgld_step_size
     if args.hmc_draws is not None:
-        overrides['hmc_draws'] = args.hmc_draws
+        overrides["hmc_draws"] = args.hmc_draws
     if args.hmc_warmup is not None:
-        overrides['hmc_warmup'] = args.hmc_warmup
+        overrides["hmc_warmup"] = args.hmc_warmup
     if args.hmc_steps is not None:
-        overrides['hmc_num_integration_steps'] = args.hmc_steps
+        overrides["hmc_num_integration_steps"] = args.hmc_steps
     if args.mclmc_draws is not None:
-        overrides['mclmc_draws'] = args.mclmc_draws
+        overrides["mclmc_draws"] = args.mclmc_draws
     if args.target_params is not None:
-        overrides['target_params'] = args.target_params
+        overrides["target_params"] = args.target_params
 
     # Handle save plots
     if args.save_plots:
-        overrides['save_plots'] = True
+        overrides["save_plots"] = True
     elif args.no_save_plots:
-        overrides['save_plots'] = False
+        overrides["save_plots"] = False
 
     return replace(cfg, **overrides)
 
@@ -524,7 +548,6 @@ def main(cfg: Config = CFG):
     print(f"HMC Sampling:     {stats.t_hmc_sampling:.2f}")
     print(f"MCLMC Warmup:     {stats.t_mclmc_warmup:.2f}")
     print(f"MCLMC Sampling:   {stats.t_mclmc_sampling:.2f}")
-    jax.block_until_ready(hmc_samples_thin)  # Sync before total runtime measurement
     print(f"Total Runtime:    {time.time() - t0:.2f}")
 
     print("\n=== Work Summary ===")
@@ -550,7 +573,7 @@ def main(cfg: Config = CFG):
                 n=cfg.n_data,
                 beta=beta,
                 L0=L0,
-                save_plots=cfg.save_plots
+                save_plots=cfg.save_plots,
             )
 
         if hmc_samples_thin.size > 0:
@@ -563,7 +586,7 @@ def main(cfg: Config = CFG):
                 n=cfg.n_data,
                 beta=beta,
                 L0=L0,
-                save_plots=cfg.save_plots
+                save_plots=cfg.save_plots,
             )
 
         if mclmc_samples_thin.size > 0:
@@ -576,7 +599,7 @@ def main(cfg: Config = CFG):
                 n=cfg.n_data,
                 beta=beta,
                 L0=L0,
-                save_plots=cfg.save_plots
+                save_plots=cfg.save_plots,
             )
 
     # Save run manifest and README snippet
@@ -633,9 +656,15 @@ def main(cfg: Config = CFG):
 
         # Create manifest (replaces save_run_manifest)
         artifact_files = [
-            "config.json", "metrics.json", "L0.txt",
-            "sgld_Ln.nc", "hmc_Ln.nc", "mclmc_Ln.nc",
-            "sgld_theta.nc", "hmc_theta.nc", "mclmc_theta.nc"
+            "config.json",
+            "metrics.json",
+            "L0.txt",
+            "sgld_Ln.nc",
+            "hmc_Ln.nc",
+            "mclmc_Ln.nc",
+            "sgld_theta.nc",
+            "hmc_theta.nc",
+            "mclmc_theta.nc",
         ]
         create_manifest(run_dir, cfg, all_metrics, artifact_files)
 
@@ -645,7 +674,6 @@ def main(cfg: Config = CFG):
 
         print(f"Artifacts saved to: {run_dir}")
 
-    jax.block_until_ready(hmc_samples_thin)  # Final sync before runtime report
     print(f"\nDone in {time.time() - t0:.1f}s.")
 
 
@@ -664,12 +692,20 @@ if __name__ == "__main__":
     sub = parser.add_subparsers(dest="cmd")
 
     # Single run (default) - inherit from existing CLI
-    single_parser = sub.add_parser("run", help="Run single experiment (default)", add_help=False)
+    single_parser = sub.add_parser(
+        "run", help="Run single experiment (default)", add_help=False
+    )
 
     # Sweep mode with parallel backends
-    sweep_parser = sub.add_parser("sweep", help="Run parameter sweep (optionally parallel)")
-    sweep_parser.add_argument("--backend", choices=["local", "submitit", "modal"], default="local")
-    sweep_parser.add_argument("--workers", type=int, default=0, help="Local workers (0/1=serial)")
+    sweep_parser = sub.add_parser(
+        "sweep", help="Run parameter sweep (optionally parallel)"
+    )
+    sweep_parser.add_argument(
+        "--backend", choices=["local", "submitit", "modal"], default="local"
+    )
+    sweep_parser.add_argument(
+        "--workers", type=int, default=0, help="Local workers (0/1=serial)"
+    )
     sweep_parser.add_argument("--n-seeds", type=int, default=2)
 
     # submitit params
@@ -683,13 +719,28 @@ if __name__ == "__main__":
     sweep_parser.add_argument("--constraint", type=str, default=None)
 
     # timeout and artifact control
-    sweep_parser.add_argument("--timeout-s", type=int, default=None, help="Local executor timeout in seconds")
-    sweep_parser.add_argument("--modal-timeout-s", type=int, default=3600, help="Modal timeout in seconds")
-    sweep_parser.add_argument("--save-artifacts", action="store_true", help="Save full artifacts (plots, data, HTML)")
-    sweep_parser.add_argument("--artifacts-dir", type=str, default="artifacts", help="Base artifacts directory")
+    sweep_parser.add_argument(
+        "--timeout-s", type=int, default=None, help="Local executor timeout in seconds"
+    )
+    sweep_parser.add_argument(
+        "--modal-timeout-s", type=int, default=3600, help="Modal timeout in seconds"
+    )
+    sweep_parser.add_argument(
+        "--save-artifacts",
+        action="store_true",
+        help="Save full artifacts (plots, data, HTML)",
+    )
+    sweep_parser.add_argument(
+        "--artifacts-dir",
+        type=str,
+        default="artifacts",
+        help="Base artifacts directory",
+    )
 
     # If no subcommand, default to single run behavior
-    if len(sys.argv) == 1 or (len(sys.argv) > 1 and not sys.argv[1] in ["sweep", "run"]):
+    if len(sys.argv) == 1 or (
+        len(sys.argv) > 1 and sys.argv[1] not in ["sweep", "run"]
+    ):
         # Parse command line arguments and run main (existing behavior)
         args = parse_args()
         cfg = CFG  # Start with default config
@@ -722,14 +773,23 @@ if __name__ == "__main__":
                     cfg_dict["save_artifacts"] = True
                     cfg_dict["artifacts_dir"] = args.artifacts_dir
 
-                items.append({
-                    "cfg": cfg_dict,
-                    "tag": {"sweep": name, "param": param, "value": val, "seed": seed}
-                })
+                items.append(
+                    {
+                        "cfg": cfg_dict,
+                        "tag": {
+                            "sweep": name,
+                            "param": param,
+                            "value": val,
+                            "seed": seed,
+                        },
+                    }
+                )
 
             # Pick executor and run
             if args.backend == "local":
-                ex = get_executor("local", workers=args.workers, timeout_s=args.timeout_s)
+                ex = get_executor(
+                    "local", workers=args.workers, timeout_s=args.timeout_s
+                )
                 results = ex.map(lambda it: run_experiment_task(it["cfg"]), items)
             elif args.backend == "submitit":
                 slurm_additional = {}
@@ -749,21 +809,27 @@ if __name__ == "__main__":
                     cpus_per_task=args.cpus,
                     mem_gb=args.mem_gb,
                     name="llc",
-                    slurm_additional_parameters=slurm_additional if slurm_additional else None,
+                    slurm_additional_parameters=slurm_additional
+                    if slurm_additional
+                    else None,
                 )
                 results = ex.map(lambda it: run_experiment_task(it["cfg"]), items)
             elif args.backend == "modal":
                 try:
                     from modal_app import run_experiment_remote
                 except ImportError:
-                    raise RuntimeError("Modal app not available. Ensure modal_app.py is present and modal is installed.")
+                    raise RuntimeError(
+                        "Modal app not available. Ensure modal_app.py is present and modal is installed."
+                    )
 
                 # Configure Modal function with timeout
                 modal_options = {}
                 if args.modal_timeout_s:
                     modal_options["timeout"] = args.modal_timeout_s
 
-                ex = get_executor("modal", remote_fn=run_experiment_remote, options=modal_options)
+                ex = get_executor(
+                    "modal", remote_fn=run_experiment_remote, options=modal_options
+                )
                 # pass only the cfg dict (modal function signature matches)
                 results = ex.map(None, [it["cfg"] for it in items])
             else:
@@ -772,23 +838,29 @@ if __name__ == "__main__":
             # Fold results into a DataFrame
             rows = []
             for it, r in zip(items, results):
-                rows.append({
-                    "sweep": it["tag"]["sweep"],
-                    "param": it["tag"]["param"],
-                    "value": it["tag"]["value"],
-                    "seed": it["tag"]["seed"],
-                    "llc_sgld": r.get("llc_sgld"),
-                    "llc_hmc": r.get("llc_hmc"),
-                })
+                rows.append(
+                    {
+                        "sweep": it["tag"]["sweep"],
+                        "param": it["tag"]["param"],
+                        "value": it["tag"]["value"],
+                        "seed": it["tag"]["seed"],
+                        "llc_sgld": r.get("llc_sgld"),
+                        "llc_hmc": r.get("llc_hmc"),
+                    }
+                )
 
             df = pd.DataFrame(rows)
             df.to_csv("llc_sweep_results.csv", index=False)
             print("\n=== Sweep Results ===")
-            print(df.groupby(["sweep","param","value"]).agg({
-                "llc_sgld":["mean","std"],
-                "llc_hmc":["mean","std"],
-                "seed":"count"
-            }))
+            print(
+                df.groupby(["sweep", "param", "value"]).agg(
+                    {
+                        "llc_sgld": ["mean", "std"],
+                        "llc_hmc": ["mean", "std"],
+                        "seed": "count",
+                    }
+                )
+            )
             print("\nResults saved to llc_sweep_results.csv")
         else:
             # Single run mode - use existing behavior

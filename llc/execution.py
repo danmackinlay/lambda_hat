@@ -2,14 +2,14 @@
 from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterable, Callable, List, Any, Optional
-import os
-import time
 import threading
+
 
 @dataclass
 class BaseExecutor:
     def map(self, fn: Callable[[Any], Any], items: Iterable[Any]) -> List[Any]:
         raise NotImplementedError
+
 
 def _run_with_soft_timeout(fn, arg, seconds):
     """Runs fn(arg). If seconds>0 and time exceeds, raises TimeoutError."""
@@ -33,6 +33,7 @@ def _run_with_soft_timeout(fn, arg, seconds):
         raise exc["err"]
     return result.get("value")
 
+
 # ----------------- Local -----------------
 class LocalExecutor(BaseExecutor):
     def __init__(self, workers: int = 0, timeout_s: int | None = None):
@@ -47,29 +48,37 @@ class LocalExecutor(BaseExecutor):
                 out.append(_run_with_soft_timeout(fn, it, self.timeout_s))
             return out
         from concurrent.futures import ProcessPoolExecutor, as_completed
-        outs = [None]*len(items)
+
+        outs = [None] * len(items)
         with ProcessPoolExecutor(max_workers=self.workers) as ex:
             futs = {ex.submit(fn, it): i for i, it in enumerate(items)}
             for fut in as_completed(futs):
                 i = futs[fut]
-                outs[i] = fut.result()  # process-local timeouts aren't enforced; keep simple
+                outs[i] = (
+                    fut.result()
+                )  # process-local timeouts aren't enforced; keep simple
         return outs
+
 
 # ----------------- Submitit / SLURM -----------------
 class _SubmititExperiment:
     """Small checkpointable wrapper for submitit with timeout handling"""
+
     def __init__(self, payload):
         # payload is a dict with {"cfg": {...}}
         self.payload = payload
 
     def __call__(self):
         from llc.tasks import run_experiment_task
+
         return run_experiment_task(self.payload["cfg"])
 
     def checkpoint(self):
         # Requeue same work on preemption/timeout
         import submitit
+
         return submitit.helpers.DelayedSubmission(_SubmititExperiment(self.payload))
+
 
 class SubmititExecutor(BaseExecutor):
     def __init__(
@@ -85,7 +94,7 @@ class SubmititExecutor(BaseExecutor):
         slurm_additional_parameters: Optional[dict] = None,
         # (kept for backward-compat) still accept generic extras:
         additional_params: Optional[dict] = None,
-        slurm_signal_delay_s: int = 120,    # NEW: grace period before kill
+        slurm_signal_delay_s: int = 120,  # NEW: grace period before kill
     ):
         try:
             import submitit  # lazy import
@@ -121,22 +130,24 @@ class SubmititExecutor(BaseExecutor):
         jobs = self.executor.map_array(_SubmititExperiment, list(items))
         return [j.result() for j in jobs]
 
+
 # ----------------- Modal (serverless) -----------------
 class ModalExecutor(BaseExecutor):
     """
     Calls a pre-decorated Modal function with `.map`. You provide the function handle.
     This keeps modal-specific code out of your core pipeline.
     """
+
     def __init__(self, remote_fn, options: Optional[dict] = None):
         # Defensive check that modal is available
         try:
-            import modal  # lazy import check
+            pass  # lazy import check
         except Exception as e:
             raise RuntimeError(
                 "modal is not installed. Install extra: `uv sync --extra modal` "
                 "or `pip install llc[modal]`"
             ) from e
-        
+
         # options e.g. {"gpu": "L40S", "timeout": 60*60, "cpu": 8, "memory": "24Gi"}
         self.remote_fn = remote_fn.options(**options) if options else remote_fn
 
@@ -144,19 +155,21 @@ class ModalExecutor(BaseExecutor):
         # We ignore `fn` and call the remote Modal function directly.
         return list(self.remote_fn.map(list(items)))
 
+
 # ----------------- factory -----------------
 def get_executor(backend: str, **kwargs) -> BaseExecutor:
     backend = (backend or "local").lower()
     if backend == "local":
         return LocalExecutor(
-            workers=kwargs.get("workers", 0),
-            timeout_s=kwargs.get("timeout_s", None)
+            workers=kwargs.get("workers", 0), timeout_s=kwargs.get("timeout_s", None)
         )
     if backend == "submitit":
         return SubmititExecutor(**kwargs)
     if backend == "modal":
         remote_fn = kwargs.get("remote_fn")
         if remote_fn is None:
-            raise ValueError("Modal backend requires `remote_fn=` (a decorated Modal function).")
+            raise ValueError(
+                "Modal backend requires `remote_fn=` (a decorated Modal function)."
+            )
         return ModalExecutor(remote_fn=remote_fn, options=kwargs.get("options"))
     raise ValueError(f"Unknown backend: {backend}")

@@ -11,39 +11,49 @@ from tqdm.auto import tqdm
 
 Array = jnp.ndarray
 
+
 @dataclass
 class ChainResult:
-    kept: np.ndarray               # (draws, k) tiny theta traces (or (0,k) if none)
-    L_hist: np.ndarray             # (draws_L,) Ln evaluations
+    kept: np.ndarray  # (draws, k) tiny theta traces (or (0,k) if none)
+    L_hist: np.ndarray  # (draws_L,) Ln evaluations
     extras: Dict[str, np.ndarray]  # e.g. {"accept": (draws,), "energy": (draws,)}
     mean_L: float
     var_L: float
     n_L: int
-    eval_time_seconds: float       # time spent in L_n evaluations
+    eval_time_seconds: float  # time spent in L_n evaluations
+
 
 @dataclass
 class RunSummary:
     chains: List[ChainResult]
-    kept_stacked: np.ndarray       # (C, draws, k) or (C, 0, k) if no storage
-    L_hist_stacked: np.ndarray     # (C, draws_L)
+    kept_stacked: np.ndarray  # (C, draws, k) or (C, 0, k) if no storage
+    L_hist_stacked: np.ndarray  # (C, draws_L)
     extras: Dict[str, List[np.ndarray]]  # per-chain lists
-    eval_time_seconds: float       # time spent in Ln() (so you can subtract from sampling time)
+    eval_time_seconds: (
+        float  # time spent in Ln() (so you can subtract from sampling time)
+    )
+
 
 class RunningMeanVar:
     def __init__(self):
         self.n = 0
         self.mean = 0.0
         self.M2 = 0.0
+
     def update(self, x: float):
         self.n += 1
         delta = x - self.mean
         self.mean += delta / self.n
         self.M2 += delta * (x - self.mean)
+
     def value(self) -> Tuple[float, float, int]:
         var = self.M2 / (self.n - 1) if self.n > 1 else np.nan
         return float(self.mean), float(var), int(self.n)
 
-def stack_thinned_per_chain(ch_kept: List[List[np.ndarray]], empty_shape: Tuple[int, ...]) -> np.ndarray:
+
+def stack_thinned_per_chain(
+    ch_kept: List[List[np.ndarray]], empty_shape: Tuple[int, ...]
+) -> np.ndarray:
     """Return (C, draws, k) without NaN padding (truncate to per-chain length)."""
     out = []
     for kept in ch_kept:
@@ -58,12 +68,16 @@ def stack_thinned_per_chain(ch_kept: List[List[np.ndarray]], empty_shape: Tuple[
         return np.empty((len(out), 0, kdim))
     return np.stack([k[:m] for k in out], axis=0)
 
-def default_tiny_store(vec: np.ndarray, diag_dims=None, Rproj=None) -> Optional[np.ndarray]:
+
+def default_tiny_store(
+    vec: np.ndarray, diag_dims=None, Rproj=None
+) -> Optional[np.ndarray]:
     if diag_dims is not None:
         return vec[diag_dims]
     if Rproj is not None:
         return Rproj @ vec
     return None
+
 
 def drive_chain(
     *,
@@ -114,7 +128,9 @@ def drive_chain(
         extras_acc[name].append(float(value))
 
     rng = range(n_steps)
-    pbar = tqdm(rng, total=n_steps, desc=progress_label, leave=False) if use_tqdm else rng
+    pbar = (
+        tqdm(rng, total=n_steps, desc=progress_label, leave=False) if use_tqdm else rng
+    )
 
     # Helper: record Ln and tiny θ after warmup only
     def record_if_needed(t: int):
@@ -124,7 +140,9 @@ def drive_chain(
         # L_n
         if ((t - warmup) % eval_every) == 0:
             t0 = time.time()
-            Ln = float(jax.device_get(Ln_eval_f64(position_fn(state).astype(jnp.float64))))
+            Ln = float(
+                jax.device_get(Ln_eval_f64(position_fn(state).astype(jnp.float64)))
+            )
             eval_time += time.time() - t0
             rm.update(Ln)
             Lhist.append(Ln)
@@ -148,7 +166,7 @@ def drive_chain(
         for h in info_hooks:
             h(info, ctx)
     if use_tqdm:
-        meanL = rm.value()[0] if rm.n > 0 else float('nan')
+        meanL = rm.value()[0] if rm.n > 0 else float("nan")
         pbar.set_postfix_str(f"L̄≈{meanL:.4f}")
         pbar.update(1)
 
@@ -190,6 +208,7 @@ def drive_chain(
         eval_time_seconds=float(eval_time),
     )
 
+
 def select_diag_dims(dim, k, seed):
     """Select k random dimensions from d for subset diagnostics"""
     k = min(k, dim)
@@ -218,7 +237,7 @@ def prepare_diag_targets(dim, cfg):
 def make_tiny_store(dim: int, config) -> tuple[Callable, Any]:
     """
     Create a function to store subset or projection of parameters.
-    
+
     Returns:
         tiny_store_fn: Function that extracts subset/projection
         targets: The target indices or projection matrix
@@ -229,24 +248,24 @@ def make_tiny_store(dim: int, config) -> tuple[Callable, Any]:
         if max(indices) >= dim:
             indices = list(range(min(10, dim)))  # Fallback to first 10
         targets = jnp.array(indices)
-        
+
         def tiny_store_fn(theta):
             return theta[targets]
-        
+
         return tiny_store_fn, targets
-    
+
     elif hasattr(config, "track_projection_dim") and config.track_projection_dim:
         # Random projection
         proj_dim = config.track_projection_dim
         key = jax.random.PRNGKey(config.seed)
         projection = jax.random.normal(key, (proj_dim, dim)) / jnp.sqrt(proj_dim)
         targets = projection
-        
+
         def tiny_store_fn(theta):
             return projection @ theta
-        
+
         return tiny_store_fn, targets
-    
+
     else:
         # No tracking
         return lambda x: None, None
