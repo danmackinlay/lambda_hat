@@ -23,70 +23,27 @@ def run_experiment_task(cfg_dict: Dict[str, Any]) -> Dict[str, Any]:
     cfg = Config(**cfg_dict_clean)
 
     if save_artifacts:
-        # Run experiment with full artifact pipeline (no main dependency)
-        from llc.artifacts import (
-            create_run_directory,
-            save_config,
-            save_metrics,
-            save_L0,
-            create_manifest,
-            generate_gallery_html,
-        )
-
-        # Create run directory
-        run_dir = create_run_directory(cfg)
-
-        # Run the lightweight experiment to get LLC values
-        llc_sgld, llc_hmc = run_experiment(cfg, verbose=True)
-
-        # Create basic metrics (simplified version of main's metrics)
-        metrics = {
-            "sgld_llc_mean": float(llc_sgld),
-            "hmc_llc_mean": float(llc_hmc),
-            # Add other samplers if configured
-        }
-
-        # Handle additional samplers if present
-        samplers = getattr(cfg, "samplers", [cfg.sampler])
-        for sampler in samplers:
-            if sampler == "sgld":
-                metrics["sgld_llc_mean"] = float(llc_sgld)
-            elif sampler == "hmc":
-                metrics["hmc_llc_mean"] = float(llc_hmc)
-            # Note: MCLMC would need to be added to run_experiment if needed for artifacts
-
-        # Save basic artifacts
-        save_L0(run_dir, 0.0)  # Placeholder - would need actual L0 from experiment
-        save_metrics(run_dir, metrics)
-        save_config(run_dir, cfg)
-
-        # Create manifest with basic artifacts
-        artifact_files = [
-            "config.json",
-            "metrics.json",
-            "L0.txt",
-        ]
-        create_manifest(run_dir, cfg, metrics, artifact_files)
-
-        # Generate HTML gallery
-        generate_gallery_html(run_dir, cfg, metrics)
-
-        # Extract sampler results for backwards compatibility
+        # Use the unified pipeline for full artifact generation
+        from llc.pipeline import run_one
+        
+        out = run_one(cfg, save_artifacts=True, skip_if_exists=True)
+        
+        # Keep return shape backwards-compatible with existing callers
         result = {
             "cfg": cfg_dict,
-            "run_dir": run_dir,
+            "run_dir": out.run_dir,
         }
-
+        
         # Add individual sampler results for backwards compatibility
-        for sampler in samplers:
-            if f"{sampler}_llc_mean" in metrics:
-                result[f"llc_{sampler}"] = float(metrics[f"{sampler}_llc_mean"])
-
-        # Maintain old format if only sgld/hmc
-        if "sgld_llc_mean" in metrics and "hmc_llc_mean" in metrics:
-            result["llc_sgld"] = float(metrics["sgld_llc_mean"])
-            result["llc_hmc"] = float(metrics["hmc_llc_mean"])
-
+        for s in ("sgld", "hmc", "mclmc"):
+            if f"{s}_llc_mean" in out.metrics:
+                result[f"llc_{s}"] = float(out.metrics[f"{s}_llc_mean"])
+        
+        # Legacy keys for backwards compatibility
+        if "sgld_llc_mean" in out.metrics and "hmc_llc_mean" in out.metrics:
+            result["llc_sgld"] = float(out.metrics["sgld_llc_mean"])
+            result["llc_hmc"] = float(out.metrics["hmc_llc_mean"])
+            
         return result
 
     else:

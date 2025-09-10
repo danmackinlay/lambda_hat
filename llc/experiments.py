@@ -93,94 +93,22 @@ def build_sweep_worklist(sweep_config, n_seeds=3):
 
 
 def run_experiment(cfg: Config, verbose=True):
-    """Run single experiment and return LLCs"""
-    key = random.PRNGKey(cfg.seed)
-
-    # Generate data
-    X, Y, _, _ = make_dataset(key, cfg)
-
-    # Initialize network
-    key, subkey = random.split(key)
-    widths = cfg.widths or infer_widths(
-        cfg.in_dim, cfg.out_dim, cfg.depth, cfg.target_params, fallback_width=cfg.hidden
-    )
-    w0 = init_mlp_params(
-        subkey, cfg.in_dim, widths, cfg.out_dim, cfg.activation, cfg.bias, cfg.init
-    )
-
-    # Train ERM
-    theta_star, unravel = train_erm(w0, cfg, X, Y)
-
-    # Setup sampling
-    dim = theta_star.size
-    beta, gamma = compute_beta_gamma(cfg, dim)
-
-    # Create loss functions (default dtype for training)
-    loss_full, loss_minibatch = make_loss_fns(unravel, cfg, X, Y)
-
-    # Create f64 loss functions for consistent LLC evaluation
-    X64, Y64 = X.astype(jnp.float64), Y.astype(jnp.float64)
-    params64 = jax.tree_util.tree_map(
-        lambda a: a.astype(jnp.float64), unravel(theta_star)
-    )
-    theta_star64, unravel64 = ravel_pytree(params64)
-    loss_full64, loss_minibatch64 = make_loss_fns(unravel64, cfg, X64, Y64)
-    L0 = float(loss_full64(theta_star64))
-    Ln_full64 = jit(loss_full64)
-
-    # Create log posterior (default dtype for sampling efficiency)
-    logpost_grad, grad_minibatch = make_logpost_and_score(
-        loss_full, loss_minibatch, theta_star, cfg.n_data, beta, gamma
-    )
-
-    # Run SGLD
-    key, k_sgld = random.split(key)
-    init_sgld = theta_star + 0.01 * random.normal(k_sgld, (cfg.chains, dim))
-
-    _, _, _, _, Ln_hist_sgld = run_sgld_online(
-        k_sgld,
-        init_sgld,
-        grad_minibatch,
-        X,
-        Y,
-        cfg.n_data,
-        cfg.sgld_step_size,
-        cfg.sgld_steps,
-        cfg.sgld_warmup,
-        cfg.sgld_batch_size,
-        cfg.sgld_eval_every,
-        cfg.sgld_thin,
-        Ln_full64,  # Use f64 for consistent LLC evaluation
-    )
-
-    llc_sgld, _ = llc_ci_from_histories(Ln_hist_sgld, cfg.n_data, beta, L0)
-
-    # Run HMC
-    key, k_hmc = random.split(key)
-    init_hmc = theta_star64 + 0.01 * random.normal(k_hmc, (cfg.chains, dim))
-
-    # Create log posterior for HMC in f64
-    logpost_grad64, _ = make_logpost_and_score(
-        loss_full64, loss_minibatch64, theta_star64, cfg.n_data, beta, gamma
-    )
-
-    _, _, _, _, _, Ln_hist_hmc = run_hmc_online_with_adaptation(
-        k_hmc,
-        init_hmc,
-        logpost_grad64,
-        cfg.hmc_draws,
-        cfg.hmc_warmup,
-        cfg.hmc_num_integration_steps,
-        cfg.hmc_eval_every,
-        cfg.hmc_thin,
-        Ln_full64,
-    )
-
-    llc_hmc, _ = llc_ci_from_histories(Ln_hist_hmc, cfg.n_data, beta, L0)
-
+    """
+    Thin wrapper around pipeline that returns only SGLD and HMC LLCs.
+    Maintained for backwards compatibility with existing code.
+    """
+    from .pipeline import run_one
+    
+    # Run the full pipeline but don't save artifacts
+    outputs = run_one(cfg, save_artifacts=False, skip_if_exists=False)
+    
+    # Extract SGLD and HMC results
+    llc_sgld = outputs.metrics.get("sgld_llc_mean", 0.0)
+    llc_hmc = outputs.metrics.get("hmc_llc_mean", 0.0)
+    
     if verbose:
         print(f"LLC: SGLD={llc_sgld:.4f}, HMC={llc_hmc:.4f}")
-
+    
     return llc_sgld, llc_hmc
 
 
