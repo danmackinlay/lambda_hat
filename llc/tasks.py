@@ -12,12 +12,14 @@ def run_experiment_task(cfg_dict: Dict[str, Any]) -> Dict[str, Any]:
     If cfg_dict contains 'save_artifacts': True, will generate full artifact pipeline
     and return run_dir path for artifact retrieval.
     """
-    from main import Config, run_experiment, main as run_main  # repo-local imports
+    from llc.config import Config
+    from llc.experiments import run_experiment
+    from main import main as run_main
 
     # Extract control flags before creating Config
     cfg_dict_clean = cfg_dict.copy()
     save_artifacts = cfg_dict_clean.pop("save_artifacts", False)
-    artifacts_dir = cfg_dict_clean.pop("artifacts_dir", "artifacts")
+    cfg_dict_clean.pop("artifacts_dir", "artifacts")
 
     cfg = Config(**cfg_dict_clean)
 

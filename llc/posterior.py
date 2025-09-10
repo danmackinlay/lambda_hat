@@ -14,11 +14,8 @@ else:
 
 def compute_beta_gamma(cfg: Config, d: int) -> tuple[float, float]:
     """Compute beta and gamma from config and dimension"""
-    beta = (
-        cfg.beta0 / jnp.log(cfg.n_data)
-        if cfg.beta_mode == "1_over_log_n"
-        else cfg.beta0
-    )
+    n_eff = max(3, int(cfg.n_data))
+    beta = cfg.beta0 / jnp.log(n_eff) if cfg.beta_mode == "1_over_log_n" else cfg.beta0
     gamma = (d / (cfg.prior_radius**2)) if (cfg.prior_radius is not None) else cfg.gamma
     return float(beta), float(gamma)
 

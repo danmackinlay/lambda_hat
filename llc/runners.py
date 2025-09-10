@@ -131,7 +131,11 @@ def run_sgld_online(
         # Accumulate sampling time (subtract eval time)
         elapsed = time.time() - t0
         if stats and hasattr(res, "eval_time_seconds"):
-            stats.t_sgld_sampling += max(0.0, elapsed - res.eval_time_seconds)
+            net_time = max(0.0, elapsed - res.eval_time_seconds)
+            # naive split: attribute first (warmup/num_steps) fraction to warmup
+            frac = float(warmup) / float(max(1, num_steps))
+            stats.t_sgld_warmup += frac * net_time
+            stats.t_sgld_sampling += (1.0 - frac) * net_time
 
         kept_all.append(res.kept)
         means.append(res.mean_L)
@@ -294,7 +298,12 @@ def run_mclmc_online(
         # Accumulate sampling time (subtract eval time)
         elapsed = time.time() - t0
         if stats and hasattr(res, "eval_time_seconds"):
-            stats.t_mclmc_sampling += max(0.0, elapsed - res.eval_time_seconds)
+            net_time = max(0.0, elapsed - res.eval_time_seconds)
+            # naive split: attribute (tuner_steps/(tuner_steps+num_draws)) to warmup
+            total_steps = tuner_steps + num_draws
+            frac = float(tuner_steps) / float(max(1, total_steps))
+            stats.t_mclmc_warmup += frac * net_time
+            stats.t_mclmc_sampling += (1.0 - frac) * net_time
 
         kept_all.append(res.kept)
         means.append(res.mean_L)

@@ -21,7 +21,7 @@ def infer_widths(
     # P(h) = (in_dim+1)h + (L-1)(h+1)h + (h+1)out_dim ≈ target_params
     L = depth
     a = L - 1  # coefficient of h^2
-    b = (in_dim + 1) + (L - 1) + out_dim + 1  # coefficient of h
+    b = (in_dim + 1) + (L - 1) + out_dim  # coefficient of h
     if a == 0:
         h = max(1, (target_params - out_dim) // (in_dim + 1))
     else:
@@ -112,10 +112,12 @@ def mlp_forward(
         if skip and (i % residual_period == residual_period - 1):
             # Project if dimensions differ
             if h.shape[-1] != h_new.shape[-1]:
-                P = jnp.eye(h_new.shape[-1], h.shape[-1])[
-                    : h_new.shape[-1], : h.shape[-1]
-                ]
-                h = h @ P.T
+                # Truncate or pad with zeros without allocating a full eye per step
+                d_in, d_out = h.shape[-1], h_new.shape[-1]
+                h = h[:, : min(d_in, d_out)]
+                if d_out > h.shape[-1]:
+                    pad = jnp.zeros((h.shape[0], d_out - h.shape[-1]), dtype=h.dtype)
+                    h = jnp.concatenate([h, pad], axis=1)
             h = h + h_new
         else:
             h = h_new

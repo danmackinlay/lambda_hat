@@ -176,17 +176,17 @@ def plot_diagnostics(
     # Theta trace plots (if available)
     idata_theta, theta_idx = _idata_from_theta(samples_thin)
     if idata_theta is not None and theta_idx:
-        fig, axes = plt.subplots(2, min(4, len(theta_idx)), figsize=(12, 6))
-        if len(theta_idx) == 1:
-            axes = axes.reshape(2, 1)
-        for j, idx in enumerate(theta_idx[:4]):
-            # Trace plot
-            az.plot_trace(
-                idata_theta,
-                var_names=["theta"],
-                coords={"theta_dim": [idx]},
-                axes=axes[:, j] if len(theta_idx) > 1 else axes,
-            )
+        n_dims_to_plot = min(4, len(theta_idx))
+        sel = {"theta_dim": theta_idx[:n_dims_to_plot]}
+        fig, axes = plt.subplots(2, n_dims_to_plot, figsize=(12, 6), squeeze=False)
+        # One call: ArviZ fills the 2×N grid itself
+        az.plot_trace(
+            idata_theta,
+            var_names=["theta"],
+            coords=sel,
+            axes=axes,
+            backend_kwargs={"constrained_layout": True},  # nicer layout
+        )
         plt.suptitle(f"{sampler_name} Parameter Traces")
         plt.tight_layout()
         if save_plots:

@@ -100,7 +100,7 @@ def run_hmc_chain(
     (state, params), _ = wa.run(rng_key, init_theta, num_steps=warmup)
     warmup_time = time.time() - t0_warmup
     invM = params.get("inverse_mass_matrix", jnp.ones_like(init_theta))
-    if invM.ndim == 2:
+    if invM.ndim == 1:  # promote vector -> diagonal matrix
         invM = jnp.diag(invM)
     kernel = blackjax.hmc(
         logdensity,

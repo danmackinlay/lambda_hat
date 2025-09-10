@@ -128,9 +128,7 @@ def _(json, np, run_info):
         print(f"  Model: {config['depth']}-layer MLP")
         print("  Samplers: sgld, hmc, mclmc")
 
-        run_params = {"n_data": n_data, "beta": beta, "L0": L0, "config": config}
     else:
-        run_params = None
         print("No configuration found.")
     return L0, beta, config, n_data
 

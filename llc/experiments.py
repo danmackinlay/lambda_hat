@@ -1,7 +1,6 @@
 # llc/experiments.py
 """Experiment sweep utilities and training functions"""
 
-from typing import TYPE_CHECKING
 from dataclasses import replace
 
 import jax
@@ -11,12 +10,6 @@ from jax.flatten_util import ravel_pytree
 import optax
 import numpy as np
 import pandas as pd
-
-if TYPE_CHECKING:
-    from .config import Config
-else:
-    # Runtime import to avoid circular dependency
-    Config = "Config"
 
 from .config import Config
 from .models import infer_widths, init_mlp_params
@@ -166,10 +159,15 @@ def run_experiment(cfg: Config, verbose=True):
     key, k_hmc = random.split(key)
     init_hmc = theta_star64 + 0.01 * random.normal(k_hmc, (cfg.chains, dim))
 
+    # Create log posterior for HMC in f64
+    logpost_grad64, _ = make_logpost_and_score(
+        loss_full64, loss_minibatch64, theta_star64, cfg.n_data, beta, gamma
+    )
+
     _, _, _, _, Ln_hist_hmc = run_hmc_online_with_adaptation(
         k_hmc,
         init_hmc,
-        lambda th: jax.value_and_grad(loss_full64)(th),
+        logpost_grad64,
         cfg.hmc_draws,
         cfg.hmc_warmup,
         cfg.hmc_num_integration_steps,

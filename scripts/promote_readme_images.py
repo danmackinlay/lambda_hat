@@ -13,12 +13,12 @@ import sys
 
 # Which files to copy (left = substring to match in artifacts, right = stable name in assets)
 SELECT = [
-    ("sgld_llc_running", "sgld_llc_running.png"),
-    ("hmc_llc_running", "hmc_llc_running.png"),
-    ("mclmc_llc_running", "mclmc_llc_running.png"),
+    ("sgld_running_llc", "sgld_llc_running.png"),
+    ("hmc_running_llc", "hmc_llc_running.png"),
+    ("mclmc_running_llc", "mclmc_llc_running.png"),
     ("hmc_acceptance", "hmc_acceptance.png"),
-    ("hmc_L_trace", "hmc_L_trace.png"),
-    ("hmc_L_acf", "hmc_L_acf.png"),
+    ("hmc_Ln_trace", "hmc_L_trace.png"),
+    ("hmc_Ln_acf", "hmc_L_acf.png"),
     ("mclmc_energy_hist", "mclmc_energy_hist.png"),
 ]
 

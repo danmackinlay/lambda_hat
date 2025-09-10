@@ -29,15 +29,15 @@ run:
 
 # Run with plot saving enabled
 run-save:
-	$(PYTHON) -c "from main import main, Config; main(Config(save_plots=True, save_manifest=True, save_readme_snippet=True))"
+	$(PYTHON) -c "from main import main; from llc.config import Config; main(Config(save_plots=True, save_manifest=True, save_readme_snippet=True))"
 
 # Run diagnostics with quick test config
 diag:
-	$(PYTHON) -c "from main import main, TEST_CFG, replace; main(replace(TEST_CFG, save_plots=True, save_manifest=True, save_readme_snippet=True))"
+	$(PYTHON) -c "from main import main; from dataclasses import replace; from llc.config import TEST_CFG; main(replace(TEST_CFG, save_plots=True, save_manifest=True, save_readme_snippet=True))"
 
 # Run minimal test (fastest)
 test:
-	$(PYTHON) -c "from main import main, TEST_CFG; main(TEST_CFG)"
+	$(PYTHON) -c "from main import main; from llc.config import TEST_CFG; main(TEST_CFG)"
 
 # Run parameter sweep
 sweep:
@@ -70,13 +70,13 @@ dev-clean:
 
 # Examples of running with specific configurations
 example-small:
-	$(PYTHON) -c "from main import main, Config; main(Config(n_data=1000, sgld_steps=500, hmc_draws=200, save_plots=True))"
+	$(PYTHON) -c "from main import main; from llc.config import Config; main(Config(n_data=1000, sgld_steps=500, hmc_draws=200, save_plots=True))"
 
 example-deep:
-	$(PYTHON) -c "from main import main, Config; main(Config(depth=3, target_params=50000, save_plots=True))"
+	$(PYTHON) -c "from main import main; from llc.config import Config; main(Config(depth=3, target_params=50000, save_plots=True))"
 
 example-mclmc-only:
-	$(PYTHON) -c "from main import main, Config; main(Config(sampler='mclmc', save_plots=True))"
+	$(PYTHON) -c "from main import main; from llc.config import Config; main(Config(sampler='mclmc', save_plots=True))"
 
 # Promote plots from latest run to README assets
 promote-readme:

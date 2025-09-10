@@ -4,7 +4,6 @@ import os
 os.environ.setdefault("JAX_ENABLE_X64", "true")  # HMC benefits from float64
 os.environ.setdefault("MPLBACKEND", "Agg")  # Headless rendering - no GUI windows
 
-import time
 import argparse
 from dataclasses import replace
 
@@ -388,7 +387,8 @@ def main(cfg: Config = CFG):
 
     # Compute LLC with proper CI using ESS
     llc_hmc, ci_hmc = llc_ci_from_histories(Ln_histories_hmc, cfg.n_data, beta, L0)
-    mean_acc = float(np.mean([a.mean() for a in accs_hmc]))
+    vals = [np.nanmean(a) for a in accs_hmc if a.size]
+    mean_acc = float(np.nanmean(vals)) if vals else float("nan")
 
     print(f"HMC LLC: {llc_hmc:.4f}  95% CI: [{ci_hmc[0]:.4f}, {ci_hmc[1]:.4f}]")
     print(f"HMC acceptance rate (mean over chains/draws): {mean_acc:.3f}")
@@ -548,7 +548,7 @@ def main(cfg: Config = CFG):
     print(f"HMC Sampling:     {stats.t_hmc_sampling:.2f}")
     print(f"MCLMC Warmup:     {stats.t_mclmc_warmup:.2f}")
     print(f"MCLMC Sampling:   {stats.t_mclmc_sampling:.2f}")
-    print(f"Total Runtime:    {time.time() - t0:.2f}")
+    print(f"Total Runtime:    {toc(t0):.2f}")
 
     print("\n=== Work Summary ===")
     print(f"SGLD - Minibatch grads: {stats.n_sgld_minibatch_grads}")
@@ -561,46 +561,47 @@ def main(cfg: Config = CFG):
 
     # Plot diagnostics if enabled
     if cfg.diag_mode != "none":
-        print("\n=== Generating Diagnostic Plots ===")
+        if cfg.save_plots:
+            print("\n=== Generating Diagnostic Plots ===")
 
-        # Call single-sampler plot_diagnostics for each sampler
-        if sgld_samples_thin.size > 0:
-            plot_diagnostics(
-                run_dir=run_dir,
-                sampler_name="sgld",
-                Ln_histories=Ln_histories_sgld,
-                samples_thin=sgld_samples_thin,
-                n=cfg.n_data,
-                beta=beta,
-                L0=L0,
-                save_plots=cfg.save_plots,
-            )
+            # Call single-sampler plot_diagnostics for each sampler
+            if sgld_samples_thin.size > 0:
+                plot_diagnostics(
+                    run_dir=run_dir,
+                    sampler_name="sgld",
+                    Ln_histories=Ln_histories_sgld,
+                    samples_thin=sgld_samples_thin,
+                    n=cfg.n_data,
+                    beta=beta,
+                    L0=L0,
+                    save_plots=cfg.save_plots,
+                )
 
-        if hmc_samples_thin.size > 0:
-            plot_diagnostics(
-                run_dir=run_dir,
-                sampler_name="hmc",
-                Ln_histories=Ln_histories_hmc,
-                samples_thin=hmc_samples_thin,
-                acceptance_rates=accs_hmc,
-                n=cfg.n_data,
-                beta=beta,
-                L0=L0,
-                save_plots=cfg.save_plots,
-            )
+            if hmc_samples_thin.size > 0:
+                plot_diagnostics(
+                    run_dir=run_dir,
+                    sampler_name="hmc",
+                    Ln_histories=Ln_histories_hmc,
+                    samples_thin=hmc_samples_thin,
+                    acceptance_rates=accs_hmc,
+                    n=cfg.n_data,
+                    beta=beta,
+                    L0=L0,
+                    save_plots=cfg.save_plots,
+                )
 
-        if mclmc_samples_thin.size > 0:
-            plot_diagnostics(
-                run_dir=run_dir,
-                sampler_name="mclmc",
-                Ln_histories=Ln_histories_mclmc,
-                samples_thin=mclmc_samples_thin,
-                energy_deltas=energy_deltas_mclmc,
-                n=cfg.n_data,
-                beta=beta,
-                L0=L0,
-                save_plots=cfg.save_plots,
-            )
+            if mclmc_samples_thin.size > 0:
+                plot_diagnostics(
+                    run_dir=run_dir,
+                    sampler_name="mclmc",
+                    Ln_histories=Ln_histories_mclmc,
+                    samples_thin=mclmc_samples_thin,
+                    energy_deltas=energy_deltas_mclmc,
+                    n=cfg.n_data,
+                    beta=beta,
+                    L0=L0,
+                    save_plots=cfg.save_plots,
+                )
 
     # Save run manifest and README snippet
     # Save data artifacts if enabled
@@ -635,10 +636,10 @@ def main(cfg: Config = CFG):
             "hmc_n_leapfrog_grads": int(stats.n_hmc_leapfrog_grads),
             "hmc_n_full_loss": int(stats.n_hmc_full_loss),
             "hmc_mean_acceptance": float(
-                np.mean([np.mean(a) for a in accs_hmc if len(a)])
+                np.nanmean([np.nanmean(a) for a in accs_hmc if a.size])
             )
-            if accs_hmc
-            else 0.0,
+            if any(a.size for a in accs_hmc)
+            else float("nan"),
             "mclmc_llc_mean": float(llc_mclmc_mean),
             "mclmc_llc_se": float(se_mclmc),
             "mclmc_ess": float(ess_mclmc),
@@ -655,16 +656,20 @@ def main(cfg: Config = CFG):
         save_config(run_dir, cfg)
 
         # Create manifest (replaces save_run_manifest)
+        from pathlib import Path
+
+        pngs = [p.name for p in Path(run_dir).glob("*.png")]
         artifact_files = [
             "config.json",
             "metrics.json",
             "L0.txt",
-            "sgld_Ln.nc",
-            "hmc_Ln.nc",
-            "mclmc_Ln.nc",
+            "sgld_L.nc",
+            "hmc_L.nc",
+            "mclmc_L.nc",
             "sgld_theta.nc",
             "hmc_theta.nc",
             "mclmc_theta.nc",
+            *pngs,
         ]
         create_manifest(run_dir, cfg, all_metrics, artifact_files)
 
@@ -674,7 +679,8 @@ def main(cfg: Config = CFG):
 
         print(f"Artifacts saved to: {run_dir}")
 
-    print(f"\nDone in {time.time() - t0:.1f}s.")
+    print(f"\nDone in {toc(t0):.1f}s.")
+    return run_dir
 
 
 # ----------------------------
