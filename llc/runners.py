@@ -152,7 +152,7 @@ def run_hmc_online_with_adaptation(
 ):
     """Run HMC chains with window adaptation and online LLC evaluation"""
     chains = init_thetas.shape[0]
-    kept_all, means, vars_, ns, L_histories = [], [], [], [], []
+    kept_all, means, vars_, ns, accs, L_histories = [], [], [], [], [], []
 
     def tiny_store(vec: np.ndarray):
         return default_tiny_store(vec, diag_dims, Rproj)
@@ -190,11 +190,21 @@ def run_hmc_online_with_adaptation(
         vars_.append(res.var_L)
         ns.append(res.n_L)
         L_histories.append(res.L_hist)
+        # Extract acceptance rates from extras
+        if "accept" in res.extras:
+            accs.append(np.asarray(res.extras["accept"]))
+        else:
+            accs.append(np.asarray([]))
         if stats:
             stats.n_hmc_full_loss += int(res.n_L)
+            # Extract warmup timing and work from extras
+            if "warmup_time" in res.extras:
+                stats.t_hmc_warmup += float(res.extras["warmup_time"][0])
+            if "warmup_grads" in res.extras:
+                stats.n_hmc_warmup_leapfrog_grads += int(res.extras["warmup_grads"][0])
 
     samples_thin = stack_thinned(kept_all)
-    return samples_thin, np.array(means), np.array(vars_), np.array(ns), L_histories
+    return samples_thin, np.array(means), np.array(vars_), np.array(ns), accs, L_histories
 
 
 def run_mclmc_online(
@@ -206,6 +216,9 @@ def run_mclmc_online(
     thin,
     Ln_full64,
     tuner_steps=2000,
+    diagonal_preconditioning=False,
+    desired_energy_var=5e-4,
+    integrator_name="isokinetic_mclachlan",
     use_tqdm=True,
     progress_update_every=50,
     stats: RunStats | None = None,
@@ -214,7 +227,7 @@ def run_mclmc_online(
 ):
     """Run MCLMC chains with auto-tuning and online LLC evaluation"""
     chains = init_thetas.shape[0]
-    kept_all, means, vars_, ns, L_histories = [], [], [], [], []
+    kept_all, means, vars_, ns, energy_deltas, L_histories = [], [], [], [], [], []
 
     def tiny_store(vec: np.ndarray):
         return default_tiny_store(vec, diag_dims, Rproj)
@@ -222,7 +235,7 @@ def run_mclmc_online(
     for c in range(chains):
         ck = jax.random.fold_in(key, c)
         # Work accounting
-        work_bump = (lambda: setattr(stats, "n_mclmc_steps", stats.n_mclmc_steps + 1)) if stats else None
+        work_bump = (lambda n_steps=1: setattr(stats, "n_mclmc_steps", stats.n_mclmc_steps + n_steps)) if stats else None
 
         # Time the sampling
         t0 = time.time()
@@ -235,6 +248,9 @@ def run_mclmc_online(
             thin=thin,
             Ln_eval_f64=Ln_full64,
             tuner_steps=tuner_steps,
+            diagonal_preconditioning=diagonal_preconditioning,
+            desired_energy_var=desired_energy_var,
+            integrator_name=integrator_name,
             tiny_store_fn=tiny_store,
             use_tqdm=use_tqdm,
             progress_label=f"MCLMC(c{c})",
@@ -251,11 +267,16 @@ def run_mclmc_online(
         vars_.append(res.var_L)
         ns.append(res.n_L)
         L_histories.append(res.L_hist)
+        # Extract energy deltas from extras
+        if "energy" in res.extras:
+            energy_deltas.append(np.asarray(res.extras["energy"]))
+        else:
+            energy_deltas.append(np.asarray([]))
         if stats:
             stats.n_mclmc_full_loss += int(res.n_L)
 
     samples_thin = stack_thinned(kept_all)
-    return samples_thin, np.array(means), np.array(vars_), np.array(ns), L_histories
+    return samples_thin, np.array(means), np.array(vars_), np.array(ns), energy_deltas, L_histories
 
 
 def run_sampler(sampler_name: str, sampler_cfg, **shared_kwargs):

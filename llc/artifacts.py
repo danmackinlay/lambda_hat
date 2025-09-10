@@ -379,6 +379,14 @@ def generate_gallery_html(run_dir: str, cfg, metrics: Dict[str, Any]) -> str:
     return gallery_path
 
 
+def save_L0(run_dir: str, L0: float) -> str:
+    """Save L0 value for running LLC reconstruction"""
+    from pathlib import Path
+    path = Path(run_dir) / "L0.txt"
+    path.write_text(f"{L0:.10f}")
+    return str(path)
+
+
 def save_plot(fig, path: str, **kwargs) -> None:
     """Save matplotlib figure with consistent settings"""
     default_kwargs = {"dpi": 150, "bbox_inches": "tight", "facecolor": "white"}

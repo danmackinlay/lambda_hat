@@ -137,16 +137,26 @@ def _(json, np, run_info):
 
 @app.cell
 def _(json, run_info):
-    # Load metrics for all samplers
+    # Load run-level metrics
     samplers = ["sgld", "hmc", "mclmc"]
     metrics = {}
 
     if run_info:
-        for sampler_name in samplers:
-            metrics_file = f"{sampler_name}_metrics.json"
-            if metrics_file in run_info["files"]:
-                with open(run_info["files"][metrics_file]) as metrics_file_obj:
-                    metrics[sampler_name] = json.load(metrics_file_obj)
+        # Load run-level metrics.json
+        metrics_file = "metrics.json"
+        if metrics_file in run_info["files"]:
+            with open(run_info["files"][metrics_file]) as metrics_file_obj:
+                all_metrics = json.load(metrics_file_obj)
+                # Extract per-sampler metrics from run-level structure
+                for sampler_name in samplers:
+                    sampler_data = {}
+                    # Extract sampler-specific metrics (e.g., sgld_llc_mean -> llc_mean)
+                    for key, value in all_metrics.items():
+                        if key.startswith(f"{sampler_name}_"):
+                            clean_key = key.replace(f"{sampler_name}_", "")
+                            sampler_data[clean_key] = value
+                    if sampler_data:
+                        metrics[sampler_name] = sampler_data
 
         print("Metrics loaded:")
         for sampler_key, data in metrics.items():

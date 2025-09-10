@@ -1,6 +1,7 @@
 # llc/samplers/adapters.py
 from __future__ import annotations
 from typing import Dict, Any, List, Optional, Tuple, Callable
+import time
 
 import jax
 import jax.numpy as jnp
@@ -91,7 +92,11 @@ def run_hmc_chain(
     wa = blackjax.window_adaptation(
         blackjax.hmc, logdensity, is_mass_matrix_diagonal=True, num_integration_steps=L
     )
+    
+    # Time the warmup phase
+    t0_warmup = time.time()
     (state, params), _ = wa.run(rng_key, init_theta, num_steps=warmup)
+    warmup_time = time.time() - t0_warmup
     invM = params.get("inverse_mass_matrix", jnp.ones_like(init_theta))
     if invM.ndim == 2:
         invM = jnp.diag(invM)
@@ -118,7 +123,7 @@ def run_hmc_chain(
         if not np.isnan(acc):
             ctx["put_extra"]("accept", float(acc))
 
-    return drive_chain(
+    result = drive_chain(
         rng_key=k_draws,
         init_state=state,
         step_fn=step_fn,
@@ -135,6 +140,14 @@ def run_hmc_chain(
         progress_update_every=progress_update_every,
         info_hooks=[info_hook],
     )
+    
+    # Add warmup timing and work to extras
+    result.extras["warmup_time"] = np.array([warmup_time])
+    # Estimate warmup work: L+1 grads per warmup step
+    warmup_grads = warmup * (L + 1) 
+    result.extras["warmup_grads"] = np.array([warmup_grads])
+    
+    return result
 
 # ---------- MCLMC (unadjusted; tuned L & step_size) ----------
 

@@ -26,15 +26,15 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 # Import new sampler adapters and utility modules
-from llc.samplers.base import default_tiny_store
+from llc.samplers.base import default_tiny_store, prepare_diag_targets
 from llc.samplers.adapters import run_sgld_chain, run_hmc_chain, run_mclmc_chain
 from llc.diagnostics import (
-    llc_mean_and_se_from_histories, llc_ci_from_histories, plot_diagnostics, 
+    llc_mean_and_se_from_histories, llc_ci_from_histories, plot_diagnostics,
     create_summary_dataframe, ESS_METHOD
 )
 from llc.artifacts import (
     create_run_directory, save_config, save_idata_L, save_idata_theta,
-    save_metrics, save_summary_csv, create_manifest, generate_gallery_html, save_plot
+    save_metrics, save_summary_csv, create_manifest, generate_gallery_html, save_plot, save_L0
 )
 from llc.models import (
     infer_widths, act_fn, fan_in_init, init_mlp_params, mlp_forward, count_params
@@ -47,27 +47,10 @@ from llc.runners import (
     run_sgld_online, run_hmc_online_with_adaptation, run_mclmc_online, run_sampler
 )
 from llc.config import Config, TEST_CFG, CFG
+from llc.experiments import train_erm, sweep_space, build_sweep_worklist, run_experiment, run_sweep
 
-# Simple utility function to save L0 value
-def save_L0(run_dir: str, L0: float) -> str:
-    """Save L0 value for running LLC reconstruction"""
-    from pathlib import Path
-    path = Path(run_dir) / "L0.txt"
-    path.write_text(f"{L0:.10f}")
-    return str(path)
 
 plt.switch_backend("Agg")  # Ensure headless backend even if pyplot was already imported
-
-
-# ----------------------------
-# Config
-# ----------------------------
-
-
-# ----------------------------
-# Timing and work counters
-# ----------------------------
-@dataclass
 
 
 
@@ -85,9 +68,6 @@ def get_accept(info):
     return float(getattr(acc, "rate", np.nan)) if acc is not None else np.nan
 
 
-# ----------------------------
-# Work-Normalized Variance utilities
-# ----------------------------
 
 
 def work_normalized_variance(se, time_seconds: float, grad_work: int):
@@ -98,39 +78,6 @@ def work_normalized_variance(se, time_seconds: float, grad_work: int):
     )
 
 
-# ----------------------------
-# Helper: Infer hidden size from target params
-# ----------------------------
-
-
-
-
-# ----------------------------
-# Dtype helper
-# ----------------------------
-
-
-# ----------------------------
-# ERM training to find empirical minimizer
-# ----------------------------
-def train_erm(w_init_pytree, cfg: Config, X, Y, steps=2000, lr=1e-2):
-    """Train to empirical risk minimizer using new flexible architecture"""
-    theta, unravel = ravel_pytree(w_init_pytree)
-    loss_full, _ = make_loss_fns(unravel, cfg, X, Y)
-    opt = optax.adam(lr)
-    opt_state = opt.init(theta)
-
-    @jit
-    def step(theta, opt_state):
-        loss, g = value_and_grad(loss_full)(theta)
-        updates, opt_state = opt.update(g, opt_state, theta)
-        theta = optax.apply_updates(theta, updates)
-        return theta, opt_state, loss
-
-    for _ in range(steps):
-        theta, opt_state, _ = step(theta, opt_state)
-
-    return theta, unravel  # θ⋆, unravel tied to θ⋆
 
 
 # Legacy ERM training for backward compatibility
@@ -153,42 +100,6 @@ def train_to_erm(w_init, X, Y, steps=2000, lr=1e-2):
     return theta, unravel  # θ⋆ and unravel that matches θ⋆
 
 
-# ----------------------------
-# Flexible MLP with arbitrary depth and activations
-# ----------------------------
-
-
-# ----------------------------
-# Flexible data generation
-# ----------------------------
-
-
-# ----------------------------
-# Loss / likelihood factory
-# ----------------------------
-
-
-# ----------------------------
-# Sampler factory
-# ----------------------------
-# ----------------------------
-# Online mean/variance tracking (Welford)
-# ----------------------------
-class RunningMeanVar:
-    def __init__(self):
-        self.n = 0
-        self.mean = 0.0
-        self.M2 = 0.0
-
-    def update(self, x):
-        self.n += 1
-        delta = x - self.mean
-        self.mean += delta / self.n
-        self.M2 += delta * (x - self.mean)
-
-    def value(self):
-        var = self.M2 / (self.n - 1) if self.n > 1 else jnp.nan
-        return self.mean, var, self.n
 
 
 
@@ -211,333 +122,27 @@ def scalar_chain_diagnostics(series_per_chain, name="L"):
     return dict(ess=ess, rhat=rhat)
 
 
-def select_diag_dims(dim, k, seed):
-    """Select k random dimensions from d for subset diagnostics"""
-    k = min(k, dim)
-    rng = np.random.default_rng(seed)
-    return np.sort(rng.choice(dim, size=k, replace=False)).astype(int)
-
-
-def make_projection_matrix(dim, k, seed):
-    """Create k random unit vectors for projection diagnostics"""
-    k = min(k, dim)
-    rng = np.random.default_rng(seed)
-    R = rng.standard_normal((k, dim)).astype(np.float32)
-    R /= np.linalg.norm(R, axis=1, keepdims=True) + 1e-8
-    return R  # (k, d)
-
-
-def prepare_diag_targets(dim, cfg):
-    """Prepare diagnostic targets based on config"""
-    if cfg.diag_mode == "subset":
-        return dict(diag_dims=select_diag_dims(dim, cfg.diag_k, cfg.diag_seed))
-    elif cfg.diag_mode == "proj":
-        return dict(Rproj=make_projection_matrix(dim, cfg.diag_k, cfg.diag_seed))
-    return {}  # none
 
 
 # ----------------------------
-# Log posterior & score (tempered + localized)
-# log pi(w) = - n * beta * L_n(w) - (gamma/2)||w - w0||^2
-# ----------------------------
-# ----------------------------
-# Updated log posterior & score factory
-# ----------------------------
-
-
-# ----------------------------
-# SGLD chains (BlackJAX) - Online memory-efficient version
-# ----------------------------
-
-
-# ----------------------------
-# HMC chains (BlackJAX) - Online memory-efficient version
-# ----------------------------
-def run_hmc_online_with_adaptation(
-    key,
-    init_thetas,
-    logpost_and_grad,
-    num_integration_steps,
-    warmup,
-    draws,
-    thin,
-    eval_every,
-    Ln_full64,
-    use_tqdm=True,
-    progress_update_every=50,
-    stats: RunStats | None = None,
-    diag_dims=None,
-    Rproj=None,
-):
-    chains = init_thetas.shape[0]
-    kept_all, means, vars_, ns, accs, L_histories = [], [], [], [], [], []
-
-    def tiny_store(vec: np.ndarray):
-        return default_tiny_store(vec, diag_dims, Rproj)
-    for c in range(chains):
-        ck = jax.random.fold_in(key, c)
-
-        # Time the sampling
-        t0 = time.time()
-        # Tracking grad work: bump by (L+1) per draw
-        def bump_grads(g):
-            if stats:
-                stats.n_hmc_leapfrog_grads += int(g)
-
-        res = run_hmc_chain(
-            rng_key=ck,
-            init_theta=init_thetas[c],
-            logpost_and_grad=logpost_and_grad,
-            draws=draws,
-            warmup=warmup,
-            L=num_integration_steps,
-            eval_every=eval_every,
-            thin=thin,
-            Ln_eval_f64=Ln_full64,
-            tiny_store_fn=tiny_store,
-            use_tqdm=use_tqdm,
-            progress_label=f"HMC(c{c})",
-            progress_update_every=progress_update_every,
-            work_bump=(bump_grads if stats else None),
-        )
-        # Accumulate sampling time (subtract eval time)
-        elapsed = time.time() - t0
-        if stats and hasattr(res, 'eval_time_seconds'):
-            stats.t_hmc_sampling += max(0.0, elapsed - res.eval_time_seconds)
-
-        kept_all.append(res.kept)
-        means.append(res.mean_L)
-        vars_.append(res.var_L)
-        ns.append(res.n_L)
-        L_histories.append(res.L_hist)
-        if "accept" in res.extras:
-            accs.append(np.asarray(res.extras["accept"]))
-        else:
-            accs.append(np.asarray([]))
-        if stats:
-            stats.n_hmc_full_loss += int(res.n_L)
-
-    samples_thin = stack_thinned(kept_all)
-    return samples_thin, np.array(means), np.array(vars_), np.array(ns), accs, L_histories
-
-
-# ----------------------------
-# MCLMC chains (BlackJAX) - Online memory-efficient version
-# ----------------------------
-def run_mclmc_online(
-    key,
-    init_theta,  # (chains, dim) f64
-    logdensity_fn,  # jitted f64 fn from make_logdensity_for_mclmc
-    draws: int,
-    eval_every: int,
-    thin: int,
-    Ln_full64,  # jitted f64 loss for LLC evaluation
-    diag_dims=None,
-    Rproj=None,  # tiny θ diagnostics (subset/proj/none)
-    tuner_steps: int = 2000,
-    diagonal_preconditioning: bool = False,
-    desired_energy_var: float = 5e-4,
-    integrator_name: str = "isokinetic_mclachlan",
-    use_tqdm: bool = True,
-    progress_update_every: int = 50,
-    stats: RunStats | None = None,
-):
-    chains = init_theta.shape[0]
-    kept_all, means, vars_, ns, L_histories, E_deltas = [], [], [], [], [], []
-
-    def tiny_store(vec: np.ndarray):
-        return default_tiny_store(vec, diag_dims, Rproj)
-
-    for c in range(chains):
-        ck = jax.random.fold_in(key, c)
-
-        # Time the sampling
-        t0 = time.time()
-        
-        def bump_work(g):
-            if stats:
-                stats.n_mclmc_steps += int(g)
-
-        res = run_mclmc_chain(
-            rng_key=ck,
-            init_theta=init_theta[c],
-            logdensity_fn=logdensity_fn,
-            draws=draws,
-            eval_every=eval_every,
-            thin=thin,
-            Ln_eval_f64=Ln_full64,
-            tiny_store_fn=tiny_store,
-            tuner_steps=tuner_steps,
-            diagonal_preconditioning=diagonal_preconditioning,
-            desired_energy_var=desired_energy_var,
-            integrator_name=integrator_name,
-            use_tqdm=use_tqdm,
-            progress_label=f"MCLMC(c{c})",
-            progress_update_every=progress_update_every,
-            work_bump=(bump_work if stats else None),
-        )
-        # Accumulate sampling time (subtract eval time)  
-        elapsed = time.time() - t0
-        if stats and hasattr(res, 'eval_time_seconds'):
-            stats.t_mclmc_sampling += max(0.0, elapsed - res.eval_time_seconds)
-            
-        kept_all.append(res.kept)
-        means.append(res.mean_L)
-        vars_.append(res.var_L)
-        ns.append(res.n_L)
-        L_histories.append(res.L_hist)
-        E_deltas.append(np.asarray(res.extras.get("energy", [])))
-        if stats:
-            stats.n_mclmc_full_loss += int(res.n_L)
-
-    samples_thin = stack_thinned(kept_all)
-    return samples_thin, np.array(means), np.array(vars_), np.array(ns), E_deltas, L_histories
-
-
-# ----------------------------
-# Uniform Sampler Registry/Dispatcher
-# ----------------------------
-def run_sampler(
-    cfg,
-    name: str,
-    *,  # "sgld" | "hmc" | "mclmc"
-    init_theta_f32,
-    init_theta_f64,
-    logpost_and_grad_f32,
-    logpost_and_grad_f64,
-    grad_minibatch_f32,
-    Ln_full64,
-    X_f32,
-    Y_f32,
-    theta0_f64,
-    beta,
-    gamma,
-    stats=None,
-):
-    """Uniform interface for running any sampler with consistent inputs/outputs"""
-    dim = init_theta_f64.shape[1]
-    diag_targets = prepare_diag_targets(dim, cfg)
-
-    if name == "sgld":
-        return run_sgld_online(
-            random.PRNGKey(cfg.seed + 10),
-            init_theta_f32,
-            grad_minibatch_f32,
-            X_f32,
-            Y_f32,
-            cfg.n_data,
-            cfg.sgld_step_size,
-            cfg.sgld_steps,
-            cfg.sgld_warmup,
-            cfg.sgld_batch_size,
-            cfg.sgld_eval_every,
-            cfg.sgld_thin,
-            Ln_full64,
-            use_tqdm=cfg.use_tqdm,
-            progress_update_every=cfg.progress_update_every,
-            stats=stats,
-            **diag_targets,
-        )
-    elif name == "hmc":
-        return run_hmc_online_with_adaptation(
-            random.PRNGKey(cfg.seed + 20),
-            init_theta_f64,
-            logpost_and_grad_f64,
-            cfg.hmc_num_integration_steps,
-            cfg.hmc_warmup,
-            cfg.hmc_draws,
-            cfg.hmc_thin,
-            cfg.hmc_eval_every,
-            Ln_full64,
-            use_tqdm=cfg.use_tqdm,
-            progress_update_every=cfg.progress_update_every,
-            stats=stats,
-            **diag_targets,
-        )
-    elif name == "mclmc":
-        # Create logdensity for MCLMC
-        logdensity = make_logdensity_for_mclmc(
-            Ln_full64, theta0_f64, cfg.n_data, beta, gamma
-        )
-        return run_mclmc_online(
-            random.PRNGKey(cfg.seed + 30),
-            init_theta_f64,
-            logdensity,
-            cfg.mclmc_draws,
-            cfg.mclmc_eval_every,
-            cfg.mclmc_thin,
-            Ln_full64,
-            use_tqdm=cfg.use_tqdm,
-            progress_update_every=cfg.progress_update_every,
-            tuner_steps=cfg.mclmc_tune_steps,
-            diagonal_preconditioning=cfg.mclmc_diagonal_preconditioning,
-            desired_energy_var=cfg.mclmc_desired_energy_var,
-            integrator_name=cfg.mclmc_integrator,
-            stats=stats,
-            **diag_targets,
-        )
-    else:
-        raise ValueError(f"Unknown sampler: {name}")
-
-
-# ----------------------------
-
-
-# ----------------------------
-# Plotting and diagnostics
-# ----------------------------
-
-
-
-
-
-
-
-# ----------------------------
-# Plotting helpers
-# ----------------------------
-
-
-
-
-
-
-
-
-# ----------------------------
-# Data Artifact Saving (Analysis-Ready Format)
-# ----------------------------
-
-
-
-
-# ----------------------------
-# Artifact Management
-# ----------------------------
-
-
-
-
-
-# ----------------------------
-# CLI Argument Parsing  
+# CLI Argument Parsing
 # ----------------------------
 def parse_args():
     """Parse command line arguments to override Config defaults"""
     parser = argparse.ArgumentParser(description="Local Learning Coefficient Analysis")
-    
+
     # Sampler selection
     parser.add_argument("--samplers", type=str, default=None,
                        help="Comma-separated list of samplers (sgld,hmc,mclmc)")
-    
+
     # Data parameters
     parser.add_argument("--n-data", type=int, default=None,
                        help="Number of data points")
-    
+
     # Sampling parameters
     parser.add_argument("--chains", type=int, default=None,
                        help="Number of chains to run")
-    
+
     # SGLD parameters
     parser.add_argument("--sgld-steps", type=int, default=None,
                        help="Number of SGLD steps")
@@ -545,33 +150,33 @@ def parse_args():
                        help="SGLD warmup steps")
     parser.add_argument("--sgld-step-size", type=float, default=None,
                        help="SGLD step size")
-    
-    # HMC parameters  
+
+    # HMC parameters
     parser.add_argument("--hmc-draws", type=int, default=None,
                        help="Number of HMC draws")
     parser.add_argument("--hmc-warmup", type=int, default=None,
                        help="HMC warmup steps")
     parser.add_argument("--hmc-steps", type=int, default=None,
                        help="HMC integration steps")
-    
+
     # MCLMC parameters
     parser.add_argument("--mclmc-draws", type=int, default=None,
                        help="Number of MCLMC draws")
-    
+
     # Output control
     parser.add_argument("--save-plots", action="store_true", default=None,
                        help="Save diagnostic plots")
     parser.add_argument("--no-save-plots", action="store_true", default=None,
                        help="Don't save diagnostic plots")
-    
+
     # Presets
     parser.add_argument("--preset", choices=["quick", "full"], default=None,
                        help="Use quick or full preset")
-    
+
     # Model parameters
     parser.add_argument("--target-params", type=int, default=None,
                        help="Target parameter count for model")
-    
+
     return parser.parse_args()
 
 
@@ -603,14 +208,14 @@ def apply_preset(cfg: Config, preset: str) -> Config:
 def override_config(cfg: Config, args) -> Config:
     """Override config with command line arguments"""
     overrides = {}
-    
+
     # Handle samplers list
     if args.samplers:
         samplers = [s.strip() for s in args.samplers.split(',')]
         # For now, just set the primary sampler to the first one
         if samplers:
             overrides['sampler'] = samplers[0]
-    
+
     # Simple parameter overrides
     if args.n_data is not None:
         overrides['n_data'] = args.n_data
@@ -632,13 +237,13 @@ def override_config(cfg: Config, args) -> Config:
         overrides['mclmc_draws'] = args.mclmc_draws
     if args.target_params is not None:
         overrides['target_params'] = args.target_params
-    
+
     # Handle save plots
     if args.save_plots:
         overrides['save_plots'] = True
     elif args.no_save_plots:
         overrides['save_plots'] = False
-    
+
     return replace(cfg, **overrides)
 
 
@@ -771,11 +376,11 @@ def main(cfg: Config = CFG):
             k_hmc,
             init_thetas_hmc,
             logpost_and_grad_f64,
-            cfg.hmc_num_integration_steps,
-            cfg.hmc_warmup,
             cfg.hmc_draws,
-            cfg.hmc_thin,
+            cfg.hmc_warmup,
+            cfg.hmc_num_integration_steps,
             cfg.hmc_eval_every,
+            cfg.hmc_thin,
             Ln_full64,
             use_tqdm=cfg.use_tqdm,
             progress_update_every=cfg.progress_update_every,
@@ -962,23 +567,45 @@ def main(cfg: Config = CFG):
     saved_files = []
     if cfg.diag_mode != "none":
         print("\n=== Generating Diagnostic Plots ===")
-        saved_files = plot_diagnostics(
-            sgld_samples_thin,
-            Ln_histories_sgld,
-            hmc_samples_thin,
-            Ln_histories_hmc,
-            accs_hmc,
-            cfg.n_data,
-            beta,
-            L0,
-            cfg,
-            mclmc_samples_thin,
-            Ln_histories_mclmc,
-            energy_deltas_mclmc,
-            max_theta_dims=cfg.max_theta_plot_dims,
-            save_prefix=cfg.save_plots_prefix,
-            save_dir=run_dir if cfg.save_plots else None,
-        )
+
+        # Call single-sampler plot_diagnostics for each sampler
+        if sgld_samples_thin.size > 0:
+            plot_diagnostics(
+                run_dir=run_dir,
+                sampler_name="sgld",
+                Ln_histories=Ln_histories_sgld,
+                samples_thin=sgld_samples_thin,
+                n=cfg.n_data,
+                beta=beta,
+                L0=L0,
+                save_plots=cfg.save_plots
+            )
+
+        if hmc_samples_thin.size > 0:
+            plot_diagnostics(
+                run_dir=run_dir,
+                sampler_name="hmc",
+                Ln_histories=Ln_histories_hmc,
+                samples_thin=hmc_samples_thin,
+                acceptance_rates=accs_hmc,
+                n=cfg.n_data,
+                beta=beta,
+                L0=L0,
+                save_plots=cfg.save_plots
+            )
+
+        if mclmc_samples_thin.size > 0:
+            plot_diagnostics(
+                run_dir=run_dir,
+                sampler_name="mclmc",
+                Ln_histories=Ln_histories_mclmc,
+                samples_thin=mclmc_samples_thin,
+                energy_deltas=energy_deltas_mclmc,
+                n=cfg.n_data,
+                beta=beta,
+                L0=L0,
+                save_plots=cfg.save_plots
+            )
 
     # Save run manifest and README snippet
     # Save data artifacts if enabled
@@ -1025,7 +652,7 @@ def main(cfg: Config = CFG):
             "mclmc_n_steps": int(stats.n_mclmc_steps),
             "mclmc_n_full_loss": int(stats.n_mclmc_full_loss),
         }
-        
+
         # Save all metrics
         save_metrics(run_dir, all_metrics)
 
@@ -1053,194 +680,6 @@ def main(cfg: Config = CFG):
 # ----------------------------
 # Experiment runner for parameter sweeps
 # ----------------------------
-def sweep_space():
-    """Define experiment sweep space"""
-    return {
-        "base": Config(
-            in_dim=32,
-            out_dim=1,
-            n_data=5000,
-            sgld_steps=2000,
-            sgld_warmup=500,
-            hmc_draws=500,
-            hmc_warmup=200,
-        ),
-        "sweeps": [
-            # Architecture sweeps
-            {"name": "depth", "param": "depth", "values": [1, 2, 3, 4]},
-            {"name": "width", "param": "hidden", "values": [50, 100, 200, 400]},
-            {
-                "name": "activation",
-                "param": "activation",
-                "values": ["relu", "tanh", "gelu"],
-            },
-            # Data sweeps
-            {
-                "name": "x_dist",
-                "param": "x_dist",
-                "values": ["gauss_iso", "gauss_aniso", "mixture", "lowdim_manifold"],
-            },
-            {
-                "name": "noise",
-                "param": "noise_model",
-                "values": ["gauss", "hetero", "student_t"],
-            },
-            # Loss sweeps
-            {"name": "loss", "param": "loss", "values": ["mse", "t_regression"]},
-        ],
-    }
-
-
-def run_sweep(sweep_config, n_seeds=3):
-    """Run experiment sweep"""
-
-    base = sweep_config["base"]
-    results = []
-
-    for sweep in sweep_config["sweeps"]:
-        name = sweep["name"]
-        param = sweep["param"]
-        values = sweep["values"]
-
-        print(f"\n=== Sweeping {name} ===")
-        for val in values:
-            print(f"\n{param} = {val}")
-
-            llc_sgld_seeds = []
-            llc_hmc_seeds = []
-
-            for seed in range(n_seeds):
-                # Create config with swept parameter
-                cfg = replace(base, **{param: val, "seed": seed})
-
-                # Run experiment
-                try:
-                    llc_sgld, llc_hmc = run_experiment(cfg, verbose=False)
-                    llc_sgld_seeds.append(llc_sgld)
-                    llc_hmc_seeds.append(llc_hmc)
-                except Exception as e:
-                    print(f"  Seed {seed} failed: {e}")
-                    continue
-
-            if llc_sgld_seeds:
-                result = {
-                    "sweep": name,
-                    "param": param,
-                    "value": val,
-                    "llc_sgld_mean": np.mean(llc_sgld_seeds),
-                    "llc_sgld_std": np.std(llc_sgld_seeds),
-                    "llc_hmc_mean": np.mean(llc_hmc_seeds),
-                    "llc_hmc_std": np.std(llc_hmc_seeds),
-                    "n_seeds": len(llc_sgld_seeds),
-                }
-                results.append(result)
-                print(
-                    f"  LLC: SGLD={result['llc_sgld_mean']:.3f}±{result['llc_sgld_std']:.3f}, "
-                    f"HMC={result['llc_hmc_mean']:.3f}±{result['llc_hmc_std']:.3f}"
-                )
-
-    return pd.DataFrame(results)
-
-
-def build_sweep_worklist(sweep_config, n_seeds=3):
-    """Build worklist of configs for parallel execution"""
-    base = sweep_config["base"]
-    work = []
-    for sweep in sweep_config["sweeps"]:
-        param, values = sweep["param"], sweep["values"]
-        for val in values:
-            for seed in range(n_seeds):
-                cfg = replace(base, **{param: val, "seed": seed})
-                # emit as dict for cross-process pickling safety
-                work.append((sweep["name"], param, val, seed, cfg))
-    return work
-
-
-def run_experiment(cfg: Config, verbose=True):
-    """Run single experiment and return LLCs"""
-    key = random.PRNGKey(cfg.seed)
-
-    # Generate data
-    X, Y, _, _ = make_dataset(key, cfg)
-
-    # Initialize network
-    key, subkey = random.split(key)
-    widths = cfg.widths or infer_widths(
-        cfg.in_dim, cfg.out_dim, cfg.depth, cfg.target_params, fallback_width=cfg.hidden
-    )
-    w0 = init_mlp_params(
-        subkey, cfg.in_dim, widths, cfg.out_dim, cfg.activation, cfg.bias, cfg.init
-    )
-
-    # Train ERM
-    theta_star, unravel = train_erm(w0, cfg, X, Y)
-
-    # Setup sampling
-    dim = theta_star.size
-    beta, gamma = compute_beta_gamma(cfg, dim)
-
-    # Create loss functions (default dtype for training)
-    loss_full, loss_minibatch = make_loss_fns(unravel, cfg, X, Y)
-
-    # Create f64 loss functions for consistent LLC evaluation
-    X64, Y64 = X.astype(jnp.float64), Y.astype(jnp.float64)
-    params64 = jax.tree_util.tree_map(
-        lambda a: a.astype(jnp.float64), unravel(theta_star)
-    )
-    theta_star64, unravel64 = ravel_pytree(params64)
-    loss_full64, loss_minibatch64 = make_loss_fns(unravel64, cfg, X64, Y64)
-    L0 = float(loss_full64(theta_star64))
-    Ln_full64 = jit(loss_full64)
-
-    # Create log posterior (default dtype for sampling efficiency)
-    logpost_grad, grad_minibatch = make_logpost_and_score(
-        loss_full, loss_minibatch, theta_star, cfg.n_data, beta, gamma
-    )
-
-    # Run SGLD
-    key, k_sgld = random.split(key)
-    init_sgld = theta_star + 0.01 * random.normal(k_sgld, (cfg.chains, dim))
-
-    _, _, _, _, Ln_hist_sgld = run_sgld_online(
-        k_sgld,
-        init_sgld,
-        grad_minibatch,
-        X,
-        Y,
-        cfg.n_data,
-        cfg.sgld_step_size,
-        cfg.sgld_steps,
-        cfg.sgld_warmup,
-        cfg.sgld_batch_size,
-        cfg.sgld_eval_every,
-        cfg.sgld_thin,
-        Ln_full64,  # Use f64 for consistent LLC evaluation
-    )
-
-    llc_sgld, _ = llc_ci_from_histories(Ln_hist_sgld, cfg.n_data, beta, L0)
-
-    # Run HMC
-    key, k_hmc = random.split(key)
-    init_hmc = theta_star + 0.01 * random.normal(k_hmc, (cfg.chains, dim))
-
-    _, _, _, _, _, Ln_hist_hmc = run_hmc_online_with_adaptation(
-        k_hmc,
-        init_hmc,
-        logpost_grad,
-        cfg.hmc_num_integration_steps,
-        cfg.hmc_warmup,
-        cfg.hmc_draws,
-        cfg.hmc_thin,
-        cfg.hmc_eval_every,
-        Ln_full64,  # Use f64 for consistent LLC evaluation
-    )
-
-    llc_hmc, _ = llc_ci_from_histories(Ln_hist_hmc, cfg.n_data, beta, L0)
-
-    if verbose:
-        print(f"LLC: SGLD={llc_sgld:.4f}, HMC={llc_hmc:.4f}")
-
-    return llc_sgld, llc_hmc
 
 
 if __name__ == "__main__":
@@ -1248,20 +687,20 @@ if __name__ == "__main__":
     import argparse
     import json
     import pandas as pd
-    
+
     # Create main parser
     parser = argparse.ArgumentParser(description="Local Learning Coefficient Analysis")
     sub = parser.add_subparsers(dest="cmd")
 
     # Single run (default) - inherit from existing CLI
     single_parser = sub.add_parser("run", help="Run single experiment (default)", add_help=False)
-    
+
     # Sweep mode with parallel backends
     sweep_parser = sub.add_parser("sweep", help="Run parameter sweep (optionally parallel)")
     sweep_parser.add_argument("--backend", choices=["local", "submitit", "modal"], default="local")
     sweep_parser.add_argument("--workers", type=int, default=0, help="Local workers (0/1=serial)")
     sweep_parser.add_argument("--n-seeds", type=int, default=2)
-    
+
     # submitit params
     sweep_parser.add_argument("--partition", type=str, default=None)
     sweep_parser.add_argument("--timeout-min", type=int, default=60)
@@ -1271,7 +710,7 @@ if __name__ == "__main__":
     sweep_parser.add_argument("--account", type=str, default=None)
     sweep_parser.add_argument("--qos", type=str, default=None)
     sweep_parser.add_argument("--constraint", type=str, default=None)
-    
+
     # timeout and artifact control
     sweep_parser.add_argument("--timeout-s", type=int, default=None, help="Local executor timeout in seconds")
     sweep_parser.add_argument("--modal-timeout-s", type=int, default=3600, help="Modal timeout in seconds")
@@ -1283,23 +722,23 @@ if __name__ == "__main__":
         # Parse command line arguments and run main (existing behavior)
         args = parse_args()
         cfg = CFG  # Start with default config
-        
+
         # Apply preset if specified
         if args.preset:
             cfg = apply_preset(cfg, args.preset)
-            
+
         # Apply command line overrides
         cfg = override_config(cfg, args)
-        
+
         # Run main with configured settings
         main(cfg)
     else:
         args, unknown = parser.parse_known_args()
-        
+
         if args.cmd == "sweep":
             from llc.tasks import run_experiment_task
             from llc.execution import get_executor
-            
+
             sw = sweep_space()
             work = build_sweep_worklist(sw, n_seeds=args.n_seeds)
 
@@ -1311,9 +750,9 @@ if __name__ == "__main__":
                 if args.save_artifacts:
                     cfg_dict["save_artifacts"] = True
                     cfg_dict["artifacts_dir"] = args.artifacts_dir
-                    
+
                 items.append({
-                    "cfg": cfg_dict, 
+                    "cfg": cfg_dict,
                     "tag": {"sweep": name, "param": param, "value": val, "seed": seed}
                 })
 
@@ -1329,7 +768,7 @@ if __name__ == "__main__":
                     slurm_additional["qos"] = args.qos
                 if args.constraint:
                     slurm_additional["constraint"] = args.constraint
-                    
+
                 ex = get_executor(
                     "submitit",
                     folder="slurm_logs",
@@ -1347,12 +786,12 @@ if __name__ == "__main__":
                     from modal_app import run_experiment_remote
                 except ImportError:
                     raise RuntimeError("Modal app not available. Ensure modal_app.py is present and modal is installed.")
-                
+
                 # Configure Modal function with timeout
                 modal_options = {}
                 if args.modal_timeout_s:
                     modal_options["timeout"] = args.modal_timeout_s
-                    
+
                 ex = get_executor("modal", remote_fn=run_experiment_remote, options=modal_options)
                 # pass only the cfg dict (modal function signature matches)
                 results = ex.map(None, [it["cfg"] for it in items])
@@ -1364,19 +803,19 @@ if __name__ == "__main__":
             for it, r in zip(items, results):
                 rows.append({
                     "sweep": it["tag"]["sweep"],
-                    "param": it["tag"]["param"], 
+                    "param": it["tag"]["param"],
                     "value": it["tag"]["value"],
                     "seed": it["tag"]["seed"],
                     "llc_sgld": r.get("llc_sgld"),
                     "llc_hmc": r.get("llc_hmc"),
                 })
-            
+
             df = pd.DataFrame(rows)
             df.to_csv("llc_sweep_results.csv", index=False)
             print("\n=== Sweep Results ===")
             print(df.groupby(["sweep","param","value"]).agg({
                 "llc_sgld":["mean","std"],
-                "llc_hmc":["mean","std"], 
+                "llc_hmc":["mean","std"],
                 "seed":"count"
             }))
             print("\nResults saved to llc_sweep_results.csv")
@@ -1384,9 +823,9 @@ if __name__ == "__main__":
             # Single run mode - use existing behavior
             args = parse_args()
             cfg = CFG
-            
+
             if args.preset:
                 cfg = apply_preset(cfg, args.preset)
-                
+
             cfg = override_config(cfg, args)
             main(cfg)

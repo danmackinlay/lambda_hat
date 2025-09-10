@@ -9,6 +9,7 @@ dependencies = [
     "blackjax~=1.2.5",
     "marimo>=0.15.2",
     "optax>=0.2.5",
+    "scipy>=1.11",
     "tqdm>=4.67.1",
 ]
 

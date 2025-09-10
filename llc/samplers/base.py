@@ -190,6 +190,31 @@ def drive_chain(
         eval_time_seconds=float(eval_time),
     )
 
+def select_diag_dims(dim, k, seed):
+    """Select k random dimensions from d for subset diagnostics"""
+    k = min(k, dim)
+    rng = np.random.default_rng(seed)
+    return np.sort(rng.choice(dim, size=k, replace=False)).astype(int)
+
+
+def make_projection_matrix(dim, k, seed):
+    """Create k random unit vectors for projection diagnostics"""
+    k = min(k, dim)
+    rng = np.random.default_rng(seed)
+    R = rng.standard_normal((k, dim)).astype(np.float32)
+    R /= np.linalg.norm(R, axis=1, keepdims=True) + 1e-8
+    return R  # (k, d)
+
+
+def prepare_diag_targets(dim, cfg):
+    """Prepare diagnostic targets based on config"""
+    if cfg.diag_mode == "subset":
+        return dict(diag_dims=select_diag_dims(dim, cfg.diag_k, cfg.diag_seed))
+    elif cfg.diag_mode == "proj":
+        return dict(Rproj=make_projection_matrix(dim, cfg.diag_k, cfg.diag_seed))
+    return {}  # none
+
+
 def make_tiny_store(dim: int, config) -> tuple[Callable, Any]:
     """
     Create a function to store subset or projection of parameters.
