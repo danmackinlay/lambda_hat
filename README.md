@@ -102,13 +102,13 @@ Each configuration produces a deterministic run ID (hash of config + code versio
 
 ```bash
 # Use caching (default behavior)
-python main.py run --preset=quick
+uv run python main.py run --preset=quick
 
 # Skip cache and force re-run  
-python main.py run --preset=quick --no-skip
+uv run python main.py run --preset=quick --no-skip
 
 # Check cache behavior in sweep mode
-python main.py sweep --backend=local  # Caching enabled by default
+uv run python main.py sweep --backend=local  # Caching enabled by default
 ```
 
 **How it works:**
@@ -153,20 +153,17 @@ Additional sampler-specific plots:
 
 ### Configuration Options
 
-Enable visualization saving in your config:
+Control visualization and artifact saving via CLI flags:
 
-```python
-from main import Config, main
+```bash
+# Save artifacts with plots (default behavior)
+uv run python main.py run --preset=quick
 
-cfg = Config(
-    save_plots=True,              # Save all diagnostic plots
-    save_manifest=True,           # Generate run manifest
-    save_readme_snippet=True,     # Create documentation snippet
-    artifacts_dir="artifacts",    # Base directory (default)
-    auto_create_run_dir=True,     # Create timestamped subdirs
-)
+# Run without saving artifacts (faster)
+uv run python main.py run --preset=quick --no-artifacts
 
-main(cfg)
+# Force re-run even if cached results exist
+uv run python main.py run --preset=quick --no-skip
 ```
 
 ### Makefile Targets
@@ -228,17 +225,16 @@ uv run python main.py sweep --backend=local --workers=4
 **SLURM cluster:**
 ```bash
 uv run python main.py sweep --backend=submitit \
-  --partition=gpu --gpus=1 --timeout-min=60 \
-  --save-artifacts --artifacts-dir=/shared/llc_results
+  --partition=gpu --gpus=1 --timeout-min=60
 ```
 
 **Modal serverless:**
 
 ```bash
-uv run python main.py sweep --backend=modal --save-artifacts
+uv run python main.py sweep --backend=modal
 ```
 
-Use `--save-artifacts` to generate full diagnostic plots and data. Artifacts are saved locally (local backend), to shared storage (SLURM), or Modal volumes (modal backend).
+Artifacts are saved by default and include full diagnostic plots and data. They are saved locally (local backend), to shared storage (SLURM), or Modal volumes (modal backend). Use `--no-artifacts` to disable saving.
 
 ### Modal (deployed app) workflow
 
@@ -271,7 +267,7 @@ def run_experiment_remote(cfg_dict: dict) -> dict:
 **Run a sweep (client)**
 
 ```bash
-uv run python main.py sweep --backend=modal --save-artifacts
+uv run python main.py sweep --backend=modal
 ```
 
 The client looks up the deployed function by name and calls `.map(...)`. Artifacts are saved to the **Modal volume** mounted at `/artifacts` in the app.
