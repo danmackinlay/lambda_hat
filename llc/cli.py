@@ -89,6 +89,28 @@ def add_run_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--sgld-batch-size", type=int, help="SGLD minibatch size")
     parser.add_argument("--sgld-eval-every", type=int, help="SGLD evaluation frequency")
     parser.add_argument("--sgld-thin", type=int, help="SGLD thinning factor")
+    # SGLD preconditioning
+    parser.add_argument(
+        "--sgld-precond", 
+        choices=["none", "rmsprop", "adam"],
+        help="Diagonal preconditioning for SGLD (default: none)"
+    )
+    parser.add_argument("--sgld-beta1", type=float, help="Adam beta1 (first moment)")
+    parser.add_argument("--sgld-beta2", type=float, help="RMSProp/Adam beta2 (second moment)")
+    parser.add_argument("--sgld-eps", type=float, help="Preconditioner epsilon")
+    parser.add_argument(
+        "--sgld-bias-correction", 
+        dest="sgld_bias_correction",
+        action="store_true", 
+        help="Enable Adam bias correction"
+    )
+    parser.add_argument(
+        "--no-sgld-bias-correction", 
+        dest="sgld_bias_correction",
+        action="store_false", 
+        help="Disable Adam bias correction"
+    )
+    parser.set_defaults(sgld_bias_correction=None)
     
     # HMC parameters  
     parser.add_argument("--hmc-draws", type=int, help="HMC total draws")
@@ -184,6 +206,18 @@ def override_config(cfg: Config, args: argparse.Namespace) -> Config:
         value = getattr(args, attr.replace("-", "_"), None)
         if value is not None:
             overrides[attr] = value
+    
+    # Preconditioning mappings (separate so None keeps defaults)
+    if getattr(args, "sgld_precond", None) is not None:
+        overrides["sgld_precond"] = args.sgld_precond
+    if getattr(args, "sgld_beta1", None) is not None:
+        overrides["sgld_beta1"] = args.sgld_beta1
+    if getattr(args, "sgld_beta2", None) is not None:
+        overrides["sgld_beta2"] = args.sgld_beta2
+    if getattr(args, "sgld_eps", None) is not None:
+        overrides["sgld_eps"] = args.sgld_eps
+    if getattr(args, "sgld_bias_correction", None) is not None:
+        overrides["sgld_bias_correction"] = args.sgld_bias_correction
     
     # Special handling for width -> use as uniform width
     if hasattr(args, 'width') and args.width is not None:

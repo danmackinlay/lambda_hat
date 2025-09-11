@@ -67,6 +67,12 @@ class Config:
     sgld_thin: int = 20  # store every k-th draw for diagnostics only
     sgld_eval_every: int = 10  # compute full-data L_n(w) every k steps (for LLC mean)
     sgld_dtype: str = "float32"  # reduce memory
+    # SGLD preconditioning (optional)
+    sgld_precond: Literal["none", "rmsprop", "adam"] = "none"
+    sgld_beta1: float = 0.9  # Adam first-moment EMA
+    sgld_beta2: float = 0.999  # RMSProp/Adam second-moment EMA
+    sgld_eps: float = 1e-8  # numerical stabilizer in preconditioner
+    sgld_bias_correction: bool = True  # Adam bias correction on/off
 
     # HMC
     hmc_draws: int = 1_000

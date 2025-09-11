@@ -36,29 +36,88 @@ def run_sgld_chain(
     progress_update_every=50,
     # Optional accounting callback: stats.n_sgld_minibatch_grads += 1 per step
     work_bump: Callable | None = None,
+    # NEW: optional preconditioning
+    precond_mode: str = "none",  # "none" | "rmsprop" | "adam"
+    beta1: float = 0.9,  # Adam first moment
+    beta2: float = 0.999,  # RMSProp/Adam second moment
+    eps: float = 1e-8,  # numerical stabilizer
+    bias_correction: bool = True,  # Adam bias correction
 ) -> ChainResult:
-    sgld = blackjax.sgld(grad_logpost_minibatch)
-    step = jax.jit(sgld.step)
+    precond = (precond_mode or "none").lower()
 
-    def step_fn(key: Array, theta: Array):
-        # minibatch indices from key
-        k_noise, k_batch = jax.random.split(key)
-        idx = jax.random.randint(k_batch, (batch_size,), 0, n_data)
-        new_theta = step(k_noise, theta, (X[idx], Y[idx]), step_size)
-        if work_bump:
-            work_bump()  # one minibatch gradient
-        return new_theta  # no info
+    if precond == "none":
+        # Original plain SGLD path (unchanged)
+        sgld = blackjax.sgld(grad_logpost_minibatch)
+        step_plain = jax.jit(sgld.step)
+
+        def step_fn(key: Array, theta: Array):
+            # minibatch indices from key
+            k_noise, k_batch = jax.random.split(key)
+            idx = jax.random.randint(k_batch, (batch_size,), 0, n_data)
+            new_theta = step_plain(k_noise, theta, (X[idx], Y[idx]), step_size)
+            if work_bump:
+                work_bump()  # one minibatch gradient
+            return new_theta  # no info
+
+        init_state = init_theta
+        position_fn = lambda s: s
+        step_returns_info = False
+
+    else:
+        # Preconditioned SGLD: RMSProp-style ("rmsprop") or Adam-style ("adam")
+        # State = (theta, m, v, t) where m is first moment (adam), v is second moment EMA
+        @jax.jit
+        def precond_step(key: Array, state):
+            theta, m, v, t = state
+            k_noise, k_batch = jax.random.split(key)
+            idx = jax.random.randint(k_batch, (batch_size,), 0, n_data)
+            g = grad_logpost_minibatch(theta, (X[idx], Y[idx]))  # ascent on log π
+
+            if precond == "rmsprop":
+                m_new = m  # unused
+                v_new = beta2 * v + (1.0 - beta2) * (g * g)
+                v_hat = v_new  # no bias correction
+                inv_sqrt = jax.lax.rsqrt(v_hat + eps)  # 1/sqrt(v_hat + eps)
+                drift = 0.5 * step_size * (g * inv_sqrt)
+            else:  # "adam"
+                m_new = beta1 * m + (1.0 - beta1) * g
+                v_new = beta2 * v + (1.0 - beta2) * (g * g)
+                if bias_correction:
+                    t1 = t + 1.0
+                    m_hat = m_new / (1.0 - beta1**t1)
+                    v_hat = v_new / (1.0 - beta2**t1)
+                else:
+                    m_hat, v_hat = m_new, v_new
+                inv_sqrt = jax.lax.rsqrt(v_hat + eps)
+                drift = 0.5 * step_size * (m_hat * inv_sqrt)
+
+            noise = jax.random.normal(k_noise, theta.shape) * jnp.sqrt(step_size) * inv_sqrt
+            theta_new = theta + drift + noise
+            return (theta_new, m_new, v_new, t + 1.0)
+
+        # Wrap for drive_chain
+        def step_fn(key: Array, state):
+            new_state = precond_step(key, state)
+            if work_bump:
+                work_bump()  # one minibatch gradient per step
+            return new_state
+
+        # Initialize state for this chain
+        zeros = jnp.zeros_like(init_theta)
+        init_state = (init_theta, zeros, zeros, jnp.array(0.0, dtype=init_theta.dtype))
+        position_fn = lambda s: s[0]  # extract theta
+        step_returns_info = False
 
     return drive_chain(
         rng_key=rng_key,
-        init_state=init_theta,
+        init_state=init_state,
         step_fn=step_fn,
-        step_returns_info=False,
+        step_returns_info=step_returns_info,
         n_steps=n_steps,
         warmup=warmup,
         eval_every=eval_every,
         thin=thin,
-        position_fn=lambda s: s,
+        position_fn=position_fn,
         Ln_eval_f64=Ln_eval_f64,
         tiny_store_fn=tiny_store_fn,
         use_tqdm=use_tqdm,

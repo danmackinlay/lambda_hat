@@ -199,6 +199,12 @@ def run_one(
         progress_update_every=cfg.progress_update_every,
         stats=stats,
         **diag_targets,
+        # NEW: optional preconditioning (works even if cfg lacks these fields)
+        precond_mode=getattr(cfg, "sgld_precond", "none"),
+        beta1=getattr(cfg, "sgld_beta1", 0.9),
+        beta2=getattr(cfg, "sgld_beta2", 0.999),
+        eps=getattr(cfg, "sgld_eps", 1e-8),
+        bias_correction=getattr(cfg, "sgld_bias_correction", True),
     )
 
     # Compute LLC with ESS-based uncertainty

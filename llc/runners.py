@@ -87,6 +87,12 @@ def run_sgld_online(
     stats: RunStats | None = None,
     diag_dims=None,
     Rproj=None,
+    # NEW: preconditioning options (threaded through to adapter)
+    precond_mode: str = "none",
+    beta1: float = 0.9,
+    beta2: float = 0.999,
+    eps: float = 1e-8,
+    bias_correction: bool = True,
 ):
     """Run SGLD chains with online LLC evaluation"""
     chains = init_thetas.shape[0]
@@ -129,6 +135,11 @@ def run_sgld_online(
             progress_label=f"SGLD(c{c})",
             progress_update_every=progress_update_every,
             work_bump=work_bump,
+            precond_mode=precond_mode,
+            beta1=beta1,
+            beta2=beta2,
+            eps=eps,
+            bias_correction=bias_correction,
         )
         # Accumulate sampling time (subtract eval time)
         elapsed = time.time() - t0
