@@ -75,7 +75,7 @@ def add_run_arguments(parser: argparse.ArgumentParser) -> None:
     # Data parameters
     parser.add_argument("--n-data", type=int, help="Number of data points")
     parser.add_argument("--seed", type=int, help="Random seed")
-    parser.add_argument("--loss", choices=["mse", "ce"], help="Loss function")
+    parser.add_argument("--loss", choices=["mse", "t_regression"], help="Loss function")
     
     # Model architecture
     parser.add_argument("--depth", type=int, help="Number of hidden layers")

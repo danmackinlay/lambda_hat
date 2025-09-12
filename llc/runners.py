@@ -387,14 +387,13 @@ def run_sgld_online_batched(
     stats=None,
 ):
     """Batched SGLD runner using vmap + lax.scan for speed"""
-    def tiny_store(vec_batch):
-        # vec_batch is (C, d), apply tiny store to each chain
-        if diag_dims is not None:
-            return vec_batch[:, diag_dims]  # (C, k)
-        elif Rproj is not None:
-            return jax.vmap(lambda v: Rproj @ v)(vec_batch)  # (C, k)
-        else:
-            return default_tiny_store(vec_batch)
+    tiny_store = None
+    if diag_dims is not None:
+        def tiny_store(vec_batch):
+            return vec_batch[:, diag_dims]
+    elif Rproj is not None:
+        def tiny_store(vec_batch):
+            return jax.vmap(lambda v: Rproj @ v)(vec_batch)
 
     result = run_sgld_chains_batched(
         rng_key=key,
@@ -444,13 +443,11 @@ def run_hmc_online_batched(
     stats=None,
 ):
     """Batched HMC runner using vmap + lax.scan for speed"""
-    def tiny_store(vec_batch):
-        if diag_dims is not None:
-            return vec_batch[:, diag_dims]
-        elif Rproj is not None:
-            return jax.vmap(lambda v: Rproj @ v)(vec_batch)
-        else:
-            return default_tiny_store(vec_batch)
+    tiny_store = None
+    if diag_dims is not None:
+        def tiny_store(vec_batch): return vec_batch[:, diag_dims]
+    elif Rproj is not None:
+        def tiny_store(vec_batch): return jax.vmap(lambda v: Rproj @ v)(vec_batch)
 
     result = run_hmc_chains_batched(
         rng_key=key,
@@ -497,13 +494,11 @@ def run_mclmc_online_batched(
     stats=None,
 ):
     """Batched MCLMC runner using vmap + lax.scan for speed"""
-    def tiny_store(vec_batch):
-        if diag_dims is not None:
-            return vec_batch[:, diag_dims]
-        elif Rproj is not None:
-            return jax.vmap(lambda v: Rproj @ v)(vec_batch)
-        else:
-            return default_tiny_store(vec_batch)
+    tiny_store = None
+    if diag_dims is not None:
+        def tiny_store(vec_batch): return vec_batch[:, diag_dims]
+    elif Rproj is not None:
+        def tiny_store(vec_batch): return jax.vmap(lambda v: Rproj @ v)(vec_batch)
 
     result = run_mclmc_chains_batched(
         rng_key=key,

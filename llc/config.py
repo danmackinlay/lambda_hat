@@ -56,7 +56,8 @@ class Config:
     gamma: float = 1.0  # used only if prior_radius None
 
     # Sampling
-    sampler: Literal["sgld", "hmc", "mclmc"] = "sgld"
+    # Choose which samplers to run. Order controls reporting & gallery grouping.
+    samplers: list[str] = ("sgld", "hmc", "mclmc")
     chains: int = 4
     # Optimization: use batched (vmap+scan) chain execution for speed
     use_batched_chains: bool = False

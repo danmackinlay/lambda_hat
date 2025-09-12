@@ -274,8 +274,6 @@ def run_hmc_chain(
     (state, params), _ = wa.run(rng_key, init_theta, num_steps=warmup)
     warmup_time = time.time() - t0_warmup
     invM = params.get("inverse_mass_matrix", jnp.ones_like(init_theta))
-    if invM.ndim == 1:  # promote vector -> diagonal matrix
-        invM = jnp.diag(invM)
     kernel = blackjax.hmc(
         logdensity,
         step_size=params["step_size"],
@@ -362,8 +360,6 @@ def run_hmc_chains_batched(
     (state1, params), _ = wa.run(k_adapt, init_thetas[0], num_steps=warmup_draws)
 
     invM = params.get("inverse_mass_matrix", jnp.ones_like(init_thetas[0]))
-    if invM.ndim == 1:
-        invM = jnp.diag(invM)
 
     # --- 2) Build kernel with tuned params & broadcast initial states ---
     step_kernel = blackjax.hmc(

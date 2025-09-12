@@ -49,6 +49,8 @@ from .artifacts import (
     generate_gallery_html,
 )
 from .experiments import train_erm
+from datetime import datetime
+from pathlib import Path
 
 
 @dataclass
@@ -177,203 +179,206 @@ def run_one(
     histories = {}
     
     # ===== SGLD (Online) =====
-    logger.info("Running SGLD (BlackJAX, online)")
-    k_sgld = random.split(key, 1)[0]
-    # simple overdispersed inits around w0
-    init_thetas_sgld = theta0_f32 + 0.01 * random.normal(
-        k_sgld, (cfg.chains, dim)
-    ).astype(jnp.float32)
+    if "sgld" in getattr(cfg, "samplers", ["sgld"]):
+        logger.info("Running SGLD (BlackJAX, online)")
+        k_sgld = random.split(key, 1)[0]
+        # simple overdispersed inits around w0
+        init_thetas_sgld = theta0_f32 + 0.01 * random.normal(
+            k_sgld, (cfg.chains, dim)
+        ).astype(jnp.float32)
 
-    # Choose batched or sequential SGLD execution
-    sgld_runner = run_sgld_online_batched if cfg.use_batched_chains else run_sgld_online
-    sgld_samples_thin, sgld_Es, sgld_Vars, sgld_Ns, Ln_histories_sgld = sgld_runner(
-        k_sgld,
-        init_thetas_sgld,
-        grad_logpost_minibatch_f32,
-        X_f32,
-        Y_f32,
-        cfg.n_data,
-        cfg.sgld_step_size,
-        cfg.sgld_steps,
-        cfg.sgld_warmup,
-        cfg.sgld_batch_size,
-        cfg.sgld_eval_every,
-        cfg.sgld_thin,
-        Ln_full64,
-        use_tqdm=cfg.use_tqdm,
-        progress_update_every=cfg.progress_update_every,
-        stats=stats,
-        **diag_targets,
-        # NEW: optional preconditioning (works even if cfg lacks these fields)
-        precond_mode=getattr(cfg, "sgld_precond", "none"),
-        beta1=getattr(cfg, "sgld_beta1", 0.9),
-        beta2=getattr(cfg, "sgld_beta2", 0.999),
-        eps=getattr(cfg, "sgld_eps", 1e-8),
-        bias_correction=getattr(cfg, "sgld_bias_correction", True),
-    )
+        # Choose batched or sequential SGLD execution
+        sgld_runner = run_sgld_online_batched if cfg.use_batched_chains else run_sgld_online
+        sgld_samples_thin, sgld_Es, sgld_Vars, sgld_Ns, Ln_histories_sgld = sgld_runner(
+            k_sgld,
+            init_thetas_sgld,
+            grad_logpost_minibatch_f32,
+            X_f32,
+            Y_f32,
+            cfg.n_data,
+            cfg.sgld_step_size,
+            cfg.sgld_steps,
+            cfg.sgld_warmup,
+            cfg.sgld_batch_size,
+            cfg.sgld_eval_every,
+            cfg.sgld_thin,
+            Ln_full64,
+            use_tqdm=cfg.use_tqdm,
+            progress_update_every=cfg.progress_update_every,
+            stats=stats,
+            **diag_targets,
+            # NEW: optional preconditioning (works even if cfg lacks these fields)
+            precond_mode=getattr(cfg, "sgld_precond", "none"),
+            beta1=getattr(cfg, "sgld_beta1", 0.9),
+            beta2=getattr(cfg, "sgld_beta2", 0.999),
+            eps=getattr(cfg, "sgld_eps", 1e-8),
+            bias_correction=getattr(cfg, "sgld_bias_correction", True),
+        )
 
-    # Compute LLC with ESS-based uncertainty
-    llc_sgld_mean, se_sgld, ess_sgld = llc_mean_and_se_from_histories(
-        Ln_histories_sgld, cfg.n_data, beta, L0
-    )
-    print(f"SGLD LLC: {llc_sgld_mean:.4f} ± {se_sgld:.4f} (ESS: {ess_sgld:.1f})")
+        # Compute LLC with ESS-based uncertainty
+        llc_sgld_mean, se_sgld, ess_sgld = llc_mean_and_se_from_histories(
+            Ln_histories_sgld, cfg.n_data, beta, L0
+        )
+        print(f"SGLD LLC: {llc_sgld_mean:.4f} ± {se_sgld:.4f} (ESS: {ess_sgld:.1f})")
 
-    # Store SGLD results
-    all_metrics.update({
-        "sgld_llc_mean": float(llc_sgld_mean),
-        "sgld_llc_se": float(se_sgld),
-        "sgld_ess": float(ess_sgld),
-        "sgld_timing_warmup": float(stats.t_sgld_warmup),
-        "sgld_timing_sampling": float(stats.t_sgld_sampling),
-        "sgld_n_steps": int(stats.n_sgld_minibatch_grads),
-        "sgld_n_full_loss": int(stats.n_sgld_full_loss),
-    })
-    histories["sgld"] = Ln_histories_sgld
+        # Store SGLD results
+        all_metrics.update({
+            "sgld_llc_mean": float(llc_sgld_mean),
+            "sgld_llc_se": float(se_sgld),
+            "sgld_ess": float(ess_sgld),
+            "sgld_timing_warmup": float(stats.t_sgld_warmup),
+            "sgld_timing_sampling": float(stats.t_sgld_sampling),
+            "sgld_n_steps": int(stats.n_sgld_minibatch_grads),
+            "sgld_n_full_loss": int(stats.n_sgld_full_loss),
+        })
+        histories["sgld"] = Ln_histories_sgld
 
     # ===== HMC (Online) =====
-    logger.info("Running HMC (BlackJAX, online)")
-    k_hmc = random.fold_in(key, 123)
-    init_thetas_hmc = theta0_f64 + 0.01 * random.normal(k_hmc, (cfg.chains, dim))
+    if "hmc" in getattr(cfg, "samplers", ["sgld"]):
+        logger.info("Running HMC (BlackJAX, online)")
+        k_hmc = random.fold_in(key, 123)
+        init_thetas_hmc = theta0_f64 + 0.01 * random.normal(k_hmc, (cfg.chains, dim))
 
-    # Choose batched or sequential HMC execution
-    if cfg.use_batched_chains:
-        hmc_samples_thin, hmc_Es, hmc_Vars, hmc_Ns, accs_hmc, Ln_histories_hmc = run_hmc_online_batched(
-            k_hmc,
-            init_thetas_hmc,
-            logpost_and_grad_f64,
-            cfg.hmc_draws,
-            cfg.hmc_warmup,
-            cfg.hmc_num_integration_steps,
-            cfg.hmc_eval_every,
-            cfg.hmc_thin,
-            Ln_full64,
-            **diag_targets,
+        # Choose batched or sequential HMC execution
+        if cfg.use_batched_chains:
+            hmc_samples_thin, hmc_Es, hmc_Vars, hmc_Ns, accs_hmc, Ln_histories_hmc = run_hmc_online_batched(
+                k_hmc,
+                init_thetas_hmc,
+                logpost_and_grad_f64,
+                cfg.hmc_draws,
+                cfg.hmc_warmup,
+                cfg.hmc_num_integration_steps,
+                cfg.hmc_eval_every,
+                cfg.hmc_thin,
+                Ln_full64,
+                **diag_targets,
+            )
+        else:
+            hmc_samples_thin, hmc_Es, hmc_Vars, hmc_Ns, accs_hmc, Ln_histories_hmc = (
+                run_hmc_online_with_adaptation(
+                k_hmc,
+                init_thetas_hmc,
+                logpost_and_grad_f64,
+                cfg.hmc_draws,
+                cfg.hmc_warmup,
+                cfg.hmc_num_integration_steps,
+                cfg.hmc_eval_every,
+                cfg.hmc_thin,
+                Ln_full64,
+                use_tqdm=cfg.use_tqdm,
+                progress_update_every=cfg.progress_update_every,
+                stats=stats,
+                **diag_targets,
+            )
         )
-    else:
-        hmc_samples_thin, hmc_Es, hmc_Vars, hmc_Ns, accs_hmc, Ln_histories_hmc = (
-            run_hmc_online_with_adaptation(
-            k_hmc,
-            init_thetas_hmc,
-            logpost_and_grad_f64,
-            cfg.hmc_draws,
-            cfg.hmc_warmup,
-            cfg.hmc_num_integration_steps,
-            cfg.hmc_eval_every,
-            cfg.hmc_thin,
-            Ln_full64,
-            use_tqdm=cfg.use_tqdm,
-            progress_update_every=cfg.progress_update_every,
-            stats=stats,
-            **diag_targets,
+
+        # Compute LLC with ESS-based uncertainty
+        llc_hmc_mean, se_hmc, ess_hmc = llc_mean_and_se_from_histories(
+            Ln_histories_hmc, cfg.n_data, beta, L0
         )
-    )
+        vals = [np.nanmean(a) for a in accs_hmc if a.size]
+        mean_acc = float(np.nanmean(vals)) if vals else float("nan")
 
-    # Compute LLC with ESS-based uncertainty
-    llc_hmc_mean, se_hmc, ess_hmc = llc_mean_and_se_from_histories(
-        Ln_histories_hmc, cfg.n_data, beta, L0
-    )
-    vals = [np.nanmean(a) for a in accs_hmc if a.size]
-    mean_acc = float(np.nanmean(vals)) if vals else float("nan")
+        print(f"HMC LLC: {llc_hmc_mean:.4f} ± {se_hmc:.4f} (ESS: {ess_hmc:.1f})")
+        print(f"HMC acceptance rate (mean over chains/draws): {mean_acc:.3f}")
 
-    print(f"HMC LLC: {llc_hmc_mean:.4f} ± {se_hmc:.4f} (ESS: {ess_hmc:.1f})")
-    print(f"HMC acceptance rate (mean over chains/draws): {mean_acc:.3f}")
-
-    # Store HMC results
-    all_metrics.update({
-        "hmc_llc_mean": float(llc_hmc_mean),
-        "hmc_llc_se": float(se_hmc),
-        "hmc_ess": float(ess_hmc),
-        "hmc_timing_warmup": float(stats.t_hmc_warmup),
-        "hmc_timing_sampling": float(stats.t_hmc_sampling),
-        "hmc_n_leapfrog_grads": int(stats.n_hmc_leapfrog_grads),
-        "hmc_n_full_loss": int(stats.n_hmc_full_loss),
-        "hmc_mean_acceptance": float(
-            np.nanmean([np.nanmean(a) for a in accs_hmc if a.size])
-        )
-        if any(a.size for a in accs_hmc)
-        else float("nan"),
-    })
-    histories["hmc"] = Ln_histories_hmc
+        # Store HMC results
+        all_metrics.update({
+            "hmc_llc_mean": float(llc_hmc_mean),
+            "hmc_llc_se": float(se_hmc),
+            "hmc_ess": float(ess_hmc),
+            "hmc_timing_warmup": float(stats.t_hmc_warmup),
+            "hmc_timing_sampling": float(stats.t_hmc_sampling),
+            "hmc_n_leapfrog_grads": int(stats.n_hmc_leapfrog_grads),
+            "hmc_n_full_loss": int(stats.n_hmc_full_loss),
+            "hmc_mean_acceptance": float(
+                np.nanmean([np.nanmean(a) for a in accs_hmc if a.size])
+            )
+            if any(a.size for a in accs_hmc)
+            else float("nan"),
+        })
+        histories["hmc"] = Ln_histories_hmc
 
     # ===== MCLMC (Online) =====
-    logger.info("Running MCLMC (BlackJAX, online)")
-    k_mclmc = random.fold_in(key, 456)
-    init_thetas_mclmc = theta0_f64 + 0.01 * random.normal(k_mclmc, (cfg.chains, dim))
+    if "mclmc" in getattr(cfg, "samplers", ["sgld"]):
+        logger.info("Running MCLMC (BlackJAX, online)")
+        k_mclmc = random.fold_in(key, 456)
+        init_thetas_mclmc = theta0_f64 + 0.01 * random.normal(k_mclmc, (cfg.chains, dim))
 
-    # Create logdensity for MCLMC
-    logdensity_mclmc = make_logdensity_for_mclmc(
-        loss_full_f64, theta0_f64, cfg.n_data, beta, gamma
-    )
-
-    if cfg.use_batched_chains:
-        from llc.runners import run_mclmc_online_batched
-        (
-            mclmc_samples_thin,
-            mclmc_Es,
-            mclmc_Vars,
-            mclmc_Ns,
-            energy_deltas_mclmc,
-            Ln_histories_mclmc,
-        ) = run_mclmc_online_batched(
-            k_mclmc,
-            init_thetas_mclmc,
-            logdensity_mclmc,
-            cfg.mclmc_draws,
-            cfg.mclmc_eval_every,
-            cfg.mclmc_thin,
-            Ln_full64,
-            tuner_steps=cfg.mclmc_tune_steps,
-            diagonal_preconditioning=cfg.mclmc_diagonal_preconditioning,
-            desired_energy_var=cfg.mclmc_desired_energy_var,
-            integrator_name=cfg.mclmc_integrator,
-            use_tqdm=cfg.use_tqdm,
-            progress_update_every=cfg.progress_update_every,
-            stats=stats,
-            **diag_targets,
-        )
-    else:
-        (
-            mclmc_samples_thin,
-            mclmc_Es,
-            mclmc_Vars,
-            mclmc_Ns,
-            energy_deltas_mclmc,
-            Ln_histories_mclmc,
-        ) = run_mclmc_online(
-            k_mclmc,
-            init_thetas_mclmc,
-            logdensity_mclmc,
-            cfg.mclmc_draws,
-            cfg.mclmc_eval_every,
-            cfg.mclmc_thin,
-            Ln_full64,
-            tuner_steps=cfg.mclmc_tune_steps,
-            diagonal_preconditioning=cfg.mclmc_diagonal_preconditioning,
-            desired_energy_var=cfg.mclmc_desired_energy_var,
-            integrator_name=cfg.mclmc_integrator,
-            use_tqdm=cfg.use_tqdm,
-            progress_update_every=cfg.progress_update_every,
-            stats=stats,
-            **diag_targets,
+        # Create logdensity for MCLMC
+        logdensity_mclmc = make_logdensity_for_mclmc(
+            loss_full_f64, theta0_f64, cfg.n_data, beta, gamma
         )
 
-    # Compute LLC with ESS-based uncertainty
-    llc_mclmc_mean, se_mclmc, ess_mclmc = llc_mean_and_se_from_histories(
-        Ln_histories_mclmc, cfg.n_data, beta, L0
-    )
-    print(f"MCLMC LLC: {llc_mclmc_mean:.4f} ± {se_mclmc:.4f} (ESS: {ess_mclmc:.1f})")
+        if cfg.use_batched_chains:
+            from llc.runners import run_mclmc_online_batched
+            (
+                mclmc_samples_thin,
+                mclmc_Es,
+                mclmc_Vars,
+                mclmc_Ns,
+                energy_deltas_mclmc,
+                Ln_histories_mclmc,
+            ) = run_mclmc_online_batched(
+                k_mclmc,
+                init_thetas_mclmc,
+                logdensity_mclmc,
+                cfg.mclmc_draws,
+                cfg.mclmc_eval_every,
+                cfg.mclmc_thin,
+                Ln_full64,
+                tuner_steps=cfg.mclmc_tune_steps,
+                diagonal_preconditioning=cfg.mclmc_diagonal_preconditioning,
+                desired_energy_var=cfg.mclmc_desired_energy_var,
+                integrator_name=cfg.mclmc_integrator,
+                use_tqdm=cfg.use_tqdm,
+                progress_update_every=cfg.progress_update_every,
+                stats=stats,
+                **diag_targets,
+            )
+        else:
+            (
+                mclmc_samples_thin,
+                mclmc_Es,
+                mclmc_Vars,
+                mclmc_Ns,
+                energy_deltas_mclmc,
+                Ln_histories_mclmc,
+            ) = run_mclmc_online(
+                k_mclmc,
+                init_thetas_mclmc,
+                logdensity_mclmc,
+                cfg.mclmc_draws,
+                cfg.mclmc_eval_every,
+                cfg.mclmc_thin,
+                Ln_full64,
+                tuner_steps=cfg.mclmc_tune_steps,
+                diagonal_preconditioning=cfg.mclmc_diagonal_preconditioning,
+                desired_energy_var=cfg.mclmc_desired_energy_var,
+                integrator_name=cfg.mclmc_integrator,
+                use_tqdm=cfg.use_tqdm,
+                progress_update_every=cfg.progress_update_every,
+                stats=stats,
+                **diag_targets,
+            )
 
-    # Store MCLMC results
-    all_metrics.update({
-        "mclmc_llc_mean": float(llc_mclmc_mean),
-        "mclmc_llc_se": float(se_mclmc),
-        "mclmc_ess": float(ess_mclmc),
-        "mclmc_timing_warmup": float(stats.t_mclmc_warmup),
-        "mclmc_timing_sampling": float(stats.t_mclmc_sampling),
-        "mclmc_n_steps": int(stats.n_mclmc_steps),
-        "mclmc_n_full_loss": int(stats.n_mclmc_full_loss),
-    })
-    histories["mclmc"] = Ln_histories_mclmc
+        # Compute LLC with ESS-based uncertainty
+        llc_mclmc_mean, se_mclmc, ess_mclmc = llc_mean_and_se_from_histories(
+            Ln_histories_mclmc, cfg.n_data, beta, L0
+        )
+        print(f"MCLMC LLC: {llc_mclmc_mean:.4f} ± {se_mclmc:.4f} (ESS: {ess_mclmc:.1f})")
+
+        # Store MCLMC results
+        all_metrics.update({
+            "mclmc_llc_mean": float(llc_mclmc_mean),
+            "mclmc_llc_se": float(se_mclmc),
+            "mclmc_ess": float(ess_mclmc),
+            "mclmc_timing_warmup": float(stats.t_mclmc_warmup),
+            "mclmc_timing_sampling": float(stats.t_mclmc_sampling),
+            "mclmc_n_steps": int(stats.n_mclmc_steps),
+            "mclmc_n_full_loss": int(stats.n_mclmc_full_loss),
+        })
+        histories["mclmc"] = Ln_histories_mclmc
 
     print(f"\nTotal Runtime: {toc(t0):.2f}s")
 
@@ -385,14 +390,20 @@ def run_one(
         save_L0(run_dir, L0)
 
         # Save L_n histories as ArviZ InferenceData (NetCDF)
-        save_idata_L(run_dir, "sgld", Ln_histories_sgld)
-        save_idata_L(run_dir, "hmc", Ln_histories_hmc)
-        save_idata_L(run_dir, "mclmc", Ln_histories_mclmc)
+        if "sgld" in getattr(cfg, "samplers", []):
+            save_idata_L(run_dir, "sgld", histories.get("sgld", []))
+        if "hmc" in getattr(cfg, "samplers", []):
+            save_idata_L(run_dir, "hmc", histories.get("hmc", []))
+        if "mclmc" in getattr(cfg, "samplers", []):
+            save_idata_L(run_dir, "mclmc", histories.get("mclmc", []))
 
         # Save thinned theta samples as ArviZ InferenceData
-        save_idata_theta(run_dir, "sgld", sgld_samples_thin)
-        save_idata_theta(run_dir, "hmc", hmc_samples_thin)
-        save_idata_theta(run_dir, "mclmc", mclmc_samples_thin)
+        if "sgld" in getattr(cfg, "samplers", []):
+            save_idata_theta(run_dir, "sgld", locals().get("sgld_samples_thin", []))
+        if "hmc" in getattr(cfg, "samplers", []):
+            save_idata_theta(run_dir, "hmc", locals().get("hmc_samples_thin", []))
+        if "mclmc" in getattr(cfg, "samplers", []):
+            save_idata_theta(run_dir, "mclmc", locals().get("mclmc_samples_thin", []))
 
         # Save all metrics
         save_metrics(run_dir, all_metrics)
@@ -463,6 +474,16 @@ def run_one(
         # Generate HTML gallery
         gallery_path = generate_gallery_html(run_dir, cfg, all_metrics)
         print(f"HTML gallery: {gallery_path}")
+
+        # Create a timestamped symlink for tooling/browsing (optional)
+        try:
+            ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+            ts_path = Path(cfg.artifacts_dir) / ts
+            if not ts_path.exists():
+                ts_path.symlink_to(Path(run_dir).resolve(), target_is_directory=True)
+                print(f"Symlinked {ts_path} -> {run_dir}")
+        except Exception as e:
+            logger.warning(f"Could not create timestamp symlink: {e}")
 
         print(f"Artifacts saved to: {run_dir}")
 

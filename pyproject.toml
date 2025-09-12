@@ -18,3 +18,5 @@ dependencies = [
 slurm = ["submitit>=1.5"]        # Python 3.8+ and SLURM-friendly toolbox
 # Modal backend
 modal = ["modal>=0.64"]          # Modal's official SDK (Py 3.9–3.13)
+cpu = ["jax>=0.4.28"]            # CPU-only JAX
+cuda12 = ["jax[cuda12_local]>=0.4.28"]  # CUDA 12 wheels (see JAX docs)
