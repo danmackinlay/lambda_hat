@@ -125,6 +125,12 @@ def add_run_arguments(parser: argparse.ArgumentParser) -> None:
     
     # Chain parameters
     parser.add_argument("--chains", type=int, help="Number of parallel chains")
+    parser.add_argument("--use-batched-chains", action="store_true", 
+                        help="Use batched chain execution (vmap+scan) for speed")
+    parser.add_argument("--no-batched-chains", dest="use_batched_chains", 
+                        action="store_false",
+                        help="Use sequential chain execution (default)")
+    parser.set_defaults(use_batched_chains=None)
 
 
 def add_sweep_arguments(parser: argparse.ArgumentParser) -> None:
@@ -218,6 +224,10 @@ def override_config(cfg: Config, args: argparse.Namespace) -> Config:
         overrides["sgld_eps"] = args.sgld_eps
     if getattr(args, "sgld_bias_correction", None) is not None:
         overrides["sgld_bias_correction"] = args.sgld_bias_correction
+    
+    # Batched chains option
+    if getattr(args, "use_batched_chains", None) is not None:
+        overrides["use_batched_chains"] = args.use_batched_chains
     
     # Special handling for width -> use as uniform width
     if hasattr(args, 'width') and args.width is not None:

@@ -32,6 +32,9 @@ from .runners import (
     run_sgld_online,
     run_hmc_online_with_adaptation,
     run_mclmc_online,
+    run_sgld_online_batched,
+    run_hmc_online_batched,
+    run_mclmc_online_batched,
 )
 from .samplers.base import prepare_diag_targets
 from .diagnostics import llc_mean_and_se_from_histories, plot_diagnostics
@@ -181,7 +184,9 @@ def run_one(
         k_sgld, (cfg.chains, dim)
     ).astype(jnp.float32)
 
-    sgld_samples_thin, sgld_Es, sgld_Vars, sgld_Ns, Ln_histories_sgld = run_sgld_online(
+    # Choose batched or sequential SGLD execution
+    sgld_runner = run_sgld_online_batched if cfg.use_batched_chains else run_sgld_online
+    sgld_samples_thin, sgld_Es, sgld_Vars, sgld_Ns, Ln_histories_sgld = sgld_runner(
         k_sgld,
         init_thetas_sgld,
         grad_logpost_minibatch_f32,
@@ -230,8 +235,23 @@ def run_one(
     k_hmc = random.fold_in(key, 123)
     init_thetas_hmc = theta0_f64 + 0.01 * random.normal(k_hmc, (cfg.chains, dim))
 
-    hmc_samples_thin, hmc_Es, hmc_Vars, hmc_Ns, accs_hmc, Ln_histories_hmc = (
-        run_hmc_online_with_adaptation(
+    # Choose batched or sequential HMC execution
+    if cfg.use_batched_chains:
+        hmc_samples_thin, hmc_Es, hmc_Vars, hmc_Ns, accs_hmc, Ln_histories_hmc = run_hmc_online_batched(
+            k_hmc,
+            init_thetas_hmc,
+            logpost_and_grad_f64,
+            cfg.hmc_draws,
+            cfg.hmc_warmup,
+            cfg.hmc_num_integration_steps,
+            cfg.hmc_eval_every,
+            cfg.hmc_thin,
+            Ln_full64,
+            **diag_targets,
+        )
+    else:
+        hmc_samples_thin, hmc_Es, hmc_Vars, hmc_Ns, accs_hmc, Ln_histories_hmc = (
+            run_hmc_online_with_adaptation(
             k_hmc,
             init_thetas_hmc,
             logpost_and_grad_f64,
@@ -285,30 +305,57 @@ def run_one(
         loss_full_f64, theta0_f64, cfg.n_data, beta, gamma
     )
 
-    (
-        mclmc_samples_thin,
-        mclmc_Es,
-        mclmc_Vars,
-        mclmc_Ns,
-        energy_deltas_mclmc,
-        Ln_histories_mclmc,
-    ) = run_mclmc_online(
-        k_mclmc,
-        init_thetas_mclmc,
-        logdensity_mclmc,
-        cfg.mclmc_draws,
-        cfg.mclmc_eval_every,
-        cfg.mclmc_thin,
-        Ln_full64,
-        tuner_steps=cfg.mclmc_tune_steps,
-        diagonal_preconditioning=cfg.mclmc_diagonal_preconditioning,
-        desired_energy_var=cfg.mclmc_desired_energy_var,
-        integrator_name=cfg.mclmc_integrator,
-        use_tqdm=cfg.use_tqdm,
-        progress_update_every=cfg.progress_update_every,
-        stats=stats,
-        **diag_targets,
-    )
+    if cfg.use_batched_chains:
+        from llc.runners import run_mclmc_online_batched
+        (
+            mclmc_samples_thin,
+            mclmc_Es,
+            mclmc_Vars,
+            mclmc_Ns,
+            energy_deltas_mclmc,
+            Ln_histories_mclmc,
+        ) = run_mclmc_online_batched(
+            k_mclmc,
+            init_thetas_mclmc,
+            logdensity_mclmc,
+            cfg.mclmc_draws,
+            cfg.mclmc_eval_every,
+            cfg.mclmc_thin,
+            Ln_full64,
+            tuner_steps=cfg.mclmc_tune_steps,
+            diagonal_preconditioning=cfg.mclmc_diagonal_preconditioning,
+            desired_energy_var=cfg.mclmc_desired_energy_var,
+            integrator_name=cfg.mclmc_integrator,
+            use_tqdm=cfg.use_tqdm,
+            progress_update_every=cfg.progress_update_every,
+            stats=stats,
+            **diag_targets,
+        )
+    else:
+        (
+            mclmc_samples_thin,
+            mclmc_Es,
+            mclmc_Vars,
+            mclmc_Ns,
+            energy_deltas_mclmc,
+            Ln_histories_mclmc,
+        ) = run_mclmc_online(
+            k_mclmc,
+            init_thetas_mclmc,
+            logdensity_mclmc,
+            cfg.mclmc_draws,
+            cfg.mclmc_eval_every,
+            cfg.mclmc_thin,
+            Ln_full64,
+            tuner_steps=cfg.mclmc_tune_steps,
+            diagonal_preconditioning=cfg.mclmc_diagonal_preconditioning,
+            desired_energy_var=cfg.mclmc_desired_energy_var,
+            integrator_name=cfg.mclmc_integrator,
+            use_tqdm=cfg.use_tqdm,
+            progress_update_every=cfg.progress_update_every,
+            stats=stats,
+            **diag_targets,
+        )
 
     # Compute LLC with ESS-based uncertainty
     llc_mclmc_mean, se_mclmc, ess_mclmc = llc_mean_and_se_from_histories(

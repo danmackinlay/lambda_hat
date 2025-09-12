@@ -8,7 +8,10 @@ import jax
 import numpy as np
 
 from .samplers.base import default_tiny_store
-from .samplers.adapters import run_sgld_chain, run_hmc_chain, run_mclmc_chain
+from .samplers.adapters import (
+    run_sgld_chain, run_hmc_chain, run_mclmc_chain,
+    run_sgld_chains_batched, run_hmc_chains_batched, run_mclmc_chains_batched
+)
 
 if TYPE_CHECKING:
     from .config import Config
@@ -352,3 +355,178 @@ def run_sampler(sampler_name: str, sampler_cfg, **shared_kwargs):
         return run_mclmc_online(**sampler_cfg, **shared_kwargs)
     else:
         raise ValueError(f"Unknown sampler: {sampler_name}")
+
+
+# ---------- Batched (fast) versions of the above runners ----------
+
+def run_sgld_online_batched(
+    key,
+    init_thetas,
+    grad_logpost_minibatch,
+    X,
+    Y,
+    n,
+    step_size,
+    num_steps,
+    warmup,
+    batch_size,
+    eval_every,
+    thin,
+    Ln_full64,
+    diag_dims=None,
+    Rproj=None,
+    # preconditioning options
+    precond_mode: str = "none",
+    beta1: float = 0.9,
+    beta2: float = 0.999,
+    eps: float = 1e-8,
+    bias_correction: bool = True,
+    # Ignored parameters for compatibility
+    use_tqdm=None,
+    progress_update_every=None,
+    stats=None,
+):
+    """Batched SGLD runner using vmap + lax.scan for speed"""
+    def tiny_store(vec_batch):
+        # vec_batch is (C, d), apply tiny store to each chain
+        if diag_dims is not None:
+            return vec_batch[:, diag_dims]  # (C, k)
+        elif Rproj is not None:
+            return jax.vmap(lambda v: Rproj @ v)(vec_batch)  # (C, k)
+        else:
+            return default_tiny_store(vec_batch)
+
+    result = run_sgld_chains_batched(
+        rng_key=key,
+        init_thetas=init_thetas,
+        grad_logpost_minibatch=grad_logpost_minibatch,
+        X=X, Y=Y, n_data=n,
+        step_size=step_size,
+        n_steps=num_steps,
+        warmup=warmup,
+        batch_size=batch_size,
+        eval_every=eval_every,
+        thin=thin,
+        Ln_eval_f64=Ln_full64,
+        tiny_store_fn=tiny_store,
+        precond_mode=precond_mode,
+        beta1=beta1,
+        beta2=beta2,
+        eps=eps,
+        bias_correction=bias_correction,
+    )
+    
+    # Convert back to the expected format
+    kept_stacked = np.asarray(result.kept)  # (C, K, k)
+    means = np.asarray(result.mean_L)  # (C,)
+    vars_ = np.asarray(result.var_L)   # (C,)
+    ns = np.asarray(result.n_L)        # (C,)
+    L_histories = [np.asarray(result.L_hist[c]) for c in range(result.L_hist.shape[0])]
+    
+    return kept_stacked, means, vars_, ns, L_histories
+
+
+def run_hmc_online_batched(
+    key,
+    init_thetas,
+    logpost_and_grad,
+    draws,
+    warmup,
+    L,
+    eval_every,
+    thin,
+    Ln_full64,
+    diag_dims=None,
+    Rproj=None,
+    # Ignored parameters for compatibility
+    use_tqdm=None,
+    progress_update_every=None,
+    stats=None,
+):
+    """Batched HMC runner using vmap + lax.scan for speed"""
+    def tiny_store(vec_batch):
+        if diag_dims is not None:
+            return vec_batch[:, diag_dims]
+        elif Rproj is not None:
+            return jax.vmap(lambda v: Rproj @ v)(vec_batch)
+        else:
+            return default_tiny_store(vec_batch)
+
+    result = run_hmc_chains_batched(
+        rng_key=key,
+        init_thetas=init_thetas,
+        logpost_and_grad=logpost_and_grad,
+        draws=draws,
+        warmup_draws=warmup,
+        L=L,
+        eval_every=eval_every,
+        thin=thin,
+        Ln_eval_f64=Ln_full64,
+        tiny_store_fn=tiny_store,
+    )
+    
+    # Convert back to expected format
+    kept_stacked = np.asarray(result.kept)  # (C, K, k)
+    means = np.asarray(result.mean_L)       # (C,)
+    vars_ = np.asarray(result.var_L)        # (C,)
+    ns = np.asarray(result.n_L)             # (C,)
+    acc = result.extras.get("accept", jnp.zeros_like(result.L_hist))
+    acc_list = [np.asarray(acc[c]) for c in range(acc.shape[0])]
+    L_histories = [np.asarray(result.L_hist[c]) for c in range(result.L_hist.shape[0])]
+    
+    return kept_stacked, means, vars_, ns, acc_list, L_histories
+
+
+def run_mclmc_online_batched(
+    key,
+    init_thetas,
+    logdensity_fn,
+    draws,
+    eval_every,
+    thin,
+    Ln_full64,
+    tuner_steps=2000,
+    diagonal_preconditioning=False,
+    desired_energy_var=5e-4,
+    integrator_name="isokinetic_mclachlan",
+    diag_dims=None,
+    Rproj=None,
+    # Ignored parameters for compatibility
+    use_tqdm=None,
+    progress_update_every=None,
+    stats=None,
+):
+    """Batched MCLMC runner using vmap + lax.scan for speed"""
+    def tiny_store(vec_batch):
+        if diag_dims is not None:
+            return vec_batch[:, diag_dims]
+        elif Rproj is not None:
+            return jax.vmap(lambda v: Rproj @ v)(vec_batch)
+        else:
+            return default_tiny_store(vec_batch)
+
+    result = run_mclmc_chains_batched(
+        rng_key=key,
+        init_thetas=init_thetas,
+        logdensity_fn=logdensity_fn,
+        draws=draws,
+        eval_every=eval_every,
+        thin=thin,
+        Ln_eval_f64=Ln_full64,
+        tuner_steps=tuner_steps,
+        diagonal_preconditioning=diagonal_preconditioning,
+        desired_energy_var=desired_energy_var,
+        integrator_name=integrator_name,
+        tiny_store_fn=tiny_store,
+    )
+    
+    # Convert back to expected format
+    kept_stacked = np.asarray(result.kept)  # (C, K, k)
+    means = np.asarray(result.mean_L)       # (C,)
+    vars_ = np.asarray(result.var_L)        # (C,)
+    ns = np.asarray(result.n_L)             # (C,)
+    dE = result.extras.get("energy", jnp.zeros_like(result.L_hist))
+    dE_list = [np.asarray(dE[c]) for c in range(dE.shape[0])]
+    L_histories = [np.asarray(result.L_hist[c]) for c in range(result.L_hist.shape[0])]
+    
+    return kept_stacked, means, vars_, ns, dE_list, L_histories

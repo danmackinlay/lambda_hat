@@ -58,6 +58,8 @@ class Config:
     # Sampling
     sampler: Literal["sgld", "hmc", "mclmc"] = "sgld"
     chains: int = 4
+    # Optimization: use batched (vmap+scan) chain execution for speed
+    use_batched_chains: bool = False
 
     # SGLD
     sgld_steps: int = 4_000
