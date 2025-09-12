@@ -8,7 +8,13 @@ import jax.numpy as jnp
 import numpy as np
 import blackjax
 
-from .base import drive_chain, ChainResult, default_tiny_store, drive_chains_batched, BatchedResult
+from .base import (
+    drive_chain,
+    ChainResult,
+    default_tiny_store,
+    drive_chains_batched,
+    BatchedResult,
+)
 
 Array = jnp.ndarray
 
@@ -60,7 +66,10 @@ def run_sgld_chain(
             return new_theta  # no info
 
         init_state = init_theta
-        position_fn = lambda s: s
+
+        def position_fn(s):
+            return s
+
         step_returns_info = False
 
     else:
@@ -91,7 +100,9 @@ def run_sgld_chain(
                 inv_sqrt = jax.lax.rsqrt(v_hat + eps)
                 drift = 0.5 * step_size * (m_hat * inv_sqrt)
 
-            noise = jax.random.normal(k_noise, theta.shape) * jnp.sqrt(step_size) * inv_sqrt
+            noise = (
+                jax.random.normal(k_noise, theta.shape) * jnp.sqrt(step_size) * inv_sqrt
+            )
             theta_new = theta + drift + noise
             return (theta_new, m_new, v_new, t + 1.0)
 
@@ -105,7 +116,10 @@ def run_sgld_chain(
         # Initialize state for this chain
         zeros = jnp.zeros_like(init_theta)
         init_state = (init_theta, zeros, zeros, jnp.array(0.0, dtype=init_theta.dtype))
-        position_fn = lambda s: s[0]  # extract theta
+
+        def position_fn(s):
+            return s[0]  # extract theta
+
         step_returns_info = False
 
     return drive_chain(
@@ -128,10 +142,12 @@ def run_sgld_chain(
 
 def run_sgld_chains_batched(
     *,
-    rng_key,                         # PRNGKey
-    init_thetas,                     # (C, d)
-    grad_logpost_minibatch,          # (theta, (Xb,Yb)) -> grad
-    X, Y, n_data,
+    rng_key,  # PRNGKey
+    init_thetas,  # (C, d)
+    grad_logpost_minibatch,  # (theta, (Xb,Yb)) -> grad
+    X,
+    Y,
+    n_data,
     step_size: float,
     n_steps: int,
     warmup: int,
@@ -149,12 +165,12 @@ def run_sgld_chains_batched(
 ) -> BatchedResult:
     """
     Run multiple SGLD chains in parallel using vmap + lax.scan.
-    
+
     This replaces the Python for-loop over chains with a single compiled
     program that steps all chains together, providing significant speedup.
     """
     precond = (precond_mode or "none").lower()
-    
+
     if precond == "none":
         # Plain SGLD: vmapped BlackJAX step
         sgld = blackjax.sgld(grad_logpost_minibatch)
@@ -169,8 +185,10 @@ def run_sgld_chains_batched(
 
         step_vmapped = jax.jit(jax.vmap(step_one, in_axes=(0, 0)))
         init_state = init_thetas
-        position_fn = lambda s: s
-        
+
+        def position_fn(s):
+            return s
+
     else:
         # Preconditioned SGLD: batched states (theta, m, v, t)
         @jax.jit
@@ -198,22 +216,27 @@ def run_sgld_chains_batched(
                 inv_sqrt = jax.lax.rsqrt(v_hat + eps)
                 drift = 0.5 * step_size * (m_hat * inv_sqrt)
 
-            noise = jax.random.normal(k_noise, theta.shape) * jnp.sqrt(step_size) * inv_sqrt
+            noise = (
+                jax.random.normal(k_noise, theta.shape) * jnp.sqrt(step_size) * inv_sqrt
+            )
             theta_new = theta + drift + noise
             return (
                 theta_new.astype(theta.dtype),
-                m_new, v_new,
+                m_new,
+                v_new,
                 t + jnp.asarray(1, dtype=t.dtype),
             ), None
 
         # vmap the preconditioned step across chains
         step_vmapped = jax.jit(jax.vmap(precond_step_single, in_axes=(0, 0)))
-        
+
         # Initialize batched state
         zeros = jnp.zeros_like(init_thetas)
         time_init = jnp.zeros((init_thetas.shape[0],), dtype=init_thetas.dtype)
         init_state = (init_thetas, zeros, zeros, time_init)
-        position_fn = lambda s: s[0]  # extract theta from (theta, m, v, t)
+
+        def position_fn(s):
+            return s[0]  # extract theta from (theta, m, v, t)
 
     # Prepare RNG table (T, C) - for all steps
     n_chains = init_thetas.shape[0]
@@ -237,7 +260,7 @@ def run_sgld_chains_batched(
         tiny_store_fn=tiny_store_fn,
         info_extractors={},  # SGLD returns no step info
     )
-    
+
     return result
 
 
@@ -282,7 +305,10 @@ def run_sghmc_chain(
         return new_theta
 
     init_state = sghmc.init(init_theta)
-    position_fn = lambda s: s
+
+    def position_fn(s):
+        return s
+
     step_returns_info = False
 
     return drive_chain(
@@ -324,16 +350,16 @@ def run_sghmc_chains_batched(
     Run multiple SGHMC chains in parallel using vmap + lax.scan.
     """
     sghmc = blackjax.sghmc(grad_logpost_minibatch)
-    
+
     # Initialize all chains
     init_state = jax.vmap(sghmc.init)(init_thetas)
-    
+
     # Vmapped step function
     def step_single(key, theta, minibatch):
         return sghmc.step(key, theta, minibatch, step_size, temperature)
-    
+
     step_vmapped = jax.jit(jax.vmap(step_single, in_axes=(0, 0, 0)))
-    
+
     # Prepare vmapped step for drive_chains_batched
     def step_fn_vmapped(keys, states):
         # Sample minibatch indices per chain
@@ -341,22 +367,22 @@ def run_sghmc_chains_batched(
         batch_indices = jax.vmap(
             lambda k: jax.random.randint(k, (batch_size,), 0, n_data)
         )(batch_keys)
-        
+
         # Get minibatches per chain
         X_batched = X[batch_indices]  # (C, batch_size, ...)
         Y_batched = Y[batch_indices]  # (C, batch_size, ...)
         minibatches = (X_batched, Y_batched)
-        
+
         new_states = step_vmapped(keys, states, minibatches)
         return new_states, None  # No info returned
-    
+
     # Generate keys for all steps and chains
     n_chains = init_thetas.shape[0]
     keys_flat = jax.random.split(rng_key, draws * n_chains)
     keys = keys_flat.reshape(draws, n_chains, -1)  # (T, C, 2)
-    
+
     Ln_vmapped = jax.jit(jax.vmap(Ln_eval_f64))
-    
+
     result = drive_chains_batched(
         rng_keys=keys,
         init_state=init_state,
@@ -370,7 +396,7 @@ def run_sghmc_chains_batched(
         tiny_store_fn=tiny_store_fn,
         info_extractors={},  # No extra info for SGHMC
     )
-    
+
     return result
 
 
@@ -503,7 +529,10 @@ def run_sghmc_chain(
         return new_theta
 
     init_state = sghmc.init(init_theta)
-    position_fn = lambda s: s
+
+    def position_fn(s):
+        return s
+
     step_returns_info = False
 
     return drive_chain(
@@ -545,16 +574,16 @@ def run_sghmc_chains_batched(
     Run multiple SGHMC chains in parallel using vmap + lax.scan.
     """
     sghmc = blackjax.sghmc(grad_logpost_minibatch)
-    
+
     # Initialize all chains
     init_state = jax.vmap(sghmc.init)(init_thetas)
-    
+
     # Vmapped step function
     def step_single(key, theta, minibatch):
         return sghmc.step(key, theta, minibatch, step_size, temperature)
-    
+
     step_vmapped = jax.jit(jax.vmap(step_single, in_axes=(0, 0, 0)))
-    
+
     # Prepare vmapped step for drive_chains_batched
     def step_fn_vmapped(keys, states):
         # Sample minibatch indices per chain
@@ -562,22 +591,22 @@ def run_sghmc_chains_batched(
         batch_indices = jax.vmap(
             lambda k: jax.random.randint(k, (batch_size,), 0, n_data)
         )(batch_keys)
-        
+
         # Get minibatches per chain
         X_batched = X[batch_indices]  # (C, batch_size, ...)
         Y_batched = Y[batch_indices]  # (C, batch_size, ...)
         minibatches = (X_batched, Y_batched)
-        
+
         new_states = step_vmapped(keys, states, minibatches)
         return new_states, None  # No info returned
-    
+
     # Generate keys for all steps and chains
     n_chains = init_thetas.shape[0]
     keys_flat = jax.random.split(rng_key, draws * n_chains)
     keys = keys_flat.reshape(draws, n_chains, -1)  # (T, C, 2)
-    
+
     Ln_vmapped = jax.jit(jax.vmap(Ln_eval_f64))
-    
+
     result = drive_chains_batched(
         rng_keys=keys,
         init_state=init_state,
@@ -591,15 +620,15 @@ def run_sghmc_chains_batched(
         tiny_store_fn=tiny_store_fn,
         info_extractors={},  # No extra info for SGHMC
     )
-    
+
     return result
 
 
 def run_hmc_chains_batched(
     *,
     rng_key,
-    init_thetas,                 # (C, d)  (start near θ*)
-    logpost_and_grad,            # theta -> (logpost, grad)
+    init_thetas,  # (C, d)  (start near θ*)
+    logpost_and_grad,  # theta -> (logpost, grad)
     draws: int,
     warmup_draws: int,
     L: int,
@@ -610,10 +639,11 @@ def run_hmc_chains_batched(
 ) -> BatchedResult:
     """
     Run multiple HMC chains in parallel using vmap + lax.scan.
-    
+
     Adaptation is done once on a single chain, then parameters are
     broadcast to all chains for fast parallel sampling.
     """
+
     def logdensity(theta):
         val, _ = logpost_and_grad(theta)
         return val
@@ -629,19 +659,23 @@ def run_hmc_chains_batched(
 
     # --- 2) Build kernel with tuned params & broadcast initial states ---
     step_kernel = blackjax.hmc(
-        logdensity, step_size=params["step_size"], inverse_mass_matrix=invM, num_integration_steps=L
+        logdensity,
+        step_size=params["step_size"],
+        inverse_mass_matrix=invM,
+        num_integration_steps=L,
     ).step
     step_kernel = jax.jit(step_kernel)
 
     # Initial HMC states per chain (same tuned params, positions = init_thetas)
     def init_state(theta):
         return state1._replace(position=theta)
+
     state0 = jax.vmap(init_state)(init_thetas)  # pytree with leading (C, ...)
 
     # vmapped step: (keys[C], state[C]) -> (state[C], info[C])
     step_vmapped = jax.jit(jax.vmap(step_kernel, in_axes=(0, 0)))
 
-    # RNG table  
+    # RNG table
     n_chains = init_thetas.shape[0]
     keys = jax.random.split(k_draws, draws * n_chains)
     keys = keys.reshape(draws, n_chains, -1)  # (T, C, 2)
@@ -650,7 +684,9 @@ def run_hmc_chains_batched(
 
     # Record acceptance at eval points (scalar per chain)
     info_extractors = {
-        "accept": lambda info: getattr(info, "acceptance_rate", jnp.zeros((init_thetas.shape[0],)))
+        "accept": lambda info: getattr(
+            info, "acceptance_rate", jnp.zeros((init_thetas.shape[0],))
+        )
     }
 
     result = drive_chains_batched(
@@ -658,7 +694,7 @@ def run_hmc_chains_batched(
         init_state=state0,
         step_fn_vmapped=step_vmapped,
         n_steps=draws,
-        warmup=0,                  # warmup already done
+        warmup=0,  # warmup already done
         eval_every=eval_every,
         thin=thin,
         position_fn=lambda st: st.position,
@@ -666,7 +702,7 @@ def run_hmc_chains_batched(
         tiny_store_fn=tiny_store_fn,
         info_extractors=info_extractors,
     )
-    
+
     return result
 
 
@@ -711,7 +747,10 @@ def run_sghmc_chain(
         return new_theta
 
     init_state = sghmc.init(init_theta)
-    position_fn = lambda s: s
+
+    def position_fn(s):
+        return s
+
     step_returns_info = False
 
     return drive_chain(
@@ -753,16 +792,16 @@ def run_sghmc_chains_batched(
     Run multiple SGHMC chains in parallel using vmap + lax.scan.
     """
     sghmc = blackjax.sghmc(grad_logpost_minibatch)
-    
+
     # Initialize all chains
     init_state = jax.vmap(sghmc.init)(init_thetas)
-    
+
     # Vmapped step function
     def step_single(key, theta, minibatch):
         return sghmc.step(key, theta, minibatch, step_size, temperature)
-    
+
     step_vmapped = jax.jit(jax.vmap(step_single, in_axes=(0, 0, 0)))
-    
+
     # Prepare vmapped step for drive_chains_batched
     def step_fn_vmapped(keys, states):
         # Sample minibatch indices per chain
@@ -770,22 +809,22 @@ def run_sghmc_chains_batched(
         batch_indices = jax.vmap(
             lambda k: jax.random.randint(k, (batch_size,), 0, n_data)
         )(batch_keys)
-        
+
         # Get minibatches per chain
         X_batched = X[batch_indices]  # (C, batch_size, ...)
         Y_batched = Y[batch_indices]  # (C, batch_size, ...)
         minibatches = (X_batched, Y_batched)
-        
+
         new_states = step_vmapped(keys, states, minibatches)
         return new_states, None  # No info returned
-    
+
     # Generate keys for all steps and chains
     n_chains = init_thetas.shape[0]
     keys_flat = jax.random.split(rng_key, draws * n_chains)
     keys = keys_flat.reshape(draws, n_chains, -1)  # (T, C, 2)
-    
+
     Ln_vmapped = jax.jit(jax.vmap(Ln_eval_f64))
-    
+
     result = drive_chains_batched(
         rng_keys=keys,
         init_state=init_state,
@@ -799,7 +838,7 @@ def run_sghmc_chains_batched(
         tiny_store_fn=tiny_store_fn,
         info_extractors={},  # No extra info for SGHMC
     )
-    
+
     return result
 
 
@@ -889,7 +928,7 @@ def run_mclmc_chain(
 def run_mclmc_chains_batched(
     *,
     rng_key,
-    init_thetas,              # (C, d)
+    init_thetas,  # (C, d)
     logdensity_fn,
     draws: int,
     eval_every: int,
@@ -903,7 +942,7 @@ def run_mclmc_chains_batched(
 ) -> BatchedResult:
     """
     Run multiple MCLMC chains in parallel using vmap + lax.scan.
-    
+
     Tuning is done once on a single chain, then parameters are
     broadcast to all chains for fast parallel sampling.
     """
@@ -917,7 +956,9 @@ def run_mclmc_chains_batched(
         )
 
     # Tune on one chain
-    state0 = blackjax.mcmc.mclmc.init(position=init_thetas[0], logdensity_fn=logdensity_fn, rng_key=rng_key)
+    state0 = blackjax.mcmc.mclmc.init(
+        position=init_thetas[0], logdensity_fn=logdensity_fn, rng_key=rng_key
+    )
     tuned_state, tuned_params, _ = blackjax.mclmc_find_L_and_step_size(
         mclmc_kernel=build_kernel,
         num_steps=tuner_steps,
@@ -926,12 +967,15 @@ def run_mclmc_chains_batched(
         diagonal_preconditioning=diagonal_preconditioning,
         desired_energy_var=desired_energy_var,
     )
-    alg = blackjax.mclmc(logdensity_fn, L=tuned_params.L, step_size=tuned_params.step_size)
+    alg = blackjax.mclmc(
+        logdensity_fn, L=tuned_params.L, step_size=tuned_params.step_size
+    )
     step = jax.jit(alg.step)
 
     # Broadcast initial state
     def init_state(theta):
         return tuned_state.replace(position=theta)
+
     state_init = jax.vmap(init_state)(init_thetas)
 
     step_vmapped = jax.jit(jax.vmap(step, in_axes=(0, 0)))
@@ -944,7 +988,9 @@ def run_mclmc_chains_batched(
     Ln_vmapped = jax.jit(jax.vmap(Ln_eval_f64))
 
     info_extractors = {
-        "energy": lambda info: getattr(info, "energy_change", jnp.zeros((init_thetas.shape[0],)))
+        "energy": lambda info: getattr(
+            info, "energy_change", jnp.zeros((init_thetas.shape[0],))
+        )
     }
 
     result = drive_chains_batched(
@@ -960,7 +1006,7 @@ def run_mclmc_chains_batched(
         tiny_store_fn=tiny_store_fn,
         info_extractors=info_extractors,
     )
-    
+
     return result
 
 
@@ -1005,7 +1051,10 @@ def run_sghmc_chain(
         return new_theta
 
     init_state = sghmc.init(init_theta)
-    position_fn = lambda s: s
+
+    def position_fn(s):
+        return s
+
     step_returns_info = False
 
     return drive_chain(
@@ -1047,16 +1096,16 @@ def run_sghmc_chains_batched(
     Run multiple SGHMC chains in parallel using vmap + lax.scan.
     """
     sghmc = blackjax.sghmc(grad_logpost_minibatch)
-    
+
     # Initialize all chains
     init_state = jax.vmap(sghmc.init)(init_thetas)
-    
+
     # Vmapped step function
     def step_single(key, theta, minibatch):
         return sghmc.step(key, theta, minibatch, step_size, temperature)
-    
+
     step_vmapped = jax.jit(jax.vmap(step_single, in_axes=(0, 0, 0)))
-    
+
     # Prepare vmapped step for drive_chains_batched
     def step_fn_vmapped(keys, states):
         # Sample minibatch indices per chain
@@ -1064,22 +1113,22 @@ def run_sghmc_chains_batched(
         batch_indices = jax.vmap(
             lambda k: jax.random.randint(k, (batch_size,), 0, n_data)
         )(batch_keys)
-        
+
         # Get minibatches per chain
         X_batched = X[batch_indices]  # (C, batch_size, ...)
         Y_batched = Y[batch_indices]  # (C, batch_size, ...)
         minibatches = (X_batched, Y_batched)
-        
+
         new_states = step_vmapped(keys, states, minibatches)
         return new_states, None  # No info returned
-    
+
     # Generate keys for all steps and chains
     n_chains = init_thetas.shape[0]
     keys_flat = jax.random.split(rng_key, draws * n_chains)
     keys = keys_flat.reshape(draws, n_chains, -1)  # (T, C, 2)
-    
+
     Ln_vmapped = jax.jit(jax.vmap(Ln_eval_f64))
-    
+
     result = drive_chains_batched(
         rng_keys=keys,
         init_state=init_state,
@@ -1093,5 +1142,5 @@ def run_sghmc_chains_batched(
         tiny_store_fn=tiny_store_fn,
         info_extractors={},  # No extra info for SGHMC
     )
-    
+
     return result
