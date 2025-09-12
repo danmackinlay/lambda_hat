@@ -3,21 +3,14 @@
 
 from dataclasses import replace
 
-import jax
-import jax.numpy as jnp
-from jax import random, jit, value_and_grad
+from jax import jit, value_and_grad
 from jax.flatten_util import ravel_pytree
 import optax
 import numpy as np
 import pandas as pd
 
 from .config import Config
-from .models import infer_widths, init_mlp_params
-from .data import make_dataset
 from .losses import make_loss_fns
-from .posterior import compute_beta_gamma, make_logpost_and_score
-from .runners import run_sgld_online, run_hmc_online_with_adaptation
-from .diagnostics import llc_ci_from_histories
 
 
 def train_erm(w_init_pytree, cfg: Config, X, Y, steps=2000, lr=1e-2):
@@ -98,17 +91,17 @@ def run_experiment(cfg: Config, verbose=True):
     Maintained for backwards compatibility with existing code.
     """
     from .pipeline import run_one
-    
+
     # Run the full pipeline but don't save artifacts
     outputs = run_one(cfg, save_artifacts=False, skip_if_exists=False)
-    
+
     # Extract SGLD and HMC results
     llc_sgld = outputs.metrics.get("sgld_llc_mean", 0.0)
     llc_hmc = outputs.metrics.get("hmc_llc_mean", 0.0)
-    
+
     if verbose:
         print(f"LLC: SGLD={llc_sgld:.4f}, HMC={llc_hmc:.4f}")
-    
+
     return llc_sgld, llc_hmc
 
 

@@ -25,25 +25,25 @@ def run_experiment_task(cfg_dict: Dict[str, Any]) -> Dict[str, Any]:
     if save_artifacts:
         # Use the unified pipeline for full artifact generation
         from llc.pipeline import run_one
-        
+
         out = run_one(cfg, save_artifacts=True, skip_if_exists=True)
-        
+
         # Keep return shape backwards-compatible with existing callers
         result = {
             "cfg": cfg_dict,
             "run_dir": out.run_dir,
         }
-        
+
         # Add individual sampler results for backwards compatibility
         for s in ("sgld", "hmc", "mclmc"):
             if f"{s}_llc_mean" in out.metrics:
                 result[f"llc_{s}"] = float(out.metrics[f"{s}_llc_mean"])
-        
+
         # Legacy keys for backwards compatibility
         if "sgld_llc_mean" in out.metrics and "hmc_llc_mean" in out.metrics:
             result["llc_sgld"] = float(out.metrics["sgld_llc_mean"])
             result["llc_hmc"] = float(out.metrics["hmc_llc_mean"])
-            
+
         return result
 
     else:

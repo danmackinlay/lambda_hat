@@ -76,7 +76,9 @@ class _SubmititExperiment:
         # Requeue same work on preemption/timeout
         import submitit
 
-        return submitit.helpers.DelayedSubmission(_SubmititExperiment(self.fn, self.item))
+        return submitit.helpers.DelayedSubmission(
+            _SubmititExperiment(self.fn, self.item)
+        )
 
 
 class SubmititExecutor(BaseExecutor):
@@ -128,7 +130,9 @@ class SubmititExecutor(BaseExecutor):
     def map(self, fn, items):
         # Create wrapper jobs that call fn(item) for each item
         items_list = list(items)
-        jobs = [self.executor.submit(_SubmititExperiment, fn, item) for item in items_list]
+        jobs = [
+            self.executor.submit(_SubmititExperiment, fn, item) for item in items_list
+        ]
         return [j.result() for j in jobs]
 
 

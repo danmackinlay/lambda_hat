@@ -133,7 +133,7 @@ def create_manifest(
     """Create a manifest file describing the run"""
     # Determine which samplers actually ran based on metrics
     samplers_run = [s for s in ("sgld", "hmc", "mclmc") if f"{s}_llc_mean" in metrics]
-    
+
     manifest = {
         "timestamp": datetime.now().isoformat(),
         "config_summary": {

@@ -18,16 +18,16 @@ def llc_mean_and_se_from_histories(
 ) -> Tuple[float, float, int]:
     """
     Compute LLC mean and standard error from L_n evaluation histories using ESS.
-    
-    This is the primary method for LLC estimation, using ArviZ bulk ESS for 
+
+    This is the primary method for LLC estimation, using ArviZ bulk ESS for
     proper uncertainty quantification that accounts for autocorrelation.
-    
+
     Args:
         Ln_histories: Per-chain histories of L_n evaluations
         n: Number of data points
-        beta: Inverse temperature 
+        beta: Inverse temperature
         L0: Loss at empirical minimizer
-        
+
     Returns:
         Tuple of (llc_mean, standard_error, effective_sample_size)
     """
@@ -63,16 +63,16 @@ def llc_ci_from_histories(
 ) -> Tuple[float, Tuple[float, float]]:
     """
     Compute LLC with confidence interval using ESS-based standard error.
-    
+
     Uses the same ESS methodology as llc_mean_and_se_from_histories for consistency.
-    
+
     Args:
         Ln_histories: Per-chain histories of L_n evaluations
         n: Number of data points
         beta: Inverse temperature
-        L0: Loss at empirical minimizer  
+        L0: Loss at empirical minimizer
         alpha: Significance level for CI (default 0.05 for 95% CI)
-        
+
     Returns:
         Tuple of (llc_mean, (ci_lower, ci_upper))
     """
