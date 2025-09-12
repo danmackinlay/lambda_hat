@@ -9,8 +9,8 @@ import numpy as np
 
 from .samplers.base import default_tiny_store
 from .samplers.adapters import (
-    run_sgld_chain, run_hmc_chain, run_mclmc_chain,
-    run_sgld_chains_batched, run_hmc_chains_batched, run_mclmc_chains_batched
+    run_sgld_chain, run_hmc_chain, run_mclmc_chain, run_sghmc_chain,
+    run_sgld_chains_batched, run_hmc_chains_batched, run_mclmc_chains_batched, run_sghmc_chains_batched
 )
 
 if TYPE_CHECKING:
@@ -33,11 +33,14 @@ class RunStats:
     t_hmc_sampling: float = 0.0
     t_mclmc_warmup: float = 0.0
     t_mclmc_sampling: float = 0.0
+    t_sghmc_warmup: float = 0.0
+    t_sghmc_sampling: float = 0.0
 
     # work counters (proxy for computational work)
     # Count "gradient-equivalent" evaluations to compare samplers.
     # - SGLD: ~1 minibatch gradient per step -> +1
     # - HMC: ~num_integration_steps gradients per draw (leapfrog) -> +L
+    # - SGHMC: ~1 minibatch gradient per step (like SGLD) -> +1
     # - Add full-data loss evals and log-prob grads as separate counters for transparency.
     n_sgld_minibatch_grads: int = 0
     n_sgld_full_loss: int = 0
@@ -46,6 +49,8 @@ class RunStats:
     n_hmc_warmup_leapfrog_grads: int = 0  # estimated during adaptation
     n_mclmc_steps: int = 0
     n_mclmc_full_loss: int = 0
+    n_sghmc_minibatch_grads: int = 0
+    n_sghmc_full_loss: int = 0
 
 
 def tic():

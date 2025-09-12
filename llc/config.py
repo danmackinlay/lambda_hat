@@ -54,6 +54,8 @@ class Config:
     beta0: float = 1.0
     prior_radius: Optional[float] = None  # if set, gamma = d / prior_radius**2
     gamma: float = 1.0  # used only if prior_radius None
+    prior_center: Optional[List[float]] = None  # prior mean (if None, use zeros)
+    reference_for_L0: Optional[float] = None  # reference value for L0 baseline
 
     # Sampling
     # Choose which samplers to run. Order controls reporting & gallery grouping.
@@ -76,6 +78,16 @@ class Config:
     sgld_beta2: float = 0.999  # RMSProp/Adam second-moment EMA
     sgld_eps: float = 1e-8  # numerical stabilizer in preconditioner
     sgld_bias_correction: bool = True  # Adam bias correction on/off
+
+    # SGHMC (Stochastic Gradient Hamiltonian Monte Carlo)
+    sghmc_steps: int = 4_000
+    sghmc_warmup: int = 1_000
+    sghmc_batch_size: int = 256
+    sghmc_step_size: float = 1e-6
+    sghmc_temperature: float = 1.0  # temperature parameter for SGHMC
+    sghmc_thin: int = 20  # store every k-th draw for diagnostics only
+    sghmc_eval_every: int = 10  # compute full-data L_n(w) every k steps
+    sghmc_dtype: str = "float32"  # reduce memory
 
     # HMC
     hmc_draws: int = 1_000
@@ -146,6 +158,11 @@ TEST_CFG = Config(
     sgld_warmup=20,
     sgld_eval_every=5,
     sgld_thin=10,
+    # Minimal SGHMC
+    sghmc_steps=100,
+    sghmc_warmup=20,
+    sghmc_eval_every=5,
+    sghmc_thin=10,
     # Minimal HMC
     hmc_draws=50,
     hmc_warmup=20,

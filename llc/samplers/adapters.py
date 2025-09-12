@@ -241,6 +241,139 @@ def run_sgld_chains_batched(
     return result
 
 
+# ---------- SGHMC (Stochastic Gradient Hamiltonian Monte Carlo) ----------
+
+
+def run_sghmc_chain(
+    *,
+    rng_key: Array,
+    init_theta: Array,
+    grad_logpost_minibatch,  # (theta, (Xb,Yb)) -> grad
+    X: Array,
+    Y: Array,
+    n_data: int,
+    step_size: float,
+    temperature: float = 1.0,  # SGHMC temperature parameter
+    n_steps: int,
+    warmup: int,
+    batch_size: int,
+    eval_every: int,
+    thin: int,
+    Ln_eval_f64,
+    tiny_store_fn=default_tiny_store,
+    use_tqdm=True,
+    progress_label="SGHMC",
+    progress_update_every=50,
+    work_bump: Callable | None = None,
+) -> ChainResult:
+    """
+    Single chain SGHMC using BlackJAX implementation.
+    SGHMC adds momentum to SGLD for better exploration.
+    """
+    sghmc = blackjax.sghmc(grad_logpost_minibatch)
+    step_jit = jax.jit(sghmc.step)
+
+    def step_fn(key: Array, theta: Array):
+        k_noise, k_batch = jax.random.split(key)
+        idx = jax.random.randint(k_batch, (batch_size,), 0, n_data)
+        new_theta = step_jit(k_noise, theta, (X[idx], Y[idx]), step_size, temperature)
+        if work_bump:
+            work_bump()
+        return new_theta
+
+    init_state = sghmc.init(init_theta)
+    position_fn = lambda s: s
+    step_returns_info = False
+
+    return drive_chain(
+        rng_key=rng_key,
+        init_state=init_state,
+        step_fn=step_fn,
+        step_returns_info=step_returns_info,
+        n_steps=n_steps,
+        warmup=warmup,
+        eval_every=eval_every,
+        thin=thin,
+        position_fn=position_fn,
+        Ln_eval_f64=Ln_eval_f64,
+        tiny_store_fn=tiny_store_fn,
+        use_tqdm=use_tqdm,
+        progress_label=progress_label,
+        progress_update_every=progress_update_every,
+    )
+
+
+def run_sghmc_chains_batched(
+    *,
+    rng_key: Array,
+    init_thetas: Array,  # (C, d)
+    grad_logpost_minibatch,
+    X: Array,
+    Y: Array,
+    n_data: int,
+    step_size: float,
+    temperature: float = 1.0,
+    draws: int,
+    eval_every: int,
+    thin: int,
+    batch_size: int,
+    Ln_eval_f64,
+    tiny_store_fn=None,
+) -> BatchedResult:
+    """
+    Run multiple SGHMC chains in parallel using vmap + lax.scan.
+    """
+    sghmc = blackjax.sghmc(grad_logpost_minibatch)
+    
+    # Initialize all chains
+    init_state = jax.vmap(sghmc.init)(init_thetas)
+    
+    # Vmapped step function
+    def step_single(key, theta, minibatch):
+        return sghmc.step(key, theta, minibatch, step_size, temperature)
+    
+    step_vmapped = jax.jit(jax.vmap(step_single, in_axes=(0, 0, 0)))
+    
+    # Prepare vmapped step for drive_chains_batched
+    def step_fn_vmapped(keys, states):
+        # Sample minibatch indices per chain
+        batch_keys = keys  # keys already have shape (C, ...)
+        batch_indices = jax.vmap(
+            lambda k: jax.random.randint(k, (batch_size,), 0, n_data)
+        )(batch_keys)
+        
+        # Get minibatches per chain
+        X_batched = X[batch_indices]  # (C, batch_size, ...)
+        Y_batched = Y[batch_indices]  # (C, batch_size, ...)
+        minibatches = (X_batched, Y_batched)
+        
+        new_states = step_vmapped(keys, states, minibatches)
+        return new_states, None  # No info returned
+    
+    # Generate keys for all steps and chains
+    n_chains = init_thetas.shape[0]
+    keys_flat = jax.random.split(rng_key, draws * n_chains)
+    keys = keys_flat.reshape(draws, n_chains, -1)  # (T, C, 2)
+    
+    Ln_vmapped = jax.jit(jax.vmap(Ln_eval_f64))
+    
+    result = drive_chains_batched(
+        rng_keys=keys,
+        init_state=init_state,
+        step_fn_vmapped=step_fn_vmapped,
+        n_steps=draws,
+        warmup=0,
+        eval_every=eval_every,
+        thin=thin,
+        position_fn=lambda s: s,  # SGHMC state is just position
+        Ln_eval_f64_vmapped=Ln_vmapped,
+        tiny_store_fn=tiny_store_fn,
+        info_extractors={},  # No extra info for SGHMC
+    )
+    
+    return result
+
+
 # ---------- HMC (with window adaptation) ----------
 
 
@@ -329,6 +462,139 @@ def run_hmc_chain(
     return result
 
 
+# ---------- SGHMC (Stochastic Gradient Hamiltonian Monte Carlo) ----------
+
+
+def run_sghmc_chain(
+    *,
+    rng_key: Array,
+    init_theta: Array,
+    grad_logpost_minibatch,  # (theta, (Xb,Yb)) -> grad
+    X: Array,
+    Y: Array,
+    n_data: int,
+    step_size: float,
+    temperature: float = 1.0,  # SGHMC temperature parameter
+    n_steps: int,
+    warmup: int,
+    batch_size: int,
+    eval_every: int,
+    thin: int,
+    Ln_eval_f64,
+    tiny_store_fn=default_tiny_store,
+    use_tqdm=True,
+    progress_label="SGHMC",
+    progress_update_every=50,
+    work_bump: Callable | None = None,
+) -> ChainResult:
+    """
+    Single chain SGHMC using BlackJAX implementation.
+    SGHMC adds momentum to SGLD for better exploration.
+    """
+    sghmc = blackjax.sghmc(grad_logpost_minibatch)
+    step_jit = jax.jit(sghmc.step)
+
+    def step_fn(key: Array, theta: Array):
+        k_noise, k_batch = jax.random.split(key)
+        idx = jax.random.randint(k_batch, (batch_size,), 0, n_data)
+        new_theta = step_jit(k_noise, theta, (X[idx], Y[idx]), step_size, temperature)
+        if work_bump:
+            work_bump()
+        return new_theta
+
+    init_state = sghmc.init(init_theta)
+    position_fn = lambda s: s
+    step_returns_info = False
+
+    return drive_chain(
+        rng_key=rng_key,
+        init_state=init_state,
+        step_fn=step_fn,
+        step_returns_info=step_returns_info,
+        n_steps=n_steps,
+        warmup=warmup,
+        eval_every=eval_every,
+        thin=thin,
+        position_fn=position_fn,
+        Ln_eval_f64=Ln_eval_f64,
+        tiny_store_fn=tiny_store_fn,
+        use_tqdm=use_tqdm,
+        progress_label=progress_label,
+        progress_update_every=progress_update_every,
+    )
+
+
+def run_sghmc_chains_batched(
+    *,
+    rng_key: Array,
+    init_thetas: Array,  # (C, d)
+    grad_logpost_minibatch,
+    X: Array,
+    Y: Array,
+    n_data: int,
+    step_size: float,
+    temperature: float = 1.0,
+    draws: int,
+    eval_every: int,
+    thin: int,
+    batch_size: int,
+    Ln_eval_f64,
+    tiny_store_fn=None,
+) -> BatchedResult:
+    """
+    Run multiple SGHMC chains in parallel using vmap + lax.scan.
+    """
+    sghmc = blackjax.sghmc(grad_logpost_minibatch)
+    
+    # Initialize all chains
+    init_state = jax.vmap(sghmc.init)(init_thetas)
+    
+    # Vmapped step function
+    def step_single(key, theta, minibatch):
+        return sghmc.step(key, theta, minibatch, step_size, temperature)
+    
+    step_vmapped = jax.jit(jax.vmap(step_single, in_axes=(0, 0, 0)))
+    
+    # Prepare vmapped step for drive_chains_batched
+    def step_fn_vmapped(keys, states):
+        # Sample minibatch indices per chain
+        batch_keys = keys  # keys already have shape (C, ...)
+        batch_indices = jax.vmap(
+            lambda k: jax.random.randint(k, (batch_size,), 0, n_data)
+        )(batch_keys)
+        
+        # Get minibatches per chain
+        X_batched = X[batch_indices]  # (C, batch_size, ...)
+        Y_batched = Y[batch_indices]  # (C, batch_size, ...)
+        minibatches = (X_batched, Y_batched)
+        
+        new_states = step_vmapped(keys, states, minibatches)
+        return new_states, None  # No info returned
+    
+    # Generate keys for all steps and chains
+    n_chains = init_thetas.shape[0]
+    keys_flat = jax.random.split(rng_key, draws * n_chains)
+    keys = keys_flat.reshape(draws, n_chains, -1)  # (T, C, 2)
+    
+    Ln_vmapped = jax.jit(jax.vmap(Ln_eval_f64))
+    
+    result = drive_chains_batched(
+        rng_keys=keys,
+        init_state=init_state,
+        step_fn_vmapped=step_fn_vmapped,
+        n_steps=draws,
+        warmup=0,
+        eval_every=eval_every,
+        thin=thin,
+        position_fn=lambda s: s,  # SGHMC state is just position
+        Ln_eval_f64_vmapped=Ln_vmapped,
+        tiny_store_fn=tiny_store_fn,
+        info_extractors={},  # No extra info for SGHMC
+    )
+    
+    return result
+
+
 def run_hmc_chains_batched(
     *,
     rng_key,
@@ -399,6 +665,139 @@ def run_hmc_chains_batched(
         Ln_eval_f64_vmapped=Ln_vmapped,
         tiny_store_fn=tiny_store_fn,
         info_extractors=info_extractors,
+    )
+    
+    return result
+
+
+# ---------- SGHMC (Stochastic Gradient Hamiltonian Monte Carlo) ----------
+
+
+def run_sghmc_chain(
+    *,
+    rng_key: Array,
+    init_theta: Array,
+    grad_logpost_minibatch,  # (theta, (Xb,Yb)) -> grad
+    X: Array,
+    Y: Array,
+    n_data: int,
+    step_size: float,
+    temperature: float = 1.0,  # SGHMC temperature parameter
+    n_steps: int,
+    warmup: int,
+    batch_size: int,
+    eval_every: int,
+    thin: int,
+    Ln_eval_f64,
+    tiny_store_fn=default_tiny_store,
+    use_tqdm=True,
+    progress_label="SGHMC",
+    progress_update_every=50,
+    work_bump: Callable | None = None,
+) -> ChainResult:
+    """
+    Single chain SGHMC using BlackJAX implementation.
+    SGHMC adds momentum to SGLD for better exploration.
+    """
+    sghmc = blackjax.sghmc(grad_logpost_minibatch)
+    step_jit = jax.jit(sghmc.step)
+
+    def step_fn(key: Array, theta: Array):
+        k_noise, k_batch = jax.random.split(key)
+        idx = jax.random.randint(k_batch, (batch_size,), 0, n_data)
+        new_theta = step_jit(k_noise, theta, (X[idx], Y[idx]), step_size, temperature)
+        if work_bump:
+            work_bump()
+        return new_theta
+
+    init_state = sghmc.init(init_theta)
+    position_fn = lambda s: s
+    step_returns_info = False
+
+    return drive_chain(
+        rng_key=rng_key,
+        init_state=init_state,
+        step_fn=step_fn,
+        step_returns_info=step_returns_info,
+        n_steps=n_steps,
+        warmup=warmup,
+        eval_every=eval_every,
+        thin=thin,
+        position_fn=position_fn,
+        Ln_eval_f64=Ln_eval_f64,
+        tiny_store_fn=tiny_store_fn,
+        use_tqdm=use_tqdm,
+        progress_label=progress_label,
+        progress_update_every=progress_update_every,
+    )
+
+
+def run_sghmc_chains_batched(
+    *,
+    rng_key: Array,
+    init_thetas: Array,  # (C, d)
+    grad_logpost_minibatch,
+    X: Array,
+    Y: Array,
+    n_data: int,
+    step_size: float,
+    temperature: float = 1.0,
+    draws: int,
+    eval_every: int,
+    thin: int,
+    batch_size: int,
+    Ln_eval_f64,
+    tiny_store_fn=None,
+) -> BatchedResult:
+    """
+    Run multiple SGHMC chains in parallel using vmap + lax.scan.
+    """
+    sghmc = blackjax.sghmc(grad_logpost_minibatch)
+    
+    # Initialize all chains
+    init_state = jax.vmap(sghmc.init)(init_thetas)
+    
+    # Vmapped step function
+    def step_single(key, theta, minibatch):
+        return sghmc.step(key, theta, minibatch, step_size, temperature)
+    
+    step_vmapped = jax.jit(jax.vmap(step_single, in_axes=(0, 0, 0)))
+    
+    # Prepare vmapped step for drive_chains_batched
+    def step_fn_vmapped(keys, states):
+        # Sample minibatch indices per chain
+        batch_keys = keys  # keys already have shape (C, ...)
+        batch_indices = jax.vmap(
+            lambda k: jax.random.randint(k, (batch_size,), 0, n_data)
+        )(batch_keys)
+        
+        # Get minibatches per chain
+        X_batched = X[batch_indices]  # (C, batch_size, ...)
+        Y_batched = Y[batch_indices]  # (C, batch_size, ...)
+        minibatches = (X_batched, Y_batched)
+        
+        new_states = step_vmapped(keys, states, minibatches)
+        return new_states, None  # No info returned
+    
+    # Generate keys for all steps and chains
+    n_chains = init_thetas.shape[0]
+    keys_flat = jax.random.split(rng_key, draws * n_chains)
+    keys = keys_flat.reshape(draws, n_chains, -1)  # (T, C, 2)
+    
+    Ln_vmapped = jax.jit(jax.vmap(Ln_eval_f64))
+    
+    result = drive_chains_batched(
+        rng_keys=keys,
+        init_state=init_state,
+        step_fn_vmapped=step_fn_vmapped,
+        n_steps=draws,
+        warmup=0,
+        eval_every=eval_every,
+        thin=thin,
+        position_fn=lambda s: s,  # SGHMC state is just position
+        Ln_eval_f64_vmapped=Ln_vmapped,
+        tiny_store_fn=tiny_store_fn,
+        info_extractors={},  # No extra info for SGHMC
     )
     
     return result
@@ -560,6 +959,139 @@ def run_mclmc_chains_batched(
         Ln_eval_f64_vmapped=Ln_vmapped,
         tiny_store_fn=tiny_store_fn,
         info_extractors=info_extractors,
+    )
+    
+    return result
+
+
+# ---------- SGHMC (Stochastic Gradient Hamiltonian Monte Carlo) ----------
+
+
+def run_sghmc_chain(
+    *,
+    rng_key: Array,
+    init_theta: Array,
+    grad_logpost_minibatch,  # (theta, (Xb,Yb)) -> grad
+    X: Array,
+    Y: Array,
+    n_data: int,
+    step_size: float,
+    temperature: float = 1.0,  # SGHMC temperature parameter
+    n_steps: int,
+    warmup: int,
+    batch_size: int,
+    eval_every: int,
+    thin: int,
+    Ln_eval_f64,
+    tiny_store_fn=default_tiny_store,
+    use_tqdm=True,
+    progress_label="SGHMC",
+    progress_update_every=50,
+    work_bump: Callable | None = None,
+) -> ChainResult:
+    """
+    Single chain SGHMC using BlackJAX implementation.
+    SGHMC adds momentum to SGLD for better exploration.
+    """
+    sghmc = blackjax.sghmc(grad_logpost_minibatch)
+    step_jit = jax.jit(sghmc.step)
+
+    def step_fn(key: Array, theta: Array):
+        k_noise, k_batch = jax.random.split(key)
+        idx = jax.random.randint(k_batch, (batch_size,), 0, n_data)
+        new_theta = step_jit(k_noise, theta, (X[idx], Y[idx]), step_size, temperature)
+        if work_bump:
+            work_bump()
+        return new_theta
+
+    init_state = sghmc.init(init_theta)
+    position_fn = lambda s: s
+    step_returns_info = False
+
+    return drive_chain(
+        rng_key=rng_key,
+        init_state=init_state,
+        step_fn=step_fn,
+        step_returns_info=step_returns_info,
+        n_steps=n_steps,
+        warmup=warmup,
+        eval_every=eval_every,
+        thin=thin,
+        position_fn=position_fn,
+        Ln_eval_f64=Ln_eval_f64,
+        tiny_store_fn=tiny_store_fn,
+        use_tqdm=use_tqdm,
+        progress_label=progress_label,
+        progress_update_every=progress_update_every,
+    )
+
+
+def run_sghmc_chains_batched(
+    *,
+    rng_key: Array,
+    init_thetas: Array,  # (C, d)
+    grad_logpost_minibatch,
+    X: Array,
+    Y: Array,
+    n_data: int,
+    step_size: float,
+    temperature: float = 1.0,
+    draws: int,
+    eval_every: int,
+    thin: int,
+    batch_size: int,
+    Ln_eval_f64,
+    tiny_store_fn=None,
+) -> BatchedResult:
+    """
+    Run multiple SGHMC chains in parallel using vmap + lax.scan.
+    """
+    sghmc = blackjax.sghmc(grad_logpost_minibatch)
+    
+    # Initialize all chains
+    init_state = jax.vmap(sghmc.init)(init_thetas)
+    
+    # Vmapped step function
+    def step_single(key, theta, minibatch):
+        return sghmc.step(key, theta, minibatch, step_size, temperature)
+    
+    step_vmapped = jax.jit(jax.vmap(step_single, in_axes=(0, 0, 0)))
+    
+    # Prepare vmapped step for drive_chains_batched
+    def step_fn_vmapped(keys, states):
+        # Sample minibatch indices per chain
+        batch_keys = keys  # keys already have shape (C, ...)
+        batch_indices = jax.vmap(
+            lambda k: jax.random.randint(k, (batch_size,), 0, n_data)
+        )(batch_keys)
+        
+        # Get minibatches per chain
+        X_batched = X[batch_indices]  # (C, batch_size, ...)
+        Y_batched = Y[batch_indices]  # (C, batch_size, ...)
+        minibatches = (X_batched, Y_batched)
+        
+        new_states = step_vmapped(keys, states, minibatches)
+        return new_states, None  # No info returned
+    
+    # Generate keys for all steps and chains
+    n_chains = init_thetas.shape[0]
+    keys_flat = jax.random.split(rng_key, draws * n_chains)
+    keys = keys_flat.reshape(draws, n_chains, -1)  # (T, C, 2)
+    
+    Ln_vmapped = jax.jit(jax.vmap(Ln_eval_f64))
+    
+    result = drive_chains_batched(
+        rng_keys=keys,
+        init_state=init_state,
+        step_fn_vmapped=step_fn_vmapped,
+        n_steps=draws,
+        warmup=0,
+        eval_every=eval_every,
+        thin=thin,
+        position_fn=lambda s: s,  # SGHMC state is just position
+        Ln_eval_f64_vmapped=Ln_vmapped,
+        tiny_store_fn=tiny_store_fn,
+        info_extractors={},  # No extra info for SGHMC
     )
     
     return result

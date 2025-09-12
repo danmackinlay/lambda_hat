@@ -37,6 +37,16 @@ class BatchedResult:
 
 
 @dataclass
+class SamplerSpec:
+    """Interface for extensible sampler integration"""
+    name: str
+    step_vmapped: Callable[[jax.Array, Any], tuple[Any, Any] | Any]
+    position_fn: Callable[[Any], jax.Array]
+    info_extractors: Dict[str, Callable[[Any], jax.Array]] = None
+    grads_per_step: float = 1.0
+
+
+@dataclass
 class RunSummary:
     chains: List[ChainResult]
     kept_stacked: np.ndarray  # (C, draws, k) or (C, 0, k) if no storage
@@ -398,4 +408,54 @@ def drive_chains_batched(
     return BatchedResult(
         kept=kept, L_hist=L_hist, extras=extras,
         mean_L=mean, var_L=var, n_L=n, eval_time_seconds=0.0
+    )
+
+
+def run_sampler_spec(
+    spec: SamplerSpec,
+    *,
+    rng_key: jax.Array,
+    init_states: Any,
+    n_steps: int,
+    warmup: int = 0,
+    eval_every: int = 1,
+    thin: int = 1,
+    Ln_eval_f64_vmapped: Callable[[Array], Array],
+    tiny_store_fn: Callable[[Array], Array] | None = None,
+) -> BatchedResult:
+    """
+    Generic batched runner using SamplerSpec interface.
+    
+    Args:
+        spec: SamplerSpec defining the sampler behavior
+        rng_key: Base random key
+        init_states: Initial states for all chains (C, ...)
+        n_steps: Total number of steps
+        warmup: Warmup steps
+        eval_every: Evaluate Ln every N steps after warmup
+        thin: Keep tiny theta every N steps after warmup
+        Ln_eval_f64_vmapped: Function to evaluate log-likelihood on batch
+        tiny_store_fn: Optional function to extract subset/projection of theta
+    
+    Returns:
+        BatchedResult with chains, evaluations, and diagnostics
+    """
+    C = jax.tree_util.tree_leaves(init_states)[0].shape[0]
+    
+    # Generate keys for all steps and chains
+    keys_flat = jax.random.split(rng_key, n_steps * C)
+    rng_keys = keys_flat.reshape(n_steps, C, -1)
+    
+    return drive_chains_batched(
+        rng_keys=rng_keys,
+        init_state=init_states,
+        step_fn_vmapped=spec.step_vmapped,
+        n_steps=n_steps,
+        warmup=warmup,
+        eval_every=eval_every,
+        thin=thin,
+        position_fn=spec.position_fn,
+        Ln_eval_f64_vmapped=Ln_eval_f64_vmapped,
+        tiny_store_fn=tiny_store_fn,
+        info_extractors=spec.info_extractors or {}
     )
