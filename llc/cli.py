@@ -94,6 +94,7 @@ def add_run_arguments(parser: argparse.ArgumentParser) -> None:
         "--sgld-precond",
         choices=["none", "rmsprop", "adam"],
         help="Diagonal preconditioning for SGLD (default: none)",
+        default="adam"
     )
     parser.add_argument("--sgld-beta1", type=float, help="Adam beta1 (first moment)")
     parser.add_argument(

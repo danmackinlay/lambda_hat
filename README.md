@@ -1,6 +1,6 @@
 # Local Learning Coefficient Sampler Benchmarks
 
-This repo contains code to **estimate Local Learning Coefficients (LLCs)** for small neural networks using **stochastic gradient Langevin dynamics (SGLD)**, **Hamiltonian Monte Carlo (HMC)**, and **Microcanonical Langevin Monte Carlo (MCLMC)**, all implemented via [BlackJAX](https://github.com/blackjax-devs/blackjax/tree/1.2.5).
+This repo contains code to*estimate _Local Learning Coefficients (LLCs)_ for small neural networks using _stochastic gradient Langevin dynamics (SGLD)_, _Hamiltonian Monte Carlo (HMC)_, and _Microcanonical Langevin Monte Carlo (MCLMC)_, all implemented via [BlackJAX](https://github.com/blackjax-devs/blackjax/tree/1.2.5).
 
 ---
 
@@ -20,16 +20,16 @@ Ultimately, we want to devise and evaluate new sampling algorithms for singular 
 
 - `main.py` — end-to-end pipeline:
 
-  - Flexible **MLP model** with configurable depth, widths, activation (ReLU, tanh, GeLU, identity for deep-linear).
-  - **Teacher–student data generator** with parametric input distributions (isotropic Gaussian, anisotropic, mixture of Gaussians, low-dim manifolds, heavy-tailed).
+  - Small but non-trivial MLP model with configurable depth, widths, activation (ReLU, tanh, GeLU, identity for deep-linear).
+  - Teacher–student data generator with parametric input distributions (isotropic Gaussian, anisotropic, mixture of Gaussians, low-dim manifolds, heavy-tailed).
   - Noise models: Gaussian, heteroscedastic, Student-t, outliers.
-  - **ERM training** to locate the empirical minimizer \(w^\*\); the local Gaussian prior is centered at \(w^\*\).
-  - Tempered local posterior (\(\beta = \beta_0/\log n\) by default) + Gaussian localization (\(\gamma = d / r^2\) if `prior_radius` given).
+  - ERM training (i.e. SGD) to locate the empirical minimizer \(w^\*\); the local Gaussian prior is centered at \(w^\*\).
+  - Tempered local posterior (\(\beta = \beta_0/\log n\) by default) + Gaussian localization (\(\gamma = d / r^2\) if `prior_radius` given), which is the standard way of “doing LLC”.
+  - **Online LLC estimator** computed during sampling, using occasional full-batch loss evaluations.
   - **Samplers**:
-    - **SGLD** (unadjusted stochastic gradient Langevin dynamics, with minibatching, online LLC evaluation, optional RMSProp/Adam preconditioning to come).
+    - **SGLD** (unadjusted stochastic gradient Langevin dynamics, with minibatching, online LLC evaluation, optional RMSProp/Adam preconditioning).
     - **HMC** (full-batch, with BlackJAX `window_adaptation` to tune step size + diagonal mass).
     - **MCLMC** (microcanonical Langevin Monte Carlo, unadjusted, with automatic tuning of step size and momentum decoherence length `L` using [the official BlackJAX tuner](https://blackjax-devs.github.io/sampling-book/algorithms/mclmc.html)).
-  - **Online LLC estimator** (Def. 3.1 in the paper) computed during sampling, using occasional full-batch loss evaluations.
   - **Diagnostics via [ArviZ](https://python.arviz.org/):**
     - Running \(\hat\lambda_t\) (per-chain + pooled).
     - Trace, autocorrelation, ESS, and \(\hat R\) for \(L_n(w)\).
@@ -37,11 +37,9 @@ Ultimately, we want to devise and evaluate new sampling algorithms for singular 
     - HMC acceptance-rate histogram; MCLMC energy-change histogram.
   - **Work-normalized variance (WNV)** metrics: variance of LLC estimate × (wall-clock time or gradient-equivalent count).
 
----
+## Examples
 
-## Example Diagnostics
-
-These are examples from a recent run (promoted to `assets/readme/`).
+These are examples from a recent run.
 
 ### Running LLC Estimates
 
@@ -75,10 +73,9 @@ These are examples from a recent run (promoted to `assets/readme/`).
 We use [uv](https://docs.astral.sh/uv/) for dependency management:
 
 ```bash
-uv sync                    # Core dependencies only
+uv sync
 ```
 
-### Optional backends
 
 For distributed computing, install the appropriate backend:
 
@@ -104,7 +101,7 @@ Each configuration produces a deterministic run ID (hash of config + code versio
 # Use caching (default behavior)
 uv run python main.py run --preset=quick
 
-# Skip cache and force re-run  
+# Skip cache and force re-run
 uv run python main.py run --preset=quick --no-skip
 
 # Check cache behavior in sweep mode
@@ -117,16 +114,11 @@ uv run python main.py sweep --backend=local  # Caching enabled by default
 - Any change to mathematical parameters or code invalidates the cache
 - Non-mathematical flags (like `--no-artifacts`) don't affect the run ID
 
-**Benefits:**
-- **Reproducibility**: Run IDs bake in code version for honest caching
-- **Efficiency**: Avoid expensive re-computation during parameter exploration
-- **Simplicity**: No external database - just deterministic directory names
-
 ---
 
 ## Preconditioned SGLD (Optional)
 
-You can optionally enable **diagonal preconditioning** for SGLD to improve practical efficiency:
+You can optionally enable diagonal preconditioning for SGLD to improve practical efficiency:
 
 ```bash
 # RMSProp/pSGLD-style
@@ -137,11 +129,13 @@ uv run python main.py run --sgld-precond=adam --sgld-beta1=0.9 --sgld-beta2=0.99
   --sgld-eps=1e-8 --sgld-bias-correction
 ```
 
-These adaptive SGMCMC variants are **heuristics**: the per-parameter scale changes during sampling,
-so the chain is not strictly stationary for the target at all times. They are widely used in practice
-and often yield better mixing. Leave `--sgld-precond=none` (default) if you prefer the plain kernel.
+These adaptive SGMCMC variants are heuristics: the per-parameter scale changes during sampling,
+so the chain is not strictly stationary for the target at all times.
+They are widely used in practice and often yield better mixing than non-adaptive versions.
+Set `--sgld-precond=none`if you prefer the plain kernel.
 
 **Configuration options:**
+
 - `--sgld-precond`: Choose `none` (default), `rmsprop`, or `adam`
 - `--sgld-beta1`: Adam first-moment decay (default: 0.9)
 - `--sgld-beta2`: RMSProp/Adam second-moment decay (default: 0.999)
@@ -241,14 +235,16 @@ uv run python main.py sweep
 * Iterates over depth/width/activation/data/noise settings (see `sweep_space()`),
 * logs per-run LLC results and saves to `llc_sweep_results.csv`.
 
-#### Distributed sweeps
+## PArallelism
 
 **Local (default):**
+
 ```bash
 uv run python main.py sweep --backend=local --workers=4
 ```
 
 **SLURM cluster:**
+
 ```bash
 uv run python main.py sweep --backend=submitit \
   --partition=gpu --gpus=1 --timeout-min=60
@@ -337,7 +333,7 @@ uv run modal volume get llc-artifacts /artifacts ./artifacts
 
 ## Roadmap
 
-* **Preconditioned SGLD**: RMSProp-SGLD / Adam-SGLD (per Hitchcock & Hoogland’s findings).
+* **Preconditioned SGLD**: RMSProp-SGLD / Adam-SGLD.
 * **Adjusted MCLMC**: MH-corrected variant with adaptive step-size (target accept ≈0.9).
 * **Trans-dimensional moves**: exploring SLT’s *blow-ups* and richer sampler designs.
 * **Scaling studies**: push toward larger ReLU/GELU networks, beyond HMC’s limit, to stress-test SGLD/MCLMC.

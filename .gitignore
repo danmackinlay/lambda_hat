@@ -6,6 +6,11 @@ dist/
 wheels/
 *.egg-info
 
+# Agent and IDE cruft
+.vscode/
+.claude/
+.idea/
+
 # Virtual environments
 .venv
 
@@ -19,3 +24,7 @@ artifacts/*
 
 # Exception: tracked README example images
 !assets/readme/*.png
+
+# OS Cruft
+.DS_Store
+Thumbs.db
