@@ -7,6 +7,14 @@ from typing import Optional, Literal, List
 
 @dataclass
 class Config:
+    # ---- Target model selection ----
+    # "mlp": current neural network target (default)
+    # "quadratic": analytical diagnostic L_n(θ) = 0.5 ||θ||^2 (ignores data)
+    target: Literal["mlp", "quadratic"] = "mlp"
+    # For 'quadratic', you can set the parameter dimension here; if None we fall
+    # back to target_params (else in_dim).
+    quad_dim: Optional[int] = None
+
     # Model architecture
     in_dim: int = 32
     out_dim: int = 1

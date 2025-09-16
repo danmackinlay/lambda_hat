@@ -89,6 +89,10 @@ def add_run_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--width", type=int, help="Hidden layer width")
     parser.add_argument("--target-params", type=int, help="Target parameter count")
 
+    # Target selection
+    parser.add_argument("--target", choices=["mlp", "quadratic"], help="Target model")
+    parser.add_argument("--quad-dim", type=int, help="Parameter dimension for quadratic target")
+
     # SGLD parameters
     parser.add_argument("--sgld-steps", type=int, help="SGLD total steps")
     parser.add_argument("--sgld-warmup", type=int, help="SGLD warmup steps")
@@ -269,6 +273,12 @@ def override_config(cfg: Config, args: argparse.Namespace) -> Config:
         overrides["widths"] = infer_widths(
             cfg.in_dim, cfg.out_dim, cfg.depth, args.target_params
         )
+
+    # Target selection overrides
+    if getattr(args, "target", None) is not None:
+        overrides["target"] = args.target
+    if getattr(args, "quad_dim", None) is not None:
+        overrides["quad_dim"] = args.quad_dim
 
     return replace(cfg, **overrides) if overrides else cfg
 

@@ -17,14 +17,11 @@ from llc.pipeline import run_one
 def make_quadratic_config(d: int = 4, beta: float = 1.0) -> Config:
     """Create config for pure quadratic test L_n(θ) = 0.5||θ||²"""
     return Config(
-        # Model: just parameters (no actual network)
-        in_dim=d,
-        out_dim=1,
-        depth=0,  # No hidden layers
-        widths=[],
-        target_params=d,  # d parameters total
+        # Target: use quadratic instead of mlp
+        target="quadratic",
+        quad_dim=d,
 
-        # Data: dummy (won't be used with our custom loss)
+        # Data: dummy (required by interface but ignored)
         n_data=100,
 
         # Posterior: tempering only, no spatial prior
@@ -63,67 +60,40 @@ def run_quadratic_test():
 
     cfg = make_quadratic_config(d)
 
-    # We need to monkey-patch the loss function to use pure quadratic
-    # This is a bit of a hack but allows us to test without major refactoring
-    original_make_loss_fns = None
+    # Run the test - no monkey-patching needed with swappable target system
+    result = run_one(cfg, save_artifacts=False, skip_if_exists=False)
 
-    try:
-        from llc import losses
-        original_make_loss_fns = losses.make_loss_fns
+    print("\nResults:")
+    print("-" * 30)
 
-        def quadratic_loss_fns(unravel_fn, cfg, X, Y):
-            """Pure quadratic loss: L_n(θ) = 0.5||θ||²"""
-            def loss_full(theta_flat):
-                return 0.5 * jnp.sum(theta_flat ** 2)
+    results = {}
+    for sampler in ["sgld", "hmc", "mclmc"]:
+        llc_key = f"{sampler}_llc_mean"
+        if llc_key in result.metrics:
+            llc_value = result.metrics[llc_key]
+            ratio = llc_value / expected_llc
+            results[sampler] = (llc_value, ratio)
 
-            def loss_batch(theta_flat, batch):
-                # For quadratic, batch doesn't matter
-                return loss_full(theta_flat)
-
-            return loss_full, loss_batch
-
-        # Monkey patch
-        losses.make_loss_fns = quadratic_loss_fns
-
-        # Run the test
-        result = run_one(cfg, save_artifacts=False, skip_if_exists=False)
-
-        print("\nResults:")
-        print("-" * 30)
-
-        results = {}
-        for sampler in ["sgld", "hmc", "mclmc"]:
-            llc_key = f"{sampler}_llc_mean"
-            if llc_key in result.metrics:
-                llc_value = result.metrics[llc_key]
-                ratio = llc_value / expected_llc
-                results[sampler] = (llc_value, ratio)
-
-                status = "✓ GOOD" if 0.8 <= ratio <= 1.2 else "✗ BAD"
-                print(f"{sampler.upper():6s}: LLC = {llc_value:.3f}, ratio = {ratio:.2f} {status}")
-            else:
-                print(f"{sampler.upper():6s}: No result found")
-
-        print(f"\nExpected: LLC ≈ {expected_llc:.3f} (ratio ≈ 1.0)")
-        print("If any sampler shows ratio ≈ 2.0, it has a factor-of-2 bug")
-
-        # Check for factor-of-2 issues
-        bad_samplers = []
-        for sampler, (llc_value, ratio) in results.items():
-            if ratio > 1.8:  # Close to 2x
-                bad_samplers.append(sampler)
-
-        if bad_samplers:
-            print(f"\n⚠️  POTENTIAL FACTOR-OF-2 BUG in: {', '.join(bad_samplers)}")
-            return False
+            status = "✓ GOOD" if 0.8 <= ratio <= 1.2 else "✗ BAD"
+            print(f"{sampler.upper():6s}: LLC = {llc_value:.3f}, ratio = {ratio:.2f} {status}")
         else:
-            print(f"\n✅ All samplers passed the sanity test")
-            return True
+            print(f"{sampler.upper():6s}: No result found")
 
-    finally:
-        # Restore original function
-        if original_make_loss_fns is not None:
-            losses.make_loss_fns = original_make_loss_fns
+    print(f"\nExpected: LLC ≈ {expected_llc:.3f} (ratio ≈ 1.0)")
+    print("If any sampler shows ratio ≈ 2.0, it has a factor-of-2 bug")
+
+    # Check for factor-of-2 issues
+    bad_samplers = []
+    for sampler, (llc_value, ratio) in results.items():
+        if ratio > 1.8:  # Close to 2x
+            bad_samplers.append(sampler)
+
+    if bad_samplers:
+        print(f"\n⚠️  POTENTIAL FACTOR-OF-2 BUG in: {', '.join(bad_samplers)}")
+        return False
+    else:
+        print(f"\n✅ All samplers passed the sanity test")
+        return True
 
 if __name__ == "__main__":
     success = run_quadratic_test()

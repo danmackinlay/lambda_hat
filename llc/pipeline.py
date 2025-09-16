@@ -21,9 +21,7 @@ from .cache import run_id, load_cached_outputs
 
 # Set up logger
 logger = logging.getLogger(__name__)
-from .models import infer_widths, init_mlp_params
-from .data import make_dataset
-from .losses import as_dtype, make_loss_fns
+from .targets import build_target
 from .posterior import (
     compute_beta_gamma,
     make_logpost_and_score,
@@ -112,58 +110,29 @@ def run_one(
     else:
         run_dir = ""  # Don't save if not requested
 
-    logger.info("Building teacher and data")
+    logger.info("Building target")
     stats = RunStats()
 
     # Build timing
     t0 = tic()
     key = random.PRNGKey(cfg.seed)
 
-    X, Y, teacher_params, teacher_forward = make_dataset(key, cfg)
-
-    # Initialize student network parameters
-    key, subkey = random.split(key)
-    widths = cfg.widths or infer_widths(
-        cfg.in_dim, cfg.out_dim, cfg.depth, cfg.target_params, fallback_width=cfg.hidden
-    )
-    w0_pytree = init_mlp_params(
-        subkey, cfg.in_dim, widths, cfg.out_dim, cfg.activation, cfg.bias, cfg.init
-    )
-
+    # Build a self-contained target (NN, quadratic, …)
+    bundle = build_target(key, cfg)
     stats.t_build = toc(t0)
 
-    # Train to empirical minimizer (ERM) - center the local prior there
-    logger.info("Training to empirical minimizer...")
-    t1 = tic()
-    theta_star_f64, unravel_star_f64 = train_erm(
-        w0_pytree, cfg, X.astype(jnp.float64), Y.astype(jnp.float64)
-    )
-    stats.t_train = toc(t1)
-
-    # Create proper f32 unravel function (rebuild around f32 params)
-    params_star_f64 = unravel_star_f64(theta_star_f64)
-    params_star_f32 = jax.tree_util.tree_map(
-        lambda a: a.astype(jnp.float32), params_star_f64
-    )
-    theta_star_f32, unravel_star_f32 = ravel_pytree(params_star_f32)
-
-    # Center the local prior at θ⋆, not at the teacher
-    theta0_f64, unravel_f64 = theta_star_f64, unravel_star_f64
-    theta0_f32, unravel_f32 = theta_star_f32, unravel_star_f32
-
-    # Create dtype-specific data versions
-    X_f32, Y_f32 = as_dtype(X, cfg.sgld_dtype), as_dtype(Y, cfg.sgld_dtype)
-    X_f64, Y_f64 = as_dtype(X, cfg.hmc_dtype), as_dtype(Y, cfg.hmc_dtype)
-
-    dim = theta0_f32.size
+    theta0_f32 = bundle.theta0_f32
+    theta0_f64 = bundle.theta0_f64
+    X_f32, Y_f32, X_f64, Y_f64 = bundle.X_f32, bundle.Y_f32, bundle.X_f64, bundle.Y_f64
+    dim = bundle.d
     print(f"Parameter dimension: {dim:,d}")
 
     beta, gamma = compute_beta_gamma(cfg, dim)
     print(f"beta={beta:.6g} gamma={gamma:.6g}")
 
-    # Create loss functions for each dtype
-    loss_full_f32, loss_minibatch_f32 = make_loss_fns(unravel_f32, cfg, X_f32, Y_f32)
-    loss_full_f64, loss_minibatch_f64 = make_loss_fns(unravel_f64, cfg, X_f64, Y_f64)
+    # Loss functions supplied by the target
+    loss_full_f32, loss_minibatch_f32 = bundle.loss_full_f32, bundle.loss_minibatch_f32
+    loss_full_f64, loss_minibatch_f64 = bundle.loss_full_f64, bundle.loss_minibatch_f64
 
     # log posterior & gradient factories for each dtype
     logpost_and_grad_f32, grad_logpost_minibatch_f32 = make_logpost_and_score(
@@ -173,9 +142,9 @@ def run_one(
         loss_full_f64, loss_minibatch_f64, theta0_f64, cfg.n_data, beta, gamma
     )
 
-    # Recompute L0 at empirical minimizer (do this in float64 for both samplers)
-    L0 = float(loss_full_f64(theta0_f64))
-    print(f"L0 at empirical minimizer: {L0:.6f}")
+    # L0 is provided by the target (at θ0)
+    L0 = float(bundle.L0)
+    print(f"L0 at reference θ0: {L0:.6f}")
 
     # JIT compile the loss evaluator for LLC computation
     Ln_full64 = jit(loss_full_f64)
