@@ -94,7 +94,7 @@ def add_run_arguments(parser: argparse.ArgumentParser) -> None:
         "--sgld-precond",
         choices=["none", "rmsprop", "adam"],
         help="Diagonal preconditioning for SGLD (default: none)",
-        default="adam"
+        default="adam",
     )
     parser.add_argument("--sgld-beta1", type=float, help="Adam beta1 (first moment)")
     parser.add_argument(
@@ -301,10 +301,12 @@ def handle_sweep_command(args: argparse.Namespace) -> None:
     from llc.experiments import build_sweep_worklist, sweep_space
     from llc.execution import get_executor
     from llc.tasks import run_experiment_task  # used for local/submitit
+
     # For modal backend we need the remote function handle:
     remote_fn = None
     if (args.backend or "local").lower() == "modal":
         import modal
+
         # Look up the DEPLOYED function (do NOT import modal_app.run_experiment_remote)
         remote_fn = modal.Function.from_name("llc-experiments", "run_experiment_remote")
 
@@ -339,7 +341,7 @@ def handle_sweep_command(args: argparse.Namespace) -> None:
 
     # Normalize items -> list of cfg dicts the task/remote_fn expects
     cfg_dicts = []
-    for (_name, _param, _val, _seed, cfg) in items:
+    for _name, _param, _val, _seed, cfg in items:
         # dataclass -> dict; you can also use dataclasses.asdict(cfg)
         cfg_d = cfg.__dict__.copy()
         cfg_d["save_artifacts"] = not getattr(args, "no_artifacts", False)

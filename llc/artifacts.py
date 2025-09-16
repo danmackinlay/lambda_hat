@@ -162,8 +162,13 @@ def create_manifest(
             "gradient_work_definition": "SGLD: minibatch gradients, HMC: leapfrog steps, MCLMC: integration steps",
             "llc_scale_caveat": f"LLC computed with respect to {getattr(cfg, 'loss', 'unknown')} energy; for SLT-compatible LLC use proper NLL",
             "eval_density": {
-                s: getattr(cfg, f"{s}_eval_every", "N/A") if hasattr(cfg, f"{s}_eval_every")
-                   else (cfg.get(f"{s}_eval_every", "N/A") if isinstance(cfg, dict) else "N/A")
+                s: getattr(cfg, f"{s}_eval_every", "N/A")
+                if hasattr(cfg, f"{s}_eval_every")
+                else (
+                    cfg.get(f"{s}_eval_every", "N/A")
+                    if isinstance(cfg, dict)
+                    else "N/A"
+                )
                 for s in samplers_run
             },
         },

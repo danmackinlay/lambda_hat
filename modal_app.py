@@ -4,12 +4,12 @@ import modal
 # --- image: install from pyproject.toml + modal extra ---
 image = (
     modal.Image.debian_slim(python_version="3.11")
-    # Install all dependencies from pyproject.toml with modal extra
-    # (includes JAX via blackjax dependency - CPU by default)
+    # Install all deps first
     .pip_install_from_pyproject("pyproject.toml", optional_dependencies=["modal"])
-    .add_local_python_source("llc")  # ship the local Python package 'llc'
-    # Ensure x64 & headless plotting inside the container
+    # Set container env BEFORE adding local sources
     .env({"JAX_ENABLE_X64": "true", "MPLBACKEND": "Agg"})
+    # LAST: mount local source so code edits don't rebuild the image
+    .add_local_python_source("llc")
 )
 
 # For GPU support, users can create a custom image:
@@ -38,37 +38,71 @@ def run_experiment_remote(cfg_dict: dict) -> dict:
     """
     Remote entrypoint: identical signature to local task but with artifact support.
     """
-    # Runtime guard: set the flag before anything imports jax.
+    # Ensure x64 at runtime too (belt & suspenders; do this before heavy JAX use)
     import jax
-    jax.config.update("jax_enable_x64", True)
-    from llc.tasks import run_experiment_task
     import os
+    import shutil
 
-    # Force artifacts to be saved to the persistent volume for caching
-    cfg_dict.setdefault("save_artifacts", True)
+    jax.config.update("jax_enable_x64", True)
+
+    # Make caching effective across calls: write artifacts directly to the volume.
+    cfg_dict = dict(cfg_dict)
     if os.path.isdir("/artifacts"):
+        print("[Modal] Volume /artifacts exists, setting artifacts_dir=/artifacts")
+        cfg_dict.setdefault("save_artifacts", True)
         cfg_dict["artifacts_dir"] = "/artifacts"
+    else:
+        print(
+            "[Modal] Warning: Volume /artifacts not found, using default artifacts_dir"
+        )
 
-    # Run task and get result with run_dir
+    from llc.tasks import run_experiment_task
+
     result = run_experiment_task(cfg_dict)
 
-    # Sync artifacts to volume if run_dir was created
+    # Persist artifacts: if already in /artifacts (the volume), don't copy.
     if "run_dir" in result and result["run_dir"]:
-        import shutil
-        import os
-
         run_dir = result["run_dir"]
-        if os.path.exists(run_dir):
-            # Copy to volume mount
-            volume_run_dir = f"/artifacts/{os.path.basename(run_dir)}"
-            if os.path.exists(volume_run_dir):
-                shutil.rmtree(volume_run_dir)
-            shutil.copytree(run_dir, volume_run_dir)
+        print(f"[Modal] Handling artifacts: run_dir={run_dir}")
 
-            # Update result to point to volume location
-            result["run_dir"] = volume_run_dir
+        try:
+            if run_dir.startswith("/artifacts/"):
+                # Already on the volume → just commit metadata
+                print("[Modal] Artifacts already on volume, just committing")
+                artifacts_volume.commit()
+            else:
+                # Local tmp → copy into the volume once
+                print(f"[Modal] Copying from local tmp {run_dir} to volume")
+                if os.path.exists(run_dir):
+                    volume_run_dir = f"/artifacts/{os.path.basename(run_dir)}"
+                    print(f"[Modal] Target volume path: {volume_run_dir}")
 
-        # Commit volume changes
-        artifacts_volume.commit()
+                    # Ensure paths are not identical
+                    if os.path.abspath(run_dir) == os.path.abspath(volume_run_dir):
+                        print(
+                            "[Modal] Source and destination are identical, skipping copy"
+                        )
+                        artifacts_volume.commit()
+                    else:
+                        if os.path.exists(volume_run_dir):
+                            print(f"[Modal] Removing existing {volume_run_dir}")
+                            shutil.rmtree(volume_run_dir)
+                        print(f"[Modal] Copying {run_dir} -> {volume_run_dir}")
+                        shutil.copytree(run_dir, volume_run_dir)
+                        result["run_dir"] = volume_run_dir
+                        artifacts_volume.commit()
+                else:
+                    print(
+                        f"[Modal] Warning: run_dir {run_dir} does not exist, skipping copy"
+                    )
+        except Exception as e:
+            print(f"[Modal] Error handling artifacts: {e}")
+            # Still try to commit in case there are partial changes
+            try:
+                artifacts_volume.commit()
+            except Exception as e2:
+                print(f"[Modal] Error committing volume: {e2}")
+    else:
+        print("[Modal] No run_dir in result, skipping artifact handling")
 
     return result
