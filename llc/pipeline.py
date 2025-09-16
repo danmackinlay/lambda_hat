@@ -83,7 +83,14 @@ def run_one(
     """
     # Compute deterministic run ID
     rid = run_id(cfg)
-    run_dir = os.path.join(cfg.artifacts_dir, rid)
+    # Use canonical runs/ directory, fallback to artifacts_dir for backward compatibility
+    if hasattr(cfg, 'artifacts_dir') and cfg.artifacts_dir.endswith('/artifacts'):
+        base_dir = cfg.artifacts_dir.replace('/artifacts', '')
+        run_dir = os.path.join(base_dir, "runs", rid)
+    elif cfg.artifacts_dir == "artifacts":
+        run_dir = os.path.join("runs", rid)
+    else:
+        run_dir = os.path.join(cfg.artifacts_dir, rid)
 
     # Check if we should skip (results already exist)
     if skip_if_exists and os.path.exists(os.path.join(run_dir, "metrics.json")):
@@ -493,13 +500,18 @@ def run_one(
         gallery_path = generate_gallery_html(run_dir, cfg, all_metrics)
         print(f"HTML gallery: {gallery_path}")
 
-        # Create a timestamped symlink for tooling/browsing (optional)
+        # Create convenience timestamp symlink in artifacts/ for completed runs
         try:
+            from llc.manifest import create_timestamp_symlink
             ts = datetime.now().strftime("%Y%m%d-%H%M%S")
-            ts_path = Path(cfg.artifacts_dir) / ts
-            if not ts_path.exists():
-                ts_path.symlink_to(Path(run_dir).resolve(), target_is_directory=True)
-                print(f"Symlinked {ts_path} -> {run_dir}")
+            # Determine artifacts directory from run_dir
+            if "/runs/" in run_dir:
+                artifacts_dir = Path(run_dir).parent.parent / "artifacts"
+            else:
+                artifacts_dir = Path(cfg.artifacts_dir)
+            artifacts_dir.mkdir(exist_ok=True)
+            create_timestamp_symlink(artifacts_dir, ts, rid)
+            print(f"Created timestamp symlink: {ts} -> runs/{rid}")
         except Exception as e:
             logger.warning(f"Could not create timestamp symlink: {e}")
 

@@ -174,9 +174,10 @@ def create_manifest(
         },
     }
 
-    manifest_path = f"{run_dir}/manifest.json"
-    with open(manifest_path, "w") as f:
-        json.dump(manifest, f, indent=2)
+    from llc.manifest import write_manifest_atomic
+    from pathlib import Path
+    manifest_path = Path(run_dir) / "manifest.json"
+    write_manifest_atomic(manifest_path, manifest)
 
     return manifest_path
 

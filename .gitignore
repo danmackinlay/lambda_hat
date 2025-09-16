@@ -17,6 +17,8 @@ wheels/
 # Artifacts and visualization outputs
 artifacts/*
 !artifacts/.keep
+runs/*
+!runs/.keep
 *.png
 *.jpg
 *.jpeg

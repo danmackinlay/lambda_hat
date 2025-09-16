@@ -13,6 +13,9 @@ import sys
 import re
 from datetime import datetime
 
+# Add parent directory to path for llc module imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 # Which files to copy (left = substring to match in artifacts, right = stable name in assets)
 SELECT = [
     ("sgld_running_llc", "sgld_llc_running.png"),
@@ -33,11 +36,44 @@ def _has_needed_artifacts(p: Path) -> bool:
     return any(key in name for key, _ in SELECT for name in pngs)
 
 
-def latest_run_dir(artifacts_dir: Path) -> Path:
-    """Pick the newest run (hash or timestamp dir, symlinks ok) that actually has artifacts."""
-    if not artifacts_dir.exists():
-        raise SystemExit(f"Artifacts directory not found: {artifacts_dir}")
+def latest_run_dir(root_dir: Path) -> Path:
+    """Pick the newest completed run from canonical runs/ directory."""
+    runs_dir = root_dir / "runs"
 
+    if not runs_dir.exists():
+        # Fallback to old artifacts/ scanning for backward compatibility
+        artifacts_dir = root_dir / "artifacts"
+        if not artifacts_dir.exists():
+            raise SystemExit("Neither runs/ nor artifacts/ directory found")
+        return _latest_from_artifacts(artifacts_dir)
+
+    from llc.manifest import is_run_completed, get_run_start_time
+
+    candidates: list[tuple[float, Path]] = []
+    for run_dir in runs_dir.iterdir():
+        if not run_dir.is_dir():
+            continue
+
+        # Only consider completed runs
+        if not is_run_completed(run_dir):
+            continue
+
+        # Get start time for sorting
+        start_time = get_run_start_time(run_dir)
+        if start_time is None:
+            start_time = run_dir.stat().st_mtime  # fallback to dir mtime
+
+        candidates.append((start_time, run_dir))
+
+    if not candidates:
+        raise SystemExit("No completed runs found in runs/")
+
+    candidates.sort(key=lambda t: t[0])
+    return candidates[-1][1]
+
+
+def _latest_from_artifacts(artifacts_dir: Path) -> Path:
+    """Fallback: pick newest run from artifacts/ using old logic."""
     candidates: list[tuple[float, Path]] = []
     for p in artifacts_dir.iterdir():
         if not p.is_dir():
@@ -81,7 +117,6 @@ def find_first_match(run_dir: Path, key: str) -> Path | None:
 
 def main():
     root = Path(__file__).resolve().parents[1]
-    artifacts = root / "artifacts"
     assets = root / "assets" / "readme"
     assets.mkdir(parents=True, exist_ok=True)
 
@@ -89,7 +124,7 @@ def main():
     if len(sys.argv) > 1:
         run_dir = Path(sys.argv[1]).resolve()
     else:
-        run_dir = latest_run_dir(artifacts)
+        run_dir = latest_run_dir(root)
 
     if not run_dir.exists():
         raise SystemExit(f"Run dir not found: {run_dir}")
