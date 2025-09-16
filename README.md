@@ -207,6 +207,15 @@ uv run python main.py run --preset=quick --no-artifacts
 uv run python main.py run --preset=quick
 ```
 
+#### Remote single runs
+```bash
+# Run one job on Modal
+uv run python main.py run --backend=modal --preset=quick
+
+# Run one job on SLURM
+uv run python main.py run --backend=submitit --preset=quick
+```
+
 #### Full run
 ```bash
 uv run python main.py run --preset=full
@@ -251,24 +260,46 @@ rm -rf artifacts/* llc_sweep_results.csv __pycache__ *.pyc
 uv run python scripts/promote_readme_images.py
 ```
 
-### Updating README Examples
+## Refreshing README figures
 
-To refresh the example plots in the README:
+We keep a few diagnostic plots in `assets/readme/` for illustration.
+
+### Local run (fastest on your machine)
 
 ```bash
-uv run python main.py run --preset=quick    # Run a quick diagnostic with plots
-uv run python scripts/promote_readme_images.py  # Copy selected plots to assets/readme/
-git add assets/readme                       # Stage the new images
+uv run python main.py run --preset=quick
+uv run python scripts/promote_readme_images.py
+git add assets/readme
 git commit -m "refresh README examples"
 ```
 
-The promotion script automatically selects key diagnostic plots and copies them to stable filenames in `assets/readme/`. No manual file management needed.
+### Remote run on Modal (one cheap job)
 
-### Caching tip (saves money on Modal)
+```bash
+# 1) run once on Modal (writes to the volume: /artifacts/<run_id>)
+uv run python main.py run --backend=modal --preset=quick
 
-Artifacts are written under `cfg.artifacts_dir`. Re-use a **persistent** location across runs (e.g., Modal volume `/artifacts` as set in `modal_app.py`) so `--skip-if-exists` short-circuits repeat work. The system computes a deterministic `run_id(cfg)` and skips when `metrics.json` exists in the persistent volume.
+# 2) pull the latest run back locally (no need to copy/paste the run_id)
+uv run python scripts/pull_artifacts.py
 
----
+# 3) promote images as usual
+uv run python scripts/promote_readme_images.py
+git add assets/readme
+git commit -m "refresh README examples"
+```
+
+If you prefer a specific run:
+
+```bash
+uv run python scripts/pull_artifacts.py <run_id>
+```
+
+Notes:
+
+* The Modal volume name is `llc-artifacts` (see Makefile targets `modal-ls`, `modal-get`)【】.
+* The pipeline writes artifacts under `artifacts/<run_id>` locally, and `/artifacts/<run_id>` on Modal; the README promoter already selects the **latest** local run automatically【】.
+* Use `--no-skip` if you need to force recompute; by default identical config+code uses the cached run (see the caching logic driven by `run_id(cfg)` in `llc/cache.py`)【】.
+
 
 ## Usage
 

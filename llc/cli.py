@@ -28,6 +28,13 @@ def create_parser() -> argparse.ArgumentParser:
     run_parser = subparsers.add_parser(
         "run", help="Run single experiment (default if no subcommand)"
     )
+    # Add backend support for single runs
+    run_parser.add_argument(
+        "--backend",
+        choices=["local", "submitit", "modal"],
+        default="local",
+        help="Execution backend for this run (default: local)",
+    )
     add_run_arguments(run_parser)
 
     # Sweep subcommand
@@ -266,7 +273,7 @@ def override_config(cfg: Config, args: argparse.Namespace) -> Config:
 
 
 def handle_run_command(args: argparse.Namespace) -> None:
-    """Handle the run subcommand"""
+    """Handle the run subcommand (local, submitit, or modal)"""
     cfg = CFG
 
     # Apply preset if specified
@@ -276,11 +283,45 @@ def handle_run_command(args: argparse.Namespace) -> None:
     # Apply command line overrides
     cfg = override_config(cfg, args)
 
-    # Run the pipeline
     save_artifacts = not getattr(args, "no_artifacts", False)
     skip_if_exists = getattr(args, "skip_if_exists", True)
 
-    result = run_one(cfg, save_artifacts=save_artifacts, skip_if_exists=skip_if_exists)
+    backend = (getattr(args, "backend", "local") or "local").lower()
+
+    if backend == "local":
+        # Original local path
+        result = run_one(cfg, save_artifacts=save_artifacts, skip_if_exists=skip_if_exists)
+
+    else:
+        # Route through the same executor/task used by sweep
+        from llc.execution import get_executor
+        from llc.tasks import run_experiment_task
+
+        cfg_dict = cfg.__dict__.copy()
+        cfg_dict["save_artifacts"] = save_artifacts
+
+        if backend == "modal":
+            # Use deployed function by name (Modal 1.0 API)
+            import modal
+            remote_fn = modal.Function.from_name("llc-experiments", "run_experiment_remote")
+            executor = get_executor(backend="modal", remote_fn=remote_fn)
+            [result_dict] = executor.map(run_experiment_task, [cfg_dict])
+        elif backend == "submitit":
+            # Fire one job on the cluster and wait
+            executor = get_executor(backend="submitit")
+            [result_dict] = executor.map(run_experiment_task, [cfg_dict])
+        else:
+            raise ValueError(f"Unknown backend: {backend}")
+
+        # Print a small summary and adapt shape to local 'result'
+        result = type("RunOutputs", (), {})()
+        result.run_dir = result_dict.get("run_dir", "")
+        result.metrics = {}
+        for s in ("sgld", "hmc", "mclmc"):
+            if f"llc_{s}" in result_dict:
+                result.metrics[f"{s}_llc_mean"] = float(result_dict[f"llc_{s}"])
+        result.histories = {}
+        result.L0 = 0.0
 
     # Print summary
     print("\n=== Final Results ===")
