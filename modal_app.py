@@ -1,14 +1,5 @@
 # modal_app.py
 import modal
-import subprocess
-
-# Get current git commit for cache invalidation
-try:
-    git_version = subprocess.check_output(
-        ["git", "rev-parse", "HEAD"], text=True, stderr=subprocess.DEVNULL
-    ).strip()[:12]
-except Exception:
-    git_version = "unknown"
 
 # --- image: install from pyproject.toml + modal extra ---
 image = (
@@ -19,7 +10,8 @@ image = (
     .env({
         "JAX_ENABLE_X64": "true",
         "MPLBACKEND": "Agg",
-        "LLC_CODE_VERSION": git_version,  # Ensure cache invalidation works on Modal
+        # Optional: set LLC_CODE_VERSION here if you want to override the file hash
+        # "LLC_CODE_VERSION": "deploy-123",
     })
     # LAST: mount local source so code edits don't rebuild the image
     .add_local_python_source("llc")

@@ -7,7 +7,7 @@ Uses hash of normalized config + code version to generate run IDs.
 import hashlib
 import json
 import os
-import subprocess
+import glob
 from dataclasses import asdict, is_dataclass
 from typing import Any, Dict, Optional
 from pathlib import Path
@@ -40,44 +40,23 @@ def _normalize_cfg(cfg) -> Dict[str, Any]:
 
 
 def _code_version() -> str:
-    """
-    Code version fingerprint.
-    Prefer git (rev + dirty). If git is unavailable (e.g. Modal runtime),
-    fall back to hashing the contents of the local source files.
-    Can be overridden by LLC_CODE_VERSION env var.
-    """
-    # 0) explicit override
-    env_override = os.environ.get("LLC_CODE_VERSION")
-    if env_override:
-        return env_override
+    """Return a code fingerprint:
+    1) if LLC_CODE_VERSION env is set, use it (for CI/Modal);
+    2) else hash local source files so code changes invalidate cache automatically."""
+    v = os.environ.get("LLC_CODE_VERSION")
+    if v:
+        return str(v)
 
-    # 1) try git
-    try:
-        rev = subprocess.check_output(
-            ["git", "rev-parse", "HEAD"], text=True, stderr=subprocess.DEVNULL
-        ).strip()
-        dirty = subprocess.check_output(
-            ["git", "status", "--porcelain"], text=True, stderr=subprocess.DEVNULL
-        ).strip()
-        return f"{rev[:12]}{'+dirty' if dirty else ''}"
-    except Exception:
-        pass
-
-    # 2) fallback: hash source files (stable across machines)
-    try:
-        import glob
-        paths = (
-            glob.glob("llc/**/*.py", recursive=True)
-            + glob.glob("llc/*.py")
-            + ["pyproject.toml"]
-        )
-        h = hashlib.sha1()
-        for p in sorted(set(filter(os.path.exists, paths))):
-            with open(p, "rb") as f:
-                h.update(f.read())
-        return f"filesha-{h.hexdigest()[:12]}"
-    except Exception:
-        return "unknown"
+    paths = (
+        glob.glob("llc/**/*.py", recursive=True)
+        + glob.glob("llc/*.py")
+        + ["pyproject.toml"]
+    )
+    h = hashlib.sha1()
+    for p in sorted({p for p in paths if os.path.exists(p)}):
+        with open(p, "rb") as f:
+            h.update(f.read())
+    return f"filesha-{h.hexdigest()[:12]}"
 
 
 def run_id(cfg) -> str:

@@ -93,48 +93,33 @@ pip install llc[modal]     # Modal support
 
 ---
 
-## Caching, Skipping, and Re-running
+## Caching & Skipping
 
-Every run gets a deterministic **run ID** derived from:
+Each run is keyed by a hash of (normalized config, code fingerprint).
 
-* **Config hash**: the mathematical parts of your config (model, data, sampler settings).
-* **Code version**: by default, the current git commit (`abcdef12+dirty`). If git metadata is unavailable (e.g. Modal containers), we fall back to hashing the source files under `llc/**/*.py` and `pyproject.toml`.
+**Code fingerprint:**
+- If `LLC_CODE_VERSION` is set in environment → use it
+- Otherwise → hash of all source files (`llc/**/*.py` + `pyproject.toml`)
 
-That means:
+**Default behavior:** Skip if a run with the same key already exists.
 
-* If you rerun the same config on the same code, the run ID is the same, and `--skip-if-exists` (the default) will cause the pipeline to short-circuit and just load cached metrics/artifacts.
-* If you change code or config, the run ID changes, and you’ll get a fresh run.
+**Force recompute:** Add `--no-skip`
 
-### Forcing a re-run
+```bash
+# Normal run (uses cache if available)
+uv run python main.py run --preset=quick
 
-There are three supported ways to bust the cache:
+# Force re-run even if cached
+uv run python main.py run --preset=quick --no-skip
 
-1. **`--no-skip`**
-   Completely disables caching for that invocation. All runs recompute even if results exist.
+# Override code version (for CI/Modal deployments)
+LLC_CODE_VERSION=deploy-123 uv run python main.py run
+```
 
-   ```bash
-   uv run python main.py run --preset=quick --no-skip
-   ```
-
-2. **Code or config change**
-   Any edit to `llc/*.py` or to the config parameters produces a new run ID automatically (on Modal too, thanks to the file-hash fallback).
-
-3. **Explicit override**
-
-   * **Environment:** set `LLC_CODE_VERSION=foo123` to force a new “code version” string.
-   * **CLI:** use `--cache-salt=some_label` to append an arbitrary salt into the hash.
-
-   Both let you separate results even if code+config are unchanged (useful for A/B comparisons or when external state changes). Example:
-
-   ```bash
-   uv run python main.py run --preset=quick --cache-salt=sgld-tweak1
-   ```
-
-### Good defaults
-
-* **Local runs with git:** cache keys are human-readable (`commit+dirty`).
-* **Modal/SLURM without git:** file hashes ensure run IDs still change when you change code.
-* **CI/CD or experiments:** `LLC_CODE_VERSION` or `--cache-salt` let you opt-out of caching for selected jobs without throwing away all caches.
+**Tips:**
+- Editing any `llc/*.py` file changes the fingerprint automatically
+- On Modal/CI, set `LLC_CODE_VERSION` to a build ID if you want explicit control
+- The cache works everywhere (local, Modal, SLURM) with the same logic
 
 
 ---
