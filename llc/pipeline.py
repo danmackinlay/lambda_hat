@@ -405,6 +405,7 @@ def run_one(
         save_config(run_dir, cfg)
 
         # Generate diagnostic plots if enabled
+        print(f"save_plots={cfg.save_plots} diag_mode={cfg.diag_mode}")
         if cfg.diag_mode != "none" and cfg.save_plots:
             logger.info("Generating diagnostic plots...")
 

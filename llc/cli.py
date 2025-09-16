@@ -126,6 +126,11 @@ def add_run_arguments(parser: argparse.ArgumentParser) -> None:
     )
     parser.set_defaults(sgld_bias_correction=None)
 
+    # Plotting
+    parser.add_argument("--save-plots", dest="save_plots", action="store_true", help="Save diagnostic plots")
+    parser.add_argument("--no-save-plots", dest="save_plots", action="store_false", help="Don't save diagnostic plots")
+    parser.set_defaults(save_plots=None)
+
     # HMC parameters
     parser.add_argument("--hmc-draws", type=int, help="HMC total draws")
     parser.add_argument("--hmc-warmup", type=int, help="HMC warmup steps")
@@ -174,45 +179,7 @@ def add_sweep_arguments(parser: argparse.ArgumentParser) -> None:
     )
 
 
-def apply_preset(cfg: Config, preset: str) -> Config:
-    """Apply preset configurations for quick testing or thorough analysis"""
-    if preset == "quick":
-        return replace(
-            cfg,
-            sgld_steps=1000,
-            sgld_warmup=200,
-            sgld_eval_every=100,
-            sgld_thin=5,
-            hmc_draws=200,
-            hmc_warmup=100,
-            hmc_eval_every=20,
-            hmc_thin=2,
-            mclmc_draws=400,
-            mclmc_eval_every=40,
-            mclmc_thin=2,
-            chains=2,
-            n_data=1000,
-            save_plots=True,
-        )
-    elif preset == "full":
-        return replace(
-            cfg,
-            sgld_steps=10000,
-            sgld_warmup=2000,
-            sgld_eval_every=100,
-            sgld_thin=10,
-            hmc_draws=2000,
-            hmc_warmup=1000,
-            hmc_eval_every=20,
-            hmc_thin=5,
-            mclmc_draws=4000,
-            mclmc_eval_every=40,
-            mclmc_thin=5,
-            chains=4,
-            n_data=5000,
-        )
-    else:
-        raise ValueError(f"Unknown preset: {preset}")
+from .presets import apply_preset
 
 
 def override_config(cfg: Config, args: argparse.Namespace) -> Config:
@@ -279,6 +246,10 @@ def override_config(cfg: Config, args: argparse.Namespace) -> Config:
         overrides["target"] = args.target
     if getattr(args, "quad_dim", None) is not None:
         overrides["quad_dim"] = args.quad_dim
+
+    # Plotting overrides
+    if getattr(args, "save_plots", None) is not None:
+        overrides["save_plots"] = args.save_plots
 
     return replace(cfg, **overrides) if overrides else cfg
 

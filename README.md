@@ -18,7 +18,7 @@ Ultimately, we want to devise and evaluate new sampling algorithms for singular 
 
 ## What’s inside
 
-- `main.py` — end-to-end pipeline:
+- **Unified CLI** (`uv run python -m llc`) — end-to-end pipeline:
 
   - Small but non-trivial MLP model with configurable depth, widths, activation (ReLU, tanh, GeLU, identity for deep-linear).
   - Teacher–student data generator with parametric input distributions (isotropic Gaussian, anisotropic, mixture of Gaussians, low-dim manifolds, heavy-tailed).
@@ -107,13 +107,13 @@ Each run is keyed by a hash of (normalized config, code fingerprint).
 
 ```bash
 # Normal run (uses cache if available)
-uv run python main.py run --preset=quick
+uv run python -m llc run --preset=quick
 
 # Force re-run even if cached
-uv run python main.py run --preset=quick --no-skip
+uv run python -m llc run --preset=quick --no-skip
 
 # Override code version (for CI/Modal deployments)
-LLC_CODE_VERSION=deploy-123 uv run python main.py run
+LLC_CODE_VERSION=deploy-123 uv run python -m llc run
 ```
 
 **Tips:**
@@ -130,10 +130,10 @@ You can optionally enable diagonal preconditioning for SGLD to improve practical
 
 ```bash
 # RMSProp/pSGLD-style
-uv run python main.py run --sgld-precond=rmsprop --sgld-beta2=0.999 --sgld-eps=1e-8
+uv run python -m llc run --sgld-precond=rmsprop --sgld-beta2=0.999 --sgld-eps=1e-8
 
 # Adam-preconditioned SGLD
-uv run python main.py run --sgld-precond=adam --sgld-beta1=0.9 --sgld-beta2=0.999 \
+uv run python -m llc run --sgld-precond=adam --sgld-beta1=0.9 --sgld-beta2=0.999 \
   --sgld-eps=1e-8 --sgld-bias-correction
 ```
 

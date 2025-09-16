@@ -13,6 +13,9 @@ dependencies = [
     "tqdm>=4.67.1",
 ]
 
+[project.scripts]
+llc = "llc.cli:main"
+
 [project.optional-dependencies]
 # SLURM backend
 slurm = ["submitit>=1.5"]        # Python 3.8+ and SLURM-friendly toolbox
