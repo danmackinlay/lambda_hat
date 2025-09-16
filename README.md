@@ -186,16 +186,61 @@ uv run python main.py run --preset=quick --no-artifacts
 uv run python main.py run --preset=quick --no-skip
 ```
 
-### Makefile Targets
+### Common Tasks
 
-The included Makefile provides convenient shortcuts:
+Below are copy-paste commands for typical workflows:
 
+#### Local quick runs
 ```bash
-make run-save       # Run with visualization saving enabled
-make diag           # Quick test run with plots
-make clean          # Remove all artifacts
-make artifacts      # Create artifacts directory
-make promote-readme # Copy plots from latest run to README assets
+# Fastest smoke test (no artifacts)
+uv run python main.py run --preset=quick --no-artifacts
+
+# Quick with artifacts (plots, NetCDF, manifest, gallery)
+uv run python main.py run --preset=quick
+```
+
+#### Full run
+```bash
+uv run python main.py run --preset=full
+```
+
+#### Parameter sweep (local CPU)
+```bash
+# Serial execution
+uv run python main.py sweep
+
+# Parallel on N local workers
+uv run python main.py sweep --backend=local --workers=8
+```
+
+#### Modal (serverless) — deploy once, then sweep
+```bash
+# 1) Deploy the app
+uv run modal deploy modal_app.py
+
+# 2) Run a tiny validation job (cheap test)
+python - <<'PY'
+import modal
+fn = modal.Function.from_name("llc-experiments","run_experiment_remote")
+print(fn.call({"preset":"quick","save_artifacts":True}))
+PY
+
+# 3) Sweep on Modal (use small n-seeds while testing)
+uv run python main.py sweep --backend=modal --n-seeds=1 --preset=quick
+```
+
+#### SLURM (Submitit)
+```bash
+uv run python main.py sweep --backend=submitit  # add your submitit params if needed
+```
+
+#### Development utilities
+```bash
+# Clean generated artifacts
+rm -rf artifacts/* llc_sweep_results.csv __pycache__ *.pyc
+
+# Promote plots for README
+uv run python scripts/promote_readme_images.py
 ```
 
 ### Updating README Examples
@@ -203,13 +248,17 @@ make promote-readme # Copy plots from latest run to README assets
 To refresh the example plots in the README:
 
 ```bash
-make diag                    # Run a quick diagnostic with plots
-make promote-readme         # Copy selected plots to assets/readme/
-git add assets/readme       # Stage the new images
+uv run python main.py run --preset=quick    # Run a quick diagnostic with plots
+uv run python scripts/promote_readme_images.py  # Copy selected plots to assets/readme/
+git add assets/readme                       # Stage the new images
 git commit -m "refresh README examples"
 ```
 
 The promotion script automatically selects key diagnostic plots and copies them to stable filenames in `assets/readme/`. No manual file management needed.
+
+### Caching tip (saves money on Modal)
+
+Artifacts are written under `cfg.artifacts_dir`. Re-use a **persistent** location across runs (e.g., Modal volume `/artifacts` as set in `modal_app.py`) so `--skip-if-exists` short-circuits repeat work. The system computes a deterministic `run_id(cfg)` and skips when `metrics.json` exists in the persistent volume.
 
 ---
 
@@ -235,7 +284,7 @@ uv run python main.py sweep
 * Iterates over depth/width/activation/data/noise settings (see `sweep_space()`),
 * logs per-run LLC results and saves to `llc_sweep_results.csv`.
 
-## PArallelism
+## Parallelism
 
 **Local (default):**
 
