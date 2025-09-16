@@ -297,9 +297,16 @@ def handle_run_command(args: argparse.Namespace) -> None:
 
 def handle_sweep_command(args: argparse.Namespace) -> None:
     """Handle the sweep subcommand"""
-    # Import sweep functionality
-    from llc.experiments import build_sweep_worklist
+    # Import sweep & execution utilities
+    from llc.experiments import build_sweep_worklist, sweep_space
     from llc.execution import get_executor
+    from llc.tasks import run_experiment_task  # used for local/submitit
+    # For modal backend we need the remote function handle:
+    remote_fn = None
+    if (args.backend or "local").lower() == "modal":
+        import modal
+        # Look up the DEPLOYED function (do NOT import modal_app.run_experiment_remote)
+        remote_fn = modal.Function.from_name("llc-experiments", "run_experiment_remote")
 
     # Build sweep configuration
     base_cfg = CFG
@@ -308,25 +315,39 @@ def handle_sweep_command(args: argparse.Namespace) -> None:
 
     base_cfg = override_config(base_cfg, args)
 
-    # Build worklist
-    items = build_sweep_worklist(base_cfg, n_seeds=args.n_seeds)
+    # build_sweep_worklist expects a dict returned by sweep_space():
+    sweep_cfg = sweep_space()
+    sweep_cfg["base"] = base_cfg  # use our preset/overridden base config
+    items = build_sweep_worklist(sweep_cfg, n_seeds=args.n_seeds)
 
     print(f"Running sweep with {len(items)} configurations on {args.backend} backend")
     if args.backend == "local" and args.workers > 1:
         print(f"Using {args.workers} parallel workers")
 
     # Get executor and run
+    modal_opts = None
+    if args.backend == "modal":
+        # Cap Modal parallelism for cost control during development
+        modal_opts = {"max_containers": 1, "min_containers": 0, "buffer_containers": 0}
+
     executor = get_executor(
-        backend=args.backend, workers=args.workers if args.backend == "local" else None
+        backend=args.backend,
+        workers=args.workers if args.backend == "local" else None,
+        remote_fn=remote_fn,  # required for modal backend
+        options=modal_opts,
     )
 
-    from llc.tasks import run_experiment_task
+    # Normalize items -> list of cfg dicts the task/remote_fn expects
+    cfg_dicts = []
+    for (_name, _param, _val, _seed, cfg) in items:
+        # dataclass -> dict; you can also use dataclasses.asdict(cfg)
+        cfg_d = cfg.__dict__.copy()
+        cfg_d["save_artifacts"] = not getattr(args, "no_artifacts", False)
+        cfg_dicts.append(cfg_d)
 
-    # Add save_artifacts flag to each item
-    for item in items:
-        item["cfg"]["save_artifacts"] = not getattr(args, "no_artifacts", False)
-
-    results = executor.map(run_experiment_task, [item["cfg"] for item in items])
+    # Local/submitit: executor.map calls run_experiment_task(cfg_dict)
+    # Modal: ModalExecutor.map ignores `fn` and calls remote_fn.map(cfg_dict)
+    results = executor.map(run_experiment_task, cfg_dicts)
 
     # Save results summary
     import pandas as pd

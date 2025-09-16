@@ -8,6 +8,8 @@ image = (
     # (includes JAX via blackjax dependency - CPU by default)
     .pip_install_from_pyproject("pyproject.toml", optional_dependencies=["modal"])
     .add_local_python_source("llc")  # ship the local Python package 'llc'
+    # Ensure x64 & headless plotting inside the container
+    .env({"JAX_ENABLE_X64": "true", "MPLBACKEND": "Agg"})
 )
 
 # For GPU support, users can create a custom image:
@@ -36,7 +38,16 @@ def run_experiment_remote(cfg_dict: dict) -> dict:
     """
     Remote entrypoint: identical signature to local task but with artifact support.
     """
+    # Runtime guard: set the flag before anything imports jax.
+    import jax
+    jax.config.update("jax_enable_x64", True)
     from llc.tasks import run_experiment_task
+    import os
+
+    # Force artifacts to be saved to the persistent volume for caching
+    cfg_dict.setdefault("save_artifacts", True)
+    if os.path.isdir("/artifacts"):
+        cfg_dict["artifacts_dir"] = "/artifacts"
 
     # Run task and get result with run_dir
     result = run_experiment_task(cfg_dict)

@@ -160,10 +160,11 @@ def create_manifest(
         },
         "notes": {
             "gradient_work_definition": "SGLD: minibatch gradients, HMC: leapfrog steps, MCLMC: integration steps",
-            "llc_scale_caveat": f"LLC computed with respect to {cfg.loss} energy; for SLT-compatible LLC use proper NLL",
+            "llc_scale_caveat": f"LLC computed with respect to {getattr(cfg, 'loss', 'unknown')} energy; for SLT-compatible LLC use proper NLL",
             "eval_density": {
-                sampler: getattr(cfg, f"{sampler}_eval_every", "N/A")
-                for sampler in getattr(cfg, "samplers", [cfg.sampler])
+                s: getattr(cfg, f"{s}_eval_every", "N/A") if hasattr(cfg, f"{s}_eval_every")
+                   else (cfg.get(f"{s}_eval_every", "N/A") if isinstance(cfg, dict) else "N/A")
+                for s in samplers_run
             },
         },
     }
@@ -182,8 +183,9 @@ def generate_gallery_html(run_dir: str, cfg, metrics: Dict[str, Any]) -> str:
     png_files = [f for f in os.listdir(run_dir) if f.endswith(".png")]
     png_files.sort()
 
-    # Group plots by sampler
-    samplers = getattr(cfg, "samplers", [cfg.sampler])
+    # Group plots by sampler - determine from metrics instead of cfg
+    samplers_run = [s for s in ("sgld", "hmc", "mclmc") if f"{s}_llc_mean" in metrics]
+    samplers = samplers_run if samplers_run else ["sgld", "hmc", "mclmc"]  # fallback
     plot_groups = {sampler: [] for sampler in samplers}
 
     for png_file in png_files:

@@ -18,7 +18,7 @@ def run_experiment_task(cfg_dict: Dict[str, Any]) -> Dict[str, Any]:
     # Extract control flags before creating Config
     cfg_dict_clean = cfg_dict.copy()
     save_artifacts = cfg_dict_clean.pop("save_artifacts", False)
-    cfg_dict_clean.pop("artifacts_dir", "artifacts")
+    # Keep artifacts_dir so Modal can pass volume paths
 
     cfg = Config(**cfg_dict_clean)
 

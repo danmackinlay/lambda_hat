@@ -260,10 +260,11 @@ Artifacts are saved by default and include full diagnostic plots and data. They 
 
 ### Modal (deployed app) workflow
 
-We use a **deployed Modal app** for sweeps. That means we deploy once, then the local client looks up the remote function by name and maps work to it.
+We use a **deployed Modal app** for sweeps.
+That means we deploy once, then the local client looks up the remote function by name and maps work to it.
 
-> **Note:** We install Modal via `uv`. Run Modal CLI commands as `uv run modal ...`
-> (e.g., `uv run modal deploy modal_app.py`, `uv run modal volume ls llc-artifacts`).
+**Note:** We install Modal via `uv`. Run Modal CLI commands as `uv run modal ...`
+(e.g., `uv run modal deploy modal_app.py`, `uv run modal volume ls llc-artifacts`).
 
 **One-time setup**
 ```bash
