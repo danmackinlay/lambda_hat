@@ -237,7 +237,7 @@ def run_one(
 
         # Choose batched or sequential HMC execution
         if cfg.use_batched_chains:
-            hmc_samples_thin, hmc_Es, hmc_Vars, hmc_Ns, accs_hmc, Ln_histories_hmc = (
+            hmc_samples_thin, hmc_Es, hmc_Vars, hmc_Ns, accs_hmc, Ln_histories_hmc, energies_hmc = (
                 run_hmc_online_batched(
                     k_hmc,
                     init_thetas_hmc,
@@ -252,7 +252,7 @@ def run_one(
                 )
             )
         else:
-            hmc_samples_thin, hmc_Es, hmc_Vars, hmc_Ns, accs_hmc, Ln_histories_hmc = (
+            hmc_samples_thin, hmc_Es, hmc_Vars, hmc_Ns, accs_hmc, Ln_histories_hmc, energies_hmc = (
                 run_hmc_online_with_adaptation(
                     k_hmc,
                     init_thetas_hmc,
@@ -455,6 +455,7 @@ def run_one(
                     Ln_histories=Ln_histories_hmc,
                     samples_thin=hmc_samples_thin,
                     acceptance_rates=accs_hmc,
+                    energies=energies_hmc,
                     n=cfg.n_data,
                     beta=beta,
                     L0=L0,

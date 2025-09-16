@@ -438,11 +438,14 @@ def run_hmc_chain(
             work_bump(getattr(inf, "num_integration_steps", L) + 1)
         return st, inf
 
-    # info hook: record acceptance into extras["accept"]
+    # info hook: record acceptance and energy into extras
     def info_hook(info, ctx):
         acc = getattr(info, "acceptance_rate", np.nan)
         if not np.isnan(acc):
             ctx["put_extra"]("accept", float(acc))
+        energy = getattr(info, "energy", None)
+        if energy is not None:
+            ctx["put_extra"]("energy", float(energy))
 
     result = drive_chain(
         rng_key=k_draws,
@@ -529,10 +532,13 @@ def run_hmc_chains_batched(
 
     Ln_vmapped = jax.jit(jax.vmap(Ln_eval_f64))
 
-    # Record acceptance at eval points (scalar per chain)
+    # Record acceptance and energy at eval points (scalar per chain)
     info_extractors = {
         "accept": lambda info: getattr(
             info, "acceptance_rate", jnp.zeros((init_thetas.shape[0],))
+        ),
+        "energy": lambda info: getattr(
+            info, "energy", jnp.zeros((init_thetas.shape[0],))
         )
     }
 

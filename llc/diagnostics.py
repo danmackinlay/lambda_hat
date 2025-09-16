@@ -39,10 +39,10 @@ def llc_mean_and_se_from_histories(
     lambda_vals = n * beta * (H - L0)  # (chains, evals)
 
     # Create ArviZ InferenceData
-    idata = az.from_dict(posterior={"lambda": lambda_vals})
+    idata = az.from_dict(posterior={"llc": lambda_vals})
 
     # Compute ESS and statistics
-    ess = az.ess(idata, method=ESS_METHOD)["lambda"].values
+    ess = az.ess(idata, method=ESS_METHOD)["llc"].values
     eff_sample_size = float(np.mean(ess)) if not np.isnan(ess).all() else 1.0
 
     # Pool across chains for final estimate
@@ -132,7 +132,7 @@ def _idata_from_L(Ln_histories: List[np.ndarray]) -> Tuple[Optional[Any], int]:
 def _idata_from_llc(
     Ln_histories: List[np.ndarray], n: int, beta: float, L0: float,
     acceptance_rates: Optional[List[np.ndarray]] = None,
-    energy: Optional[List[np.ndarray]] = None,
+    energies: Optional[List[np.ndarray]] = None,
 ) -> Optional[Any]:
     """Make InferenceData with `llc` variable and optional sample_stats (acceptance, energy)."""
     H = _stack_histories(Ln_histories)
@@ -140,12 +140,33 @@ def _idata_from_llc(
         return None
     llc = n * float(beta) * (H - L0)  # (chain, draw)
 
-    # For now, skip sample_stats to avoid dimension mismatch issues
-    # TODO: properly align acceptance_rates dimensions with llc
+    # Align ragged stats to draws via truncation to min length
+    sample_stats = {}
+
+    # Find the minimum length across all arrays that need to be aligned
+    min_len = llc.shape[1]
+    if acceptance_rates is not None and any(len(a) > 0 for a in acceptance_rates):
+        min_len = min(min_len, min(len(a) for a in acceptance_rates if len(a) > 0))
+    if energies is not None and any(len(e) > 0 for e in energies):
+        min_len = min(min_len, min(len(e) for e in energies if len(e) > 0))
+
+    # Truncate all arrays to the same length
+    if min_len > 0:
+        llc = llc[:, :min_len]
+
+        if acceptance_rates is not None and any(len(a) > 0 for a in acceptance_rates):
+            acc = np.stack([np.asarray(a[:min_len]) for a in acceptance_rates], axis=0)
+            sample_stats["acceptance_rate"] = acc
+
+        if energies is not None and any(len(e) > 0 for e in energies):
+            en = np.stack([np.asarray(e[:min_len]) for e in energies], axis=0)
+            sample_stats["energy"] = en
+
     idata = az.from_dict(
         posterior={"llc": llc},
+        sample_stats=sample_stats if sample_stats else None,
         coords={"chain": np.arange(llc.shape[0]), "draw": np.arange(llc.shape[1])},
-        dims={"llc": ["chain", "draw"]},
+        dims={"llc": ["chain", "draw"], **({k: ["chain", "draw"] for k in sample_stats} if sample_stats else {})},
     )
     return idata
 
@@ -189,6 +210,7 @@ def plot_diagnostics(
     samples_thin: np.ndarray,
     acceptance_rates: Optional[List[np.ndarray]] = None,
     energy_deltas: Optional[List[np.ndarray]] = None,
+    energies: Optional[List[np.ndarray]] = None,
     n: int = 1000,
     beta: float = 1.0,
     L0: float = 0.0,
@@ -197,7 +219,7 @@ def plot_diagnostics(
     """Generate diagnostics for a sampler, aligned with ArviZ best practice."""
     # Build idata objects
     idata_L, _ = _idata_from_L(Ln_histories)
-    idata_llc = _idata_from_llc(Ln_histories, n, beta, L0, acceptance_rates, energy=None)
+    idata_llc = _idata_from_llc(Ln_histories, n, beta, L0, acceptance_rates=acceptance_rates, energies=energies)
 
     # 1) L_n trace plots (raw and centered)
     if Ln_histories and any(len(h) > 0 for h in Ln_histories):
@@ -327,12 +349,27 @@ def plot_diagnostics(
                 _finalize_figure(axes.figure, f"{run_dir}/{sampler_name}_llc_ess_evolution.png")
                 plt.close(axes.figure)
 
+            # ESS quantile (interval reliability)
+            axes = az.plot_ess(idata_llc, var_names=["llc"], kind="quantile")
+            if save_plots and hasattr(axes, 'figure'):
+                _finalize_figure(axes.figure, f"{run_dir}/{sampler_name}_llc_ess_quantile.png")
+                plt.close(axes.figure)
+
+            # energy (HMC only; harmless no-op if not present)
+            try:
+                ax = az.plot_energy(idata_llc)   # requires sample_stats.energy
+                if save_plots:
+                    _finalize_figure(ax.figure, f"{run_dir}/{sampler_name}_energy.png")
+                    plt.close(ax.figure)
+            except Exception:
+                pass
+
             # R-hat/ESS summary table (to console)
             summ = az.summary(idata_llc, var_names=["llc"])
             if not summ.empty:
-                rhat = summ.get('r_hat', summ.index).item() if 'r_hat' in summ.columns else np.nan
-                ess_bulk = summ.get('ess_bulk', summ.index).item() if 'ess_bulk' in summ.columns else np.nan
-                ess_tail = summ.get('ess_tail', summ.index).item() if 'ess_tail' in summ.columns else np.nan
+                rhat = float(summ["r_hat"].iloc[0]) if "r_hat" in summ.columns else np.nan
+                ess_bulk = float(summ["ess_bulk"].iloc[0]) if "ess_bulk" in summ.columns else np.nan
+                ess_tail = float(summ["ess_tail"].iloc[0]) if "ess_tail" in summ.columns else np.nan
                 print(f"[{sampler_name}] R-hat = {rhat:.4f}, ESS_bulk = {ess_bulk:.1f}, ESS_tail = {ess_tail:.1f}")
         except Exception as e:
             # ArviZ plotting can fail with insufficient data

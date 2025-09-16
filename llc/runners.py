@@ -192,7 +192,7 @@ def run_hmc_online_with_adaptation(
 ):
     """Run HMC chains with window adaptation and online LLC evaluation"""
     chains = init_thetas.shape[0]
-    kept_all, means, vars_, ns, accs, L_histories = [], [], [], [], [], []
+    kept_all, means, vars_, ns, accs, L_histories, energies = [], [], [], [], [], [], []
 
     def tiny_store(vec: np.ndarray):
         return default_tiny_store(vec, diag_dims, Rproj)
@@ -243,6 +243,11 @@ def run_hmc_online_with_adaptation(
             accs.append(np.asarray(res.extras["accept"]))
         else:
             accs.append(np.asarray([]))
+        # Extract energies from extras
+        if "energy" in res.extras:
+            energies.append(np.asarray(res.extras["energy"]))
+        else:
+            energies.append(np.asarray([]))
         if stats:
             stats.n_hmc_full_loss += int(res.n_L)
             # Extract warmup timing and work from extras
@@ -259,6 +264,7 @@ def run_hmc_online_with_adaptation(
         np.array(ns),
         accs,
         L_histories,
+        energies,
     )
 
 
@@ -487,9 +493,11 @@ def run_hmc_online_batched(
     ns = np.asarray(result.n_L)  # (C,)
     acc = result.extras.get("accept", jnp.zeros_like(result.L_hist))
     acc_list = [np.asarray(acc[c]) for c in range(acc.shape[0])]
+    energy = result.extras.get("energy", jnp.zeros_like(result.L_hist))
+    energy_list = [np.asarray(energy[c]) for c in range(energy.shape[0])]
     L_histories = [np.asarray(result.L_hist[c]) for c in range(result.L_hist.shape[0])]
 
-    return kept_stacked, means, vars_, ns, acc_list, L_histories
+    return kept_stacked, means, vars_, ns, acc_list, L_histories, energy_list
 
 
 def run_mclmc_online_batched(
