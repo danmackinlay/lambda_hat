@@ -11,7 +11,7 @@ def apply_preset(cfg: Config, preset: str) -> Config:
             cfg,
             sgld_steps=1000,
             sgld_warmup=200,
-            sgld_eval_every=100,
+            sgld_eval_every=20,  # More frequent for smooth plots
             sgld_thin=5,
             hmc_draws=200,
             hmc_warmup=100,
@@ -20,7 +20,7 @@ def apply_preset(cfg: Config, preset: str) -> Config:
             mclmc_draws=400,
             mclmc_eval_every=40,
             mclmc_thin=2,
-            chains=2,
+            chains=4,  # 4 chains for robust R-hat and rank plots
             n_data=1000,
             save_plots=True,  # Key: always save plots in quick preset
         )

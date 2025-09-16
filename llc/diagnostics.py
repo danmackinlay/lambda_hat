@@ -116,12 +116,38 @@ def _stack_histories(Ln_histories: List[np.ndarray]) -> Optional[np.ndarray]:
 
 
 def _idata_from_L(Ln_histories: List[np.ndarray]) -> Tuple[Optional[Any], int]:
-    """Create ArviZ InferenceData from L_n histories"""
+    """Create ArviZ InferenceData from L_n histories (posterior group, dims=chain,draw)."""
     H = _stack_histories(Ln_histories)
-    return (
-        (az.from_dict(posterior={"L": H}), H.shape[1]) if H is not None else (None, 0)
+    if H is None:
+        return None, 0
+    # Ensure shape (chain, draw) and proper dims
+    idata = az.from_dict(
+        posterior={"L": H},
+        coords={"chain": np.arange(H.shape[0]), "draw": np.arange(H.shape[1])},
+        dims={"L": ["chain", "draw"]},
     )
+    return idata, H.shape[1]
 
+
+def _idata_from_llc(
+    Ln_histories: List[np.ndarray], n: int, beta: float, L0: float,
+    acceptance_rates: Optional[List[np.ndarray]] = None,
+    energy: Optional[List[np.ndarray]] = None,
+) -> Optional[Any]:
+    """Make InferenceData with `llc` variable and optional sample_stats (acceptance, energy)."""
+    H = _stack_histories(Ln_histories)
+    if H is None:
+        return None
+    llc = n * float(beta) * (H - L0)  # (chain, draw)
+
+    # For now, skip sample_stats to avoid dimension mismatch issues
+    # TODO: properly align acceptance_rates dimensions with llc
+    idata = az.from_dict(
+        posterior={"llc": llc},
+        coords={"chain": np.arange(llc.shape[0]), "draw": np.arange(llc.shape[1])},
+        dims={"llc": ["chain", "draw"]},
+    )
+    return idata
 
 def _idata_from_theta(
     samples_thin: np.ndarray, max_dims: int = 8
@@ -167,10 +193,13 @@ def plot_diagnostics(
     beta: float = 1.0,
     L0: float = 0.0,
     save_plots: bool = True,
-) -> None:
-    """Generate comprehensive diagnostic plots for a sampler"""
+)-> None:
+    """Generate diagnostics for a sampler, aligned with ArviZ best practice."""
+    # Build idata objects
+    idata_L, _ = _idata_from_L(Ln_histories)
+    idata_llc = _idata_from_llc(Ln_histories, n, beta, L0, acceptance_rates, energy=None)
 
-    # L_n trace plots
+    # 1) L_n trace plots (raw and centered)
     if Ln_histories and any(len(h) > 0 for h in Ln_histories):
         fig, ax = plt.subplots(1, 1, figsize=(8, 4))
         for i, hist in enumerate(Ln_histories):
@@ -185,7 +214,21 @@ def plot_diagnostics(
             _finalize_figure(fig, f"{run_dir}/{sampler_name}_Ln_trace.png")
         plt.close(fig)
 
-    # Running LLC plot
+        # Centered L_n - L0
+        fig, ax = plt.subplots(1, 1, figsize=(8, 4))
+        for i, hist in enumerate(Ln_histories):
+            if len(hist) > 0:
+                ax.plot(np.asarray(hist) - L0, alpha=0.7, label=f"Chain {i}")
+        ax.set_xlabel("Evaluation")
+        ax.set_ylabel("L_n - L_0")
+        ax.set_title(f"{sampler_name} Centered L_n")
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+        if save_plots:
+            _finalize_figure(fig, f"{run_dir}/{sampler_name}_Ln_centered.png")
+        plt.close(fig)
+
+    # 2) Running LLC plot (per-chain + pooled, with ±2·SE band)
     lam, lam_pooled = _running_llc(Ln_histories, n, beta, L0)
     if lam is not None:
         fig, ax = plt.subplots(1, 1, figsize=(8, 4))
@@ -193,8 +236,13 @@ def plot_diagnostics(
             ax.plot(lam[i], alpha=0.7, label=f"Chain {i}")
         if lam_pooled is not None:
             ax.plot(lam_pooled, "k-", linewidth=2, label="Pooled")
+        # final mean±2SE band using ESS-based estimator
+        mean_llc, se_llc, _ess = llc_mean_and_se_from_histories(Ln_histories, n, beta, L0)
+        if np.isfinite(se_llc):
+            ax.axhline(mean_llc, linestyle="--", linewidth=1)
+            ax.fill_between(np.arange(len(lam_pooled)), mean_llc-2*se_llc, mean_llc+2*se_llc, alpha=0.1)
         ax.set_xlabel("Evaluation")
-        ax.set_ylabel("Local Learning Coefficient")
+        ax.set_ylabel("LLC = n·β·(E[Lₙ] − L₀)")
         ax.set_title(f"{sampler_name} Running LLC")
         ax.legend()
         ax.grid(True, alpha=0.3)
@@ -231,9 +279,11 @@ def plot_diagnostics(
         ax.set_xlabel("Draw")
         ax.set_ylabel("Acceptance Rate")
         ax.set_title(f"{sampler_name} Acceptance Rate")
+        # reference targets from Stan (~0.8) and ChEES (~0.651)
+        ax.axhline(0.8, color="red", linestyle="--", alpha=0.5, label="Target 0.8")
+        ax.axhline(0.651, color="gray", linestyle="--", alpha=0.5, label="Target 0.651")
         ax.legend()
         ax.grid(True, alpha=0.3)
-        ax.axhline(0.8, color="red", linestyle="--", alpha=0.5, label="Target")
         if save_plots:
             _finalize_figure(fig, f"{run_dir}/{sampler_name}_acceptance.png")
         plt.close(fig)
@@ -250,6 +300,43 @@ def plot_diagnostics(
         if save_plots:
             _finalize_figure(fig, f"{run_dir}/{sampler_name}_energy_hist.png")
         plt.close(fig)
+
+    # 6) ArviZ-first plots for llc: rank, autocorr, ESS, and summary text
+    if idata_llc is not None:
+        try:
+            # rank plot
+            axes = az.plot_rank(idata_llc, var_names=["llc"])
+            if save_plots:
+                if hasattr(axes, 'figure'):
+                    _finalize_figure(axes.figure, f"{run_dir}/{sampler_name}_llc_rank.png")
+                    plt.close(axes.figure)
+                elif isinstance(axes, np.ndarray) and hasattr(axes.flat[0], 'figure'):
+                    _finalize_figure(axes.flat[0].figure, f"{run_dir}/{sampler_name}_llc_rank.png")
+                    plt.close(axes.flat[0].figure)
+
+            # autocorr
+            axes = az.plot_autocorr(idata_llc, var_names=["llc"])
+            if save_plots and axes is not None:
+                if isinstance(axes, np.ndarray) and len(axes) > 0:
+                    _finalize_figure(axes[0].figure, f"{run_dir}/{sampler_name}_llc_autocorr.png")
+                    plt.close(axes[0].figure)
+
+            # ESS evolution
+            axes = az.plot_ess(idata_llc, var_names=["llc"], kind="evolution")
+            if save_plots and hasattr(axes, 'figure'):
+                _finalize_figure(axes.figure, f"{run_dir}/{sampler_name}_llc_ess_evolution.png")
+                plt.close(axes.figure)
+
+            # R-hat/ESS summary table (to console)
+            summ = az.summary(idata_llc, var_names=["llc"])
+            if not summ.empty:
+                rhat = summ.get('r_hat', summ.index).item() if 'r_hat' in summ.columns else np.nan
+                ess_bulk = summ.get('ess_bulk', summ.index).item() if 'ess_bulk' in summ.columns else np.nan
+                ess_tail = summ.get('ess_tail', summ.index).item() if 'ess_tail' in summ.columns else np.nan
+                print(f"[{sampler_name}] R-hat = {rhat:.4f}, ESS_bulk = {ess_bulk:.1f}, ESS_tail = {ess_tail:.1f}")
+        except Exception as e:
+            # ArviZ plotting can fail with insufficient data
+            print(f"[{sampler_name}] Could not generate ArviZ diagnostics: {e}")
 
 
 def _finalize_figure(
