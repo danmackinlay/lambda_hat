@@ -222,7 +222,7 @@ uv run modal deploy modal_app.py
 python - <<'PY'
 import modal
 fn = modal.Function.from_name("llc-experiments","run_experiment_remote")
-print(fn.call({"preset":"quick","save_artifacts":True}))
+print(fn.remote({"preset":"quick","save_artifacts":True}))
 PY
 
 # 3) Sweep on Modal (use small n-seeds while testing)

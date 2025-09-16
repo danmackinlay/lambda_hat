@@ -38,12 +38,14 @@ def run_experiment_remote(cfg_dict: dict) -> dict:
     """
     Remote entrypoint: identical signature to local task but with artifact support.
     """
+    # Import needful libs here because they fail to propagate from the global scope
     # Ensure x64 at runtime too (belt & suspenders; do this before heavy JAX use)
     import jax
-    import os
-    import shutil
 
     jax.config.update("jax_enable_x64", True)
+    import os
+    import shutil
+    from llc.tasks import run_experiment_task
 
     # Make caching effective across calls: write artifacts directly to the volume.
     cfg_dict = dict(cfg_dict)
@@ -55,8 +57,6 @@ def run_experiment_remote(cfg_dict: dict) -> dict:
         print(
             "[Modal] Warning: Volume /artifacts not found, using default artifacts_dir"
         )
-
-    from llc.tasks import run_experiment_task
 
     result = run_experiment_task(cfg_dict)
 

@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 import jax
 import numpy as np
+from jax import numpy as jnp
 
 from .samplers.base import default_tiny_store
 from .samplers.adapters import (
@@ -13,7 +14,6 @@ from .samplers.adapters import (
     run_hmc_chain,
     run_mclmc_chain,
     run_sgld_chains_batched,
-    run_hmc_chains_batched,
     run_mclmc_chains_batched,
 )
 
