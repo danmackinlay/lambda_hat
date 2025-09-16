@@ -1,16 +1,18 @@
 # llc/diagnostics.py
-"""Diagnostic and plotting utilities for LLC analysis"""
-
+"""Diagnostic and plotting utilities for LLC analysis (lean + robust)."""
+from __future__ import annotations
 from typing import List, Optional, Tuple, Any
 import numpy as np
-import arviz as az
 import matplotlib.pyplot as plt
 from scipy.stats import norm
 import pandas as pd
 
-# ESS method constant for consistency - using ArviZ "bulk" ESS estimator
-# This is the recommended method for effective sample size estimation
-ESS_METHOD = "bulk"
+ESS_METHOD = "bulk"  # ArviZ bulk ESS (rank-normalized)
+
+def _az():
+    # Lazy import to avoid pulling heavy deps when not plotting/estimating
+    import arviz as az
+    return az
 
 
 def llc_mean_and_se_from_histories(
@@ -39,7 +41,13 @@ def llc_mean_and_se_from_histories(
     lambda_vals = n * beta * (H - L0)  # (chains, evals)
 
     # Create ArviZ InferenceData
-    idata = az.from_dict(posterior={"llc": lambda_vals})
+    az = _az()
+    idata = az.from_dict(
+        posterior={"llc": lambda_vals},
+        coords={"chain": np.arange(lambda_vals.shape[0]),
+                "draw":  np.arange(lambda_vals.shape[1])},
+        dims={"llc": ["chain","draw"]},
+    )
 
     # Compute ESS and statistics
     ess = az.ess(idata, method=ESS_METHOD)["llc"].values
@@ -82,7 +90,12 @@ def llc_ci_from_histories(
         return 0.0, (0.0, 0.0)
     H = np.stack([np.asarray(h[:m]) for h in Ln_histories], axis=0)  # (chains, m)
 
-    idata = az.from_dict(posterior={"L": H})
+    az = _az()
+    idata = az.from_dict(
+        posterior={"L": H},
+        coords={"chain": np.arange(H.shape[0]), "draw": np.arange(H.shape[1])},
+        dims={"L": ["chain","draw"]},
+    )
     ess_L = az.ess(idata, method=ESS_METHOD)["L"].values
     eff_sample_size = float(np.mean(ess_L)) if not np.isnan(ess_L).all() else 1.0
 
@@ -116,11 +129,11 @@ def _stack_histories(Ln_histories: List[np.ndarray]) -> Optional[np.ndarray]:
 
 
 def _idata_from_L(Ln_histories: List[np.ndarray]) -> Tuple[Optional[Any], int]:
-    """Create ArviZ InferenceData from L_n histories (posterior group, dims=chain,draw)."""
+    """ArviZ InferenceData for L_n traces (posterior group; dims chain,draw)."""
     H = _stack_histories(Ln_histories)
     if H is None:
         return None, 0
-    # Ensure shape (chain, draw) and proper dims
+    az = _az()
     idata = az.from_dict(
         posterior={"L": H},
         coords={"chain": np.arange(H.shape[0]), "draw": np.arange(H.shape[1])},
@@ -134,7 +147,7 @@ def _idata_from_llc(
     acceptance_rates: Optional[List[np.ndarray]] = None,
     energies: Optional[List[np.ndarray]] = None,
 ) -> Optional[Any]:
-    """Make InferenceData with `llc` variable and optional sample_stats (acceptance, energy)."""
+    """InferenceData with `llc` + optional sample_stats (acceptance, energy)."""
     H = _stack_histories(Ln_histories)
     if H is None:
         return None
@@ -162,6 +175,7 @@ def _idata_from_llc(
             en = np.stack([np.asarray(e[:min_len]) for e in energies], axis=0)
             sample_stats["energy"] = en
 
+    az = _az()
     idata = az.from_dict(
         posterior={"llc": llc},
         sample_stats=sample_stats if sample_stats else None,
@@ -170,19 +184,22 @@ def _idata_from_llc(
     )
     return idata
 
-def _idata_from_theta(
-    samples_thin: np.ndarray, max_dims: int = 8
+def _idata_from_theta(samples_thin: np.ndarray, max_dims: int = 8
 ) -> Tuple[Optional[Any], List[int]]:
-    """Create ArviZ InferenceData from theta samples"""
+    """ArviZ InferenceData from theta; accepts (C,K,D) or (K,D)."""
     S = np.asarray(samples_thin)
-    if S.size == 0 or S.shape[1] < 2:
+    if S.size == 0:
+        return None, []
+    if S.ndim == 2:  # (K,D) -> add singleton chain
+        S = S[None, ...]
+    if S.shape[1] < 2:
         return None, []
     k = S.shape[-1]
     idx = list(range(min(k, max_dims)))
+    az = _az()
     idata = az.from_dict(
-        posterior={"theta": S},
+        posterior={"theta": (["chain","draw","theta_dim"], S)},
         coords={"theta_dim": np.arange(k)},
-        dims={"theta": ["theta_dim"]},
     )
     return idata, idx
 
@@ -279,7 +296,7 @@ def plot_diagnostics(
         sel = {"theta_dim": theta_idx[:n_dims_to_plot]}
         fig, axes = plt.subplots(2, n_dims_to_plot, figsize=(12, 6), squeeze=False)
         # One call: ArviZ fills the 2×N grid itself
-        az.plot_trace(
+        _az().plot_trace(
             idata_theta,
             var_names=["theta"],
             coords=sel,
@@ -327,7 +344,7 @@ def plot_diagnostics(
     if idata_llc is not None:
         try:
             # rank plot
-            axes = az.plot_rank(idata_llc, var_names=["llc"])
+            axes = _az().plot_rank(idata_llc, var_names=["llc"])
             if save_plots:
                 if hasattr(axes, 'figure'):
                     _finalize_figure(axes.figure, f"{run_dir}/{sampler_name}_llc_rank.png")
@@ -337,27 +354,27 @@ def plot_diagnostics(
                     plt.close(axes.flat[0].figure)
 
             # autocorr
-            axes = az.plot_autocorr(idata_llc, var_names=["llc"])
+            axes = _az().plot_autocorr(idata_llc, var_names=["llc"])
             if save_plots and axes is not None:
                 if isinstance(axes, np.ndarray) and len(axes) > 0:
                     _finalize_figure(axes[0].figure, f"{run_dir}/{sampler_name}_llc_autocorr.png")
                     plt.close(axes[0].figure)
 
             # ESS evolution
-            axes = az.plot_ess(idata_llc, var_names=["llc"], kind="evolution")
+            axes = _az().plot_ess(idata_llc, var_names=["llc"], kind="evolution")
             if save_plots and hasattr(axes, 'figure'):
                 _finalize_figure(axes.figure, f"{run_dir}/{sampler_name}_llc_ess_evolution.png")
                 plt.close(axes.figure)
 
             # ESS quantile (interval reliability)
-            axes = az.plot_ess(idata_llc, var_names=["llc"], kind="quantile")
+            axes = _az().plot_ess(idata_llc, var_names=["llc"], kind="quantile")
             if save_plots and hasattr(axes, 'figure'):
                 _finalize_figure(axes.figure, f"{run_dir}/{sampler_name}_llc_ess_quantile.png")
                 plt.close(axes.figure)
 
             # energy (HMC only; harmless no-op if not present)
             try:
-                ax = az.plot_energy(idata_llc)   # requires sample_stats.energy
+                ax = _az().plot_energy(idata_llc)   # requires sample_stats.energy
                 if save_plots:
                     _finalize_figure(ax.figure, f"{run_dir}/{sampler_name}_energy.png")
                     plt.close(ax.figure)
@@ -365,7 +382,7 @@ def plot_diagnostics(
                 pass
 
             # R-hat/ESS summary table (to console)
-            summ = az.summary(idata_llc, var_names=["llc"])
+            summ = _az().summary(idata_llc, var_names=["llc"])
             if not summ.empty:
                 rhat = float(summ["r_hat"].iloc[0]) if "r_hat" in summ.columns else np.nan
                 ess_bulk = float(summ["ess_bulk"].iloc[0]) if "ess_bulk" in summ.columns else np.nan

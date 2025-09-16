@@ -187,3 +187,11 @@ TEST_CFG = Config(
 )
 
 CFG = Config()  # Default full config
+
+# --- schema fingerprint for remote sanity checks ---
+def config_schema_hash() -> str:
+    """Stable hash of the Config schema (field names + types)."""
+    import hashlib, json
+    from dataclasses import fields
+    spec = [f"{f.name}:{str(f.type)}" for f in fields(Config)]
+    return hashlib.sha256(json.dumps(spec).encode()).hexdigest()[:12]

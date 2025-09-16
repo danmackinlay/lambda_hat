@@ -12,21 +12,40 @@ def run_experiment_task(cfg_dict: Dict[str, Any]) -> Dict[str, Any]:
     If cfg_dict contains 'save_artifacts': True, will generate full artifact pipeline
     and return run_dir path for artifact retrieval.
     """
-    from llc.config import Config
+    from dataclasses import fields
+    from llc.config import Config, config_schema_hash
     from llc.experiments import run_experiment
 
-    # Extract control flags before creating Config
-    cfg_dict_clean = cfg_dict.copy()
-    save_artifacts = cfg_dict_clean.pop("save_artifacts", False)
-    # Keep artifacts_dir so Modal can pass volume paths
+    cfg_dict_clean = dict(cfg_dict)
+    # control flags (not part of Config)
+    save_artifacts = bool(cfg_dict_clean.pop("save_artifacts", False))
+    skip_if_exists = bool(cfg_dict_clean.pop("skip_if_exists", True))
+    provided_schema = cfg_dict_clean.pop("config_schema", None)
 
-    cfg = Config(**cfg_dict_clean)
+    # Drop unknown keys to tolerate remote/client skew (but be loud).
+    allowed = {f.name for f in fields(Config)}
+    dropped = sorted(set(cfg_dict_clean) - allowed)
+    cfg_kwargs = {k: v for k, v in cfg_dict_clean.items() if k in allowed}
+
+    # Schema handshake: if provided, must match.
+    local_schema = config_schema_hash()
+    if provided_schema and provided_schema != local_schema:
+        raise RuntimeError(
+            "Config schema mismatch between client and worker.\n"
+            f"  client schema: {provided_schema}\n"
+            f"  worker schema: {local_schema}\n"
+            "Redeploy the Modal app or use object-based remote function to auto-deploy."
+        )
+    if dropped:
+        print(f"[llc] Warning: dropping unknown config keys: {dropped}")
+
+    cfg = Config(**cfg_kwargs)
 
     if save_artifacts:
         # Use the unified pipeline for full artifact generation
         from llc.pipeline import run_one
 
-        out = run_one(cfg, save_artifacts=True, skip_if_exists=True)
+        out = run_one(cfg, save_artifacts=True, skip_if_exists=skip_if_exists)
 
         # Keep return shape backwards-compatible with existing callers
         result = {

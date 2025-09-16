@@ -278,14 +278,22 @@ def handle_run_command(args: argparse.Namespace) -> None:
         # Route through the same executor/task used by sweep
         from llc.execution import get_executor
         from llc.tasks import run_experiment_task
+        from llc.config import config_schema_hash
 
         cfg_dict = cfg.__dict__.copy()
-        cfg_dict["save_artifacts"] = save_artifacts
+        cfg_dict["save_artifacts"]  = save_artifacts
+        cfg_dict["skip_if_exists"]  = skip_if_exists
+        cfg_dict["config_schema"]   = config_schema_hash()
 
         if backend == "modal":
-            # Use deployed function by name (Modal 1.0 API)
-            import modal
-            remote_fn = modal.Function.from_name("llc-experiments", "run_experiment_remote")
+            # Prefer auto-deploy of *this* code (avoids stale remote)
+            # Set LLC_MODAL_LOOKUP_BY_NAME=1 to force lookup-by-name instead.
+            if os.environ.get("LLC_MODAL_LOOKUP_BY_NAME") == "1":
+                import modal
+                remote_fn = modal.Function.from_name("llc-experiments", "run_experiment_remote")
+            else:
+                from modal_app import run_experiment_remote  # implicit deploy of current code
+                remote_fn = run_experiment_remote
             executor = get_executor(backend="modal", remote_fn=remote_fn)
             [result_dict] = executor.map(run_experiment_task, [cfg_dict])
         elif backend == "submitit":
@@ -300,7 +308,6 @@ def handle_run_command(args: argparse.Namespace) -> None:
             try:
                 import io
                 import tarfile
-                import os
 
                 rid = result_dict["run_id"]
                 dest = os.path.join("artifacts", rid)
@@ -352,10 +359,12 @@ def handle_sweep_command(args: argparse.Namespace) -> None:
     # For modal backend we need the remote function handle:
     remote_fn = None
     if (args.backend or "local").lower() == "modal":
-        import modal
-
-        # Look up the DEPLOYED function (do NOT import modal_app.run_experiment_remote)
-        remote_fn = modal.Function.from_name("llc-experiments", "run_experiment_remote")
+        if os.environ.get("LLC_MODAL_LOOKUP_BY_NAME") == "1":
+            import modal
+            remote_fn = modal.Function.from_name("llc-experiments", "run_experiment_remote")
+        else:
+            from modal_app import run_experiment_remote
+            remote_fn = run_experiment_remote
 
     # Build sweep configuration
     base_cfg = CFG
@@ -387,11 +396,14 @@ def handle_sweep_command(args: argparse.Namespace) -> None:
     )
 
     # Normalize items -> list of cfg dicts the task/remote_fn expects
+    from llc.config import config_schema_hash
     cfg_dicts = []
     for _name, _param, _val, _seed, cfg in items:
         # dataclass -> dict; you can also use dataclasses.asdict(cfg)
         cfg_d = cfg.__dict__.copy()
         cfg_d["save_artifacts"] = not getattr(args, "no_artifacts", False)
+        cfg_d["skip_if_exists"] = getattr(args, "skip_if_exists", True) if hasattr(args,"skip_if_exists") else True
+        cfg_d["config_schema"]  = config_schema_hash()
         cfg_dicts.append(cfg_d)
 
     # Local/submitit: executor.map calls run_experiment_task(cfg_dict)
@@ -402,7 +414,6 @@ def handle_sweep_command(args: argparse.Namespace) -> None:
     if (args.backend or "local").lower() == "modal":
         import io
         import tarfile
-        import os
 
         os.makedirs("artifacts", exist_ok=True)
         for r in results:
