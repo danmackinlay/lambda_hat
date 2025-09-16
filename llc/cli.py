@@ -313,6 +313,30 @@ def handle_run_command(args: argparse.Namespace) -> None:
         else:
             raise ValueError(f"Unknown backend: {backend}")
 
+        # Auto-extract artifacts if present (for Modal)
+        if backend == "modal" and result_dict.get("artifact_tar") and result_dict.get("run_id"):
+            try:
+                import io
+                import tarfile
+                import os
+
+                rid = result_dict["run_id"]
+                dest = os.path.join("artifacts", rid)
+                os.makedirs("artifacts", exist_ok=True)
+
+                # Clean any existing directory to ensure fresh extraction
+                if os.path.exists(dest):
+                    import shutil
+                    shutil.rmtree(dest)
+
+                with tarfile.open(fileobj=io.BytesIO(result_dict["artifact_tar"]), mode="r:gz") as tf:
+                    tf.extractall("artifacts")
+                print(f"Artifacts downloaded and extracted to: {dest}")
+                # Update the run_dir to point to local path
+                result_dict["run_dir"] = dest
+            except Exception as e:
+                print(f"Warning: failed to extract artifacts locally: {e}")
+
         # Print a small summary and adapt shape to local 'result'
         result = type("RunOutputs", (), {})()
         result.run_dir = result_dict.get("run_dir", "")
@@ -391,6 +415,30 @@ def handle_sweep_command(args: argparse.Namespace) -> None:
     # Local/submitit: executor.map calls run_experiment_task(cfg_dict)
     # Modal: ModalExecutor.map ignores `fn` and calls remote_fn.map(cfg_dict)
     results = executor.map(run_experiment_task, cfg_dicts)
+
+    # Auto-extract artifacts for Modal results
+    if (args.backend or "local").lower() == "modal":
+        import io
+        import tarfile
+        import os
+
+        os.makedirs("artifacts", exist_ok=True)
+        for r in results:
+            try:
+                if r and r.get("artifact_tar") and r.get("run_id"):
+                    rid = r["run_id"]
+                    dest = os.path.join("artifacts", rid)
+
+                    # Clean any existing directory to ensure fresh extraction
+                    if os.path.exists(dest):
+                        import shutil
+                        shutil.rmtree(dest)
+
+                    with tarfile.open(fileobj=io.BytesIO(r["artifact_tar"]), mode="r:gz") as tf:
+                        tf.extractall("artifacts")
+                    print(f"Pulled artifacts for {rid} into artifacts/{rid}")
+            except Exception as e:
+                print(f"Warning: failed to extract artifacts for a job: {e}")
 
     # Save results summary
     import pandas as pd

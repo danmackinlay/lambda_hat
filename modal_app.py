@@ -65,9 +65,35 @@ def run_experiment_remote(cfg_dict: dict) -> dict:
 
     result = run_experiment_task(cfg_dict)
 
-    # Commit volume changes if we wrote to it
-    if "run_dir" in result and result["run_dir"] and result["run_dir"].startswith("/artifacts/"):
-        artifacts_volume.commit()
+    # If a run_dir exists, package it and return the bytes too
+    if result.get("run_dir"):
+        import io
+        import tarfile
+
+        run_dir = result["run_dir"]
+        # Normalize to get run ID
+        rid = os.path.basename(run_dir.rstrip("/"))
+
+        if os.path.isdir(run_dir):
+            # (1) Create a tar.gz first while the directory definitely exists
+            buf = io.BytesIO()
+            with tarfile.open(fileobj=buf, mode="w:gz") as tf:
+                tf.add(run_dir, arcname=rid)
+            result["artifact_tar"] = buf.getvalue()
+            result["run_id"] = rid
+
+            # (2) Persist to volume under /artifacts/<rid> for remote browsing
+            try:
+                vol_dir = f"/artifacts/{rid}"
+                if os.path.exists(vol_dir):
+                    shutil.rmtree(vol_dir)
+                shutil.copytree(run_dir, vol_dir)
+                artifacts_volume.commit()
+                result["run_dir"] = vol_dir
+            except Exception as e:
+                # Non-fatal; we still have the tar
+                print(f"[Modal] Warning: failed to persist to volume: {e}")
+                pass
 
     return result
 

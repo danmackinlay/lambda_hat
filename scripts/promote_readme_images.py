@@ -10,6 +10,8 @@ Usage:
 from pathlib import Path
 import shutil
 import sys
+import re
+from datetime import datetime
 
 # Which files to copy (left = substring to match in artifacts, right = stable name in assets)
 SELECT = [
@@ -23,17 +25,55 @@ SELECT = [
 ]
 
 
+def _has_needed_artifacts(p: Path) -> bool:
+    """Valid if it contains metrics.json OR at least one of the expected PNGs."""
+    if (p / "metrics.json").exists():
+        return True
+    pngs = [q.name for q in p.glob("*.png")]
+    return any(key in name for key, _ in SELECT for name in pngs)
+
+
 def latest_run_dir(artifacts_dir: Path) -> Path:
-    """Find the most recent timestamped run directory."""
-    runs = [p for p in artifacts_dir.glob("*-*") if p.is_dir()]
-    if not runs:
-        raise SystemExit("No runs found under artifacts/")
-    return sorted(runs)[-1]
+    """Pick the newest run (hash or timestamp dir, symlinks ok) that actually has artifacts."""
+    if not artifacts_dir.exists():
+        raise SystemExit(f"Artifacts directory not found: {artifacts_dir}")
+
+    candidates: list[tuple[float, Path]] = []
+    for p in artifacts_dir.iterdir():
+        if not p.is_dir():
+            continue
+        # Follow symlink where possible
+        try:
+            q = p.resolve()
+        except Exception:
+            q = p
+        if not _has_needed_artifacts(q):
+            continue  # skip empty/aborted dirs
+
+        # Prefer parsed timestamp when name is YYYYMMDD-HHMMSS; else use newest file mtime
+        ts = None
+        if re.fullmatch(r"\d{8}-\d{6}", p.name):
+            try:
+                ts = datetime.strptime(p.name, "%Y%m%d-%H%M%S").timestamp()
+            except ValueError:
+                ts = None
+        if ts is None:
+            mtimes = [f.stat().st_mtime for f in q.glob("*.png")]
+            if (q / "metrics.json").exists():
+                mtimes.append((q / "metrics.json").stat().st_mtime)
+            ts = max(mtimes) if mtimes else q.stat().st_mtime
+        candidates.append((ts, p))
+
+    if not candidates:
+        raise SystemExit("No runs with artifacts found under artifacts/")
+    candidates.sort(key=lambda t: t[0])
+    return candidates[-1][1]
 
 
 def find_first_match(run_dir: Path, key: str) -> Path | None:
-    """Find the first PNG file containing the key substring."""
-    for p in sorted(run_dir.glob("*.png")):
+    """Find the first PNG file containing the key substring (follow symlinks)."""
+    base = run_dir.resolve() if run_dir.exists() else run_dir
+    for p in sorted(base.glob("*.png")):
         if key in p.name:
             return p
     return None

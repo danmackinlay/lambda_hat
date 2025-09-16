@@ -276,23 +276,15 @@ git commit -m "refresh README examples"
 ### Remote run on Modal (one cheap job)
 
 ```bash
-# 1) run once on Modal (writes to the volume: /artifacts/<run_id>)
+# 1) run once on Modal - artifacts are automatically downloaded to ./artifacts/<run_id>/
 uv run python main.py run --backend=modal --preset=quick
 
-# 2) pull the latest run back locally (no need to copy/paste the run_id)
-uv run python scripts/pull_artifacts.py
-
-# 3) promote images as usual
+# 2) promote images as usual
 uv run python scripts/promote_readme_images.py
 git add assets/readme
 git commit -m "refresh README examples"
 ```
 
-If you prefer a specific run:
-
-```bash
-uv run python scripts/pull_artifacts.py <run_id>
-```
 
 Notes:
 
@@ -344,7 +336,7 @@ uv run python main.py sweep --backend=submitit \
 uv run python main.py sweep --backend=modal
 ```
 
-Artifacts are saved by default and include full diagnostic plots and data. They are saved locally (local backend), to shared storage (SLURM), or Modal volumes (modal backend). Use `--no-artifacts` to disable saving.
+Artifacts are saved by default and automatically downloaded to `./artifacts/<run_id>/` as each job completes. Use `--no-artifacts` to disable saving.
 
 ### Modal (deployed app) workflow
 
@@ -397,17 +389,11 @@ Changes to local-only paths (like README) don't require redeploy.
   `uv run modal volume rm llc-artifacts /artifacts/<run-id>`
 * Stop the app (rare): `uv run modal app stop llc-experiments`
 
-#### Retrieving Modal artifacts
+#### Modal artifacts
 
-After running sweeps on Modal, download results locally using the SDK:
+**Automatic download**: When you run `main.py run/sweep --backend=modal`, artifacts are automatically downloaded to `./artifacts/<run_id>/` as each job completes. No separate pull step needed!
 
-```bash
-# Pull the latest run (auto-detected)
-uv run python scripts/pull_artifacts.py
-
-# Pull a specific run by ID
-uv run python scripts/pull_artifacts.py <run_id>
-```
+**Manual retrieval** (if needed): For browsing or recovering old runs from the Modal volume:
 
 #### Modal troubleshooting
 
