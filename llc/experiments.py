@@ -46,6 +46,8 @@ def sweep_space():
             hmc_warmup=200,
         ),
         "sweeps": [
+            # Architecture size (parameter count) sweep
+            {"name": "dim", "param": "target_params", "values": [500, 1_000, 2_000, 5_000, 10_000]},
             # Architecture sweeps
             {"name": "depth", "param": "depth", "values": [1, 2, 3, 4]},
             {"name": "width", "param": "hidden", "values": [50, 100, 200, 400]},

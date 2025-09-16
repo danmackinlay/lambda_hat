@@ -35,7 +35,7 @@ Ultimately, we want to devise and evaluate new sampling algorithms for singular 
     - Trace, autocorrelation, ESS, and \(\hat R\) for \(L_n(w)\).
     - Optional trace/rank plots for a tiny subset or random projection of θ (memory-safe).
     - HMC acceptance-rate histogram; MCLMC energy-change histogram.
-  - **Work-normalized variance (WNV)** metrics: variance of LLC estimate × (wall-clock time or gradient-equivalent count).
+  - **Work-normalized variance (WNV)** metrics: variance of LLC estimate × (wall-clock time or gradient-equivalent count). Automatically computed for all samplers to enable efficiency comparisons across parameter dimensions.
 
 ## Examples
 
@@ -185,13 +185,13 @@ Control visualization and artifact saving via CLI flags:
 
 ```bash
 # Save artifacts with plots (default behavior)
-uv run python main.py run --preset=quick
+uv run python -m llc run --preset=quick
 
-# Run without saving artifacts (faster)
-uv run python main.py run --preset=quick --no-artifacts
+# Run without saving plots (faster)
+uv run python -m llc run --preset=quick --no-save-plots
 
 # Force re-run even if cached results exist
-uv run python main.py run --preset=quick --no-skip
+uv run python -m llc run --preset=quick --no-skip
 ```
 
 ### Common Tasks
@@ -200,34 +200,34 @@ Below are copy-paste commands for typical workflows:
 
 #### Local quick runs
 ```bash
-# Fastest smoke test (no artifacts)
-uv run python main.py run --preset=quick --no-artifacts
+# Fastest smoke test (no plots)
+uv run python -m llc run --preset=quick --no-save-plots
 
 # Quick with artifacts (plots, NetCDF, manifest, gallery)
-uv run python main.py run --preset=quick
+uv run python -m llc run --preset=quick
 ```
 
 #### Remote single runs
 ```bash
 # Run one job on Modal
-uv run python main.py run --backend=modal --preset=quick
+uv run python -m llc run --backend=modal --preset=quick
 
 # Run one job on SLURM
-uv run python main.py run --backend=submitit --preset=quick
+uv run python -m llc run --backend=submitit --preset=quick
 ```
 
 #### Full run
 ```bash
-uv run python main.py run --preset=full
+uv run python -m llc run --preset=full
 ```
 
 #### Parameter sweep (local CPU)
 ```bash
 # Serial execution
-uv run python main.py sweep
+uv run python -m llc sweep
 
 # Parallel on N local workers
-uv run python main.py sweep --backend=local --workers=8
+uv run python -m llc sweep --backend=local --workers=8
 ```
 
 #### Modal (serverless) — deploy once, then sweep
@@ -243,12 +243,12 @@ print(fn.remote({"preset":"quick","save_artifacts":True}))
 PY
 
 # 3) Sweep on Modal (use small n-seeds while testing)
-uv run python main.py sweep --backend=modal --n-seeds=1 --preset=quick
+uv run python -m llc sweep --backend=modal --n-seeds=1 --preset=quick
 ```
 
 #### SLURM (Submitit)
 ```bash
-uv run python main.py sweep --backend=submitit  # add your submitit params if needed
+uv run python -m llc sweep --backend=submitit  # add your submitit params if needed
 ```
 
 #### Development utilities
@@ -267,7 +267,7 @@ We keep a few diagnostic plots in `assets/readme/` for illustration.
 ### Local run (fastest on your machine)
 
 ```bash
-uv run python main.py run
+uv run python -m llc run --preset=quick
 uv run python scripts/promote_readme_images.py
 git add assets/readme
 git commit -m "refresh README examples"
@@ -276,7 +276,7 @@ git commit -m "refresh README examples"
 ### Remote run on Modal
 
 ```bash
-uv run python main.py run --backend=modal
+uv run python -m llc run --backend=modal --preset=quick
 uv run python scripts/promote_readme_images.py
 git add assets/readme
 git commit -m "refresh README examples"
@@ -291,10 +291,26 @@ Notes:
 
 ## Usage
 
+### Swappable Targets
+
+The system supports different target functions:
+
+**Neural network targets (default):**
+```bash
+uv run python -m llc run --preset=quick
+```
+
+**Analytical quadratic target** (for factor-of-2 bug detection):
+```bash
+uv run python -m llc run --target=quadratic --quad-dim=4
+```
+
+The quadratic target uses L_n(θ) = 0.5||θ||² for testing sampler correctness.
+
 ### Run a single experiment
 
 ```bash
-uv run python main.py
+uv run python -m llc run
 ```
 
 * Uses the default `Config` (`in_dim=32`, `target_params≈10k`, ReLU MLP).
@@ -305,31 +321,31 @@ uv run python main.py
 ### Run a sweep
 
 ```bash
-uv run python main.py sweep
+uv run python -m llc sweep
 ```
 
-* Iterates over depth/width/activation/data/noise settings (see `sweep_space()`),
-* logs per-run LLC results and saves to `llc_sweep_results.csv`.
+* Iterates over parameter dimensions (500-10k), depth/width/activation/data/noise settings (see `sweep_space()`),
+* logs per-run LLC results with WNV metrics and saves to `llc_sweep_results.csv`.
 
 ## Parallelism
 
 **Local (default):**
 
 ```bash
-uv run python main.py sweep --backend=local --workers=4
+uv run python -m llc sweep --backend=local --workers=4
 ```
 
 **SLURM cluster:**
 
 ```bash
-uv run python main.py sweep --backend=submitit \
+uv run python -m llc sweep --backend=submitit \
   --partition=gpu --gpus=1 --timeout-min=60
 ```
 
 **Modal serverless:**
 
 ```bash
-uv run python main.py sweep --backend=modal
+uv run python -m llc sweep --backend=modal
 ```
 
 Artifacts are saved by default and automatically downloaded to `./artifacts/<run_id>/` as each job completes. Use `--no-artifacts` to disable saving.
@@ -366,7 +382,7 @@ def run_experiment_remote(cfg_dict: dict) -> dict:
 **Run a sweep (client)**
 
 ```bash
-uv run python main.py sweep --backend=modal
+uv run python -m llc sweep --backend=modal
 ```
 
 The client looks up the deployed function by name and calls `.map(...)`. Artifacts are saved to the **Modal volume** mounted at `/artifacts` in the app.

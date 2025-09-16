@@ -422,23 +422,62 @@ def handle_sweep_command(args: argparse.Namespace) -> None:
             except Exception as e:
                 print(f"Warning: failed to extract artifacts for a job: {e}")
 
-    # Save results summary
+    # Save detailed results summary with WNV fields
     import pandas as pd
+    import json
+    import os
 
-    summary_data = []
-    for result in results:
-        if result and "error" not in result:
-            row = result["cfg"].copy()
-            for key in ["llc_sgld", "llc_hmc", "llc_mclmc"]:
-                if key in result:
-                    row[key] = result[key]
-            summary_data.append(row)
+    rows = []
+    for r in results:
+        run_dir = r.get("run_dir")
+        if not run_dir:
+            continue
 
-    if summary_data:
-        df = pd.DataFrame(summary_data)
+        metrics_path = os.path.join(run_dir, "metrics.json")
+        config_path = os.path.join(run_dir, "config.json")
+        try:
+            with open(metrics_path) as f:
+                M = json.load(f)
+            with open(config_path) as f:
+                C = json.load(f)
+        except Exception:
+            continue
+
+        # Which samplers ran?
+        for s in ("sgld", "hmc", "mclmc"):
+            if f"{s}_llc_mean" not in M:
+                continue
+            rows.append({
+                # sweep keys
+                "sweep": "dim",  # current sweep is dimension
+                "target_params": C.get("target_params"),
+                "depth": C.get("depth"),
+                "activation": C.get("activation"),
+                "sampler": s,
+                "seed": C.get("seed"),
+                # accuracy
+                "llc_mean": M.get(f"{s}_llc_mean"),
+                "llc_se": M.get(f"{s}_llc_se"),
+                "ess": M.get(f"{s}_ess"),
+                # cost
+                "t_sampling": M.get(f"timing_sampling") or M.get(f"{s}_timing_sampling"),
+                "work_grad": (
+                    M.get(f"{s}_n_leapfrog_grads")
+                    or M.get(f"{s}_n_steps")  # sgld/mclmc name
+                    or 0
+                ),
+                # efficiency (the ones you asked for)
+                "wnv_time": M.get(f"{s}_wnv_time"),
+                "wnv_grad": M.get(f"{s}_wnv_grad"),
+                # bookkeeping
+                "run_dir": run_dir,
+            })
+
+    if rows:
+        df = pd.DataFrame(rows)
         df.to_csv("llc_sweep_results.csv", index=False)
-        print("\nSweep complete! Results saved to llc_sweep_results.csv")
-        print(f"Successful runs: {len(summary_data)}/{len(results)}")
+        print("\nSweep complete! Results saved to llc_sweep_results.csv with WNV fields.")
+        print(f"Successful runs: {len(rows)}/{len(results)} (rows include per-sampler results)")
     else:
         print("\nNo successful runs to save.")
 

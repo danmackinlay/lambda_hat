@@ -201,6 +201,18 @@ def run_one(
         )
         print(f"SGLD LLC: {llc_sgld_mean:.4f} ± {se_sgld:.4f} (ESS: {ess_sgld:.1f})")
 
+        # Compute WNV (Work-Normalized Variance) for SGLD
+        def _wnv(se, t_sampling, work_sampling):
+            var = float(se) * float(se)
+            return float(var * float(t_sampling)), float(var * float(work_sampling))
+
+        # Approximate sampling-only work by splitting warmup/sample proportionally to steps
+        sgld_sample_frac = (
+            max(0, cfg.sgld_steps - cfg.sgld_warmup) / max(1, cfg.sgld_steps)
+        )
+        sgld_work_sampling = float(stats.n_sgld_minibatch_grads) * sgld_sample_frac
+        sgld_wnv_time, sgld_wnv_grad = _wnv(se_sgld, stats.t_sgld_sampling, sgld_work_sampling)
+
         # Store SGLD results
         all_metrics.update(
             {
@@ -211,6 +223,8 @@ def run_one(
                 "sgld_timing_sampling": float(stats.t_sgld_sampling),
                 "sgld_n_steps": int(stats.n_sgld_minibatch_grads),
                 "sgld_n_full_loss": int(stats.n_sgld_full_loss),
+                "sgld_wnv_time": sgld_wnv_time,
+                "sgld_wnv_grad": sgld_wnv_grad,
             }
         )
         histories["sgld"] = Ln_histories_sgld
@@ -266,6 +280,10 @@ def run_one(
         print(f"HMC LLC: {llc_hmc_mean:.4f} ± {se_hmc:.4f} (ESS: {ess_hmc:.1f})")
         print(f"HMC acceptance rate (mean over chains/draws): {mean_acc:.3f}")
 
+        # Compute WNV for HMC (HMC counts sampling grads explicitly)
+        hmc_work_sampling = float(stats.n_hmc_leapfrog_grads)
+        hmc_wnv_time, hmc_wnv_grad = _wnv(se_hmc, stats.t_hmc_sampling, hmc_work_sampling)
+
         # Store HMC results
         all_metrics.update(
             {
@@ -281,6 +299,8 @@ def run_one(
                 )
                 if any(a.size for a in accs_hmc)
                 else float("nan"),
+                "hmc_wnv_time": hmc_wnv_time,
+                "hmc_wnv_grad": hmc_wnv_grad,
             }
         )
         histories["hmc"] = Ln_histories_hmc
@@ -359,6 +379,10 @@ def run_one(
             f"MCLMC LLC: {llc_mclmc_mean:.4f} ± {se_mclmc:.4f} (ESS: {ess_mclmc:.1f})"
         )
 
+        # Compute WNV for MCLMC
+        mclmc_work_sampling = float(stats.n_mclmc_steps)
+        mclmc_wnv_time, mclmc_wnv_grad = _wnv(se_mclmc, stats.t_mclmc_sampling, mclmc_work_sampling)
+
         # Store MCLMC results
         all_metrics.update(
             {
@@ -369,6 +393,8 @@ def run_one(
                 "mclmc_timing_sampling": float(stats.t_mclmc_sampling),
                 "mclmc_n_steps": int(stats.n_mclmc_steps),
                 "mclmc_n_full_loss": int(stats.n_mclmc_full_loss),
+                "mclmc_wnv_time": mclmc_wnv_time,
+                "mclmc_wnv_grad": mclmc_wnv_grad,
             }
         )
         histories["mclmc"] = Ln_histories_mclmc
