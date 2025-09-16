@@ -296,9 +296,9 @@ uv run python scripts/pull_artifacts.py <run_id>
 
 Notes:
 
-* The Modal volume name is `llc-artifacts` (see Makefile targets `modal-ls`, `modal-get`)【】.
-* The pipeline writes artifacts under `artifacts/<run_id>` locally, and `/artifacts/<run_id>` on Modal; the README promoter already selects the **latest** local run automatically【】.
-* Use `--no-skip` if you need to force recompute; by default identical config+code uses the cached run (see the caching logic driven by `run_id(cfg)` in `llc/cache.py`)【】.
+* The Modal volume name is `llc-artifacts` (see Makefile targets `modal-ls`, `modal-get`).
+* The pipeline writes artifacts under `artifacts/<run_id>` locally, and `/artifacts/<run_id>` on Modal; the README promoter already selects the **latest** local run automatically.
+* Use `--no-skip` if you need to force recompute; by default identical config+code uses the cached run (see the caching logic driven by `run_id(cfg)` in `llc/cache.py`).
 
 
 ## Usage
@@ -399,17 +399,14 @@ Changes to local-only paths (like README) don't require redeploy.
 
 #### Retrieving Modal artifacts
 
-After running sweeps on Modal, download results locally:
+After running sweeps on Modal, download results locally using the SDK:
 
 ```bash
-# List available runs
-uv run modal volume ls llc-artifacts
+# Pull the latest run (auto-detected)
+uv run python scripts/pull_artifacts.py
 
-# Download specific run
-uv run modal volume get llc-artifacts /artifacts/20250909-172233 ./artifacts/20250909-172233
-
-# Download all results
-uv run modal volume get llc-artifacts /artifacts ./artifacts
+# Pull a specific run by ID
+uv run python scripts/pull_artifacts.py <run_id>
 ```
 
 #### Modal troubleshooting

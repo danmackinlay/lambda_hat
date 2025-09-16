@@ -387,7 +387,6 @@ def run_sghmc_chains_batched(
 
 
 # ---------- HMC (with window adaptation) ----------
-
 def run_hmc_chain(
     *,
     rng_key: Array,
@@ -428,8 +427,7 @@ def run_hmc_chain(
 
     # Prime compilation
     k_pre, k_draws = jax.random.split(rng_key)
-    k_stream = jax.random.split(k_draws, max(1, draws))
-    state, info = step(k_stream[0], state)  # compile
+    _ = step(k_pre, state)  # just compile; ignore result
     if work_bump:
         work_bump(L + 1)
 
@@ -556,8 +554,6 @@ def run_hmc_chains_batched(
 
 
 # ---------- MCLMC (unadjusted; tuned L & step_size) ----------
-
-
 def run_mclmc_chain(
     *,
     rng_key: Array,
@@ -604,8 +600,7 @@ def run_mclmc_chain(
 
     # Prime compilation
     k_pre, k_draws = jax.random.split(rng_key)
-    ks = jax.random.split(k_draws, max(1, draws))
-    st, info = step(ks[0], tuned_state)
+    _ = step(k_pre, tuned_state)  # just compile; ignore result
 
     def step_fn(key: Array, st):
         st, inf = step(key, st)

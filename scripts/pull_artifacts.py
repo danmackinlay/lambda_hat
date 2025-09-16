@@ -1,89 +1,65 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 """
-Pull artifacts from the Modal volume.
+Pull artifacts from Modal using the SDK, not the CLI.
 
 Usage:
-  # Pull a specific run
+  # Pull the LATEST run (auto-detected)
+  uv run python scripts/pull_artifacts.py
+
+  # Pull a specific run by ID
   uv run python scripts/pull_artifacts.py <run_id>
 
-  # Pull the latest run (no args) or with --latest
-  uv run python scripts/pull_artifacts.py
-  uv run python scripts/pull_artifacts.py --latest
-
-Options:
-  --volume  Name of Modal volume (default: llc-artifacts)
-  --target  Local target folder (default: ./artifacts)
+It writes to ./artifacts/<run_id>/ locally.
 """
-
 import argparse
-import subprocess
-import sys
+import io
+import tarfile
 from pathlib import Path
-import re
+import modal
 
-VOL_DEFAULT = "llc-artifacts"
-ROOT_PREFIX = "/artifacts/"
-
-
-def _list_volume_paths(volume: str) -> list[str]:
-    """Return list of paths in the Modal volume (text-parse fallback)."""
-    # We rely on `modal volume ls <volume>` (same call documented in the Makefile).
-    # Output format is textual; we grab tokens that look like /artifacts/<name>
-    cmd = ["modal", "volume", "ls", volume]
-    out = subprocess.check_output(cmd, text=True)
-    paths = []
-    for line in out.splitlines():
-        m = re.search(r"(/artifacts/[^\s]+)", line)
-        if m:
-            paths.append(m.group(1))
-    return sorted(set(paths))
-
-
-def _pick_latest(paths: list[str]) -> str | None:
-    """Pick the most recent-looking path. Prefer timestamp symlinks if present."""
-    if not paths:
-        return None
-    # Prefer timestamped entries like /artifacts/YYYYMMDD-HHMMSS if present
-    ts = [p for p in paths if re.search(r"/artifacts/\d{8}-\d{6}$", p)]
-    if ts:
-        return sorted(ts)[-1]
-    # Otherwise fall back to lexical max (works fine for hex run_ids too)
-    candidates = [p for p in paths if p.startswith(ROOT_PREFIX)]
-    return sorted(candidates)[-1] if candidates else None
+APP = "llc-experiments"           # app name
+FN_LIST = "list_artifacts"        # server-side lister
+FN_EXPORT = "export_artifacts"    # server-side exporter
 
 
 def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("run_id", nargs="?", help="Run ID (e.g., d9c9f33dce4e)")
-    ap.add_argument("--latest", action="store_true", help="Pull the latest run")
-    ap.add_argument("--volume", default=VOL_DEFAULT, help="Modal volume name")
-    ap.add_argument("--target", default="artifacts", help="Local target directory")
+    ap = argparse.ArgumentParser(description="Pull artifacts from Modal using SDK")
+    ap.add_argument("run_id", nargs="?", help="Run ID (e.g. f1ce73101e3d). Omit for latest.")
+    ap.add_argument("--target", default="artifacts", help="Local target root (default: ./artifacts)")
     args = ap.parse_args()
 
-    # Decide which remote path to pull
+    # Look up deployed functions
+    list_fn = modal.Function.from_name(APP, FN_LIST)
+    export_fn = modal.Function.from_name(APP, FN_EXPORT)
+
+    # Pick run_id
     if args.run_id:
-        remote_path = f"{ROOT_PREFIX}{args.run_id}"
+        run_id = args.run_id
+        print(f"[pull-sdk] Pulling specific run: {run_id}")
     else:
-        # auto-discover latest
-        paths = _list_volume_paths(args.volume)
-        latest = _pick_latest(paths)
-        if not latest:
-            sys.exit("[pull-artifacts] No runs found on the volume.")
-        remote_path = latest
-        print(f"[pull-artifacts] Auto-selected latest: {remote_path}")
+        # Ask server for list; pick latest by name (timestamps sort after hex ids)
+        print("[pull-sdk] Discovering latest run on server...")
+        paths = list_fn.remote("/artifacts")
+        if not paths:
+            raise SystemExit("No remote artifacts found.")
+        run_id = Path(sorted(paths)[-1]).name
+        print(f"[pull-sdk] Latest on server: {run_id}")
 
-    # Local target path (mirror remote leaf)
-    run_leaf = Path(remote_path).name
-    target = Path(args.target) / run_leaf
-    target.parent.mkdir(parents=True, exist_ok=True)
+    # Fetch tarball and extract
+    print(f"[pull-sdk] Downloading and extracting {run_id}...")
+    data = export_fn.remote(run_id)
+    dest_root = Path(args.target)
+    dest_root.mkdir(parents=True, exist_ok=True)
 
-    cmd = ["modal", "volume", "get", args.volume, remote_path, str(target)]
-    print(f"[pull-artifacts] Running: {' '.join(cmd)}")
-    try:
-        subprocess.check_call(cmd)
-        print(f"[pull-artifacts] Artifacts pulled into {target}")
-    except subprocess.CalledProcessError as e:
-        sys.exit(f"[pull-artifacts] Error: {e}")
+    # Clean any existing directory to ensure fresh extraction
+    target_dir = dest_root / run_id
+    if target_dir.exists():
+        import shutil
+        shutil.rmtree(target_dir)
+
+    with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as tf:
+        tf.extractall(dest_root)
+    print(f"[pull-sdk] Extracted into {dest_root/run_id}")
 
 
 if __name__ == "__main__":

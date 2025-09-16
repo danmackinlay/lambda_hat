@@ -70,3 +70,36 @@ def run_experiment_remote(cfg_dict: dict) -> dict:
         artifacts_volume.commit()
 
     return result
+
+
+# --- SDK helpers for artifact management ---
+
+@app.function(volumes={"/artifacts": artifacts_volume})
+def list_artifacts(prefix: str = "/artifacts") -> list[str]:
+    """List artifact directories on the Modal volume (server-side)."""
+    import os
+    try:
+        entries = sorted(
+            f"/artifacts/{name}"
+            for name in os.listdir(prefix)
+            if os.path.isdir(os.path.join(prefix, name))
+        )
+        return entries
+    except FileNotFoundError:
+        return []
+
+
+@app.function(volumes={"/artifacts": artifacts_volume})
+def export_artifacts(run_id: str) -> bytes:
+    """Tar.gz a single run dir under /artifacts and return it as bytes."""
+    import io
+    import os
+    import tarfile
+
+    run_path = f"/artifacts/{run_id}" if not run_id.startswith("/artifacts/") else run_id
+    if not os.path.isdir(run_path):
+        raise FileNotFoundError(f"Not found: {run_path}")
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tf:
+        tf.add(run_path, arcname=os.path.basename(run_path))
+    return buf.getvalue()

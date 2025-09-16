@@ -96,11 +96,11 @@ def precond_update(
 
     if bias_correction:
         t_new = st.t + 1.0
-        m_new / (1.0 - beta1**t_new)
+        m_hat = m_new / (1.0 - beta1**t_new)
         v_hat = v_new / (1.0 - beta2**t_new)
     else:
         t_new = st.t
-        v_hat = v_new
+        m_hat, v_hat = m_new, v_new
 
     inv_sqrt = jax.lax.rsqrt(v_hat + eps)
     return inv_sqrt, DiagPrecondState(m_new, v_new, t_new)
