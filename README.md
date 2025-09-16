@@ -267,24 +267,20 @@ We keep a few diagnostic plots in `assets/readme/` for illustration.
 ### Local run (fastest on your machine)
 
 ```bash
-uv run python main.py run --preset=quick
+uv run python main.py run
 uv run python scripts/promote_readme_images.py
 git add assets/readme
 git commit -m "refresh README examples"
 ```
 
-### Remote run on Modal (one cheap job)
+### Remote run on Modal
 
 ```bash
-# 1) run once on Modal - artifacts are automatically downloaded to ./artifacts/<run_id>/
-uv run python main.py run --backend=modal --preset=quick
-
-# 2) promote images as usual
+uv run python main.py run --backend=modal
 uv run python scripts/promote_readme_images.py
 git add assets/readme
 git commit -m "refresh README examples"
 ```
-
 
 Notes:
 

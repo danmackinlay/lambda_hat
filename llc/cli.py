@@ -188,6 +188,7 @@ def apply_preset(cfg: Config, preset: str) -> Config:
             mclmc_thin=2,
             chains=2,
             n_data=1000,
+            save_plots=True,
         )
     elif preset == "full":
         return replace(
