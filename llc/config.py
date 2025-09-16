@@ -143,6 +143,9 @@ class Config:
     save_readme_snippet: bool = True  # generate README_snippet.md
     auto_update_readme: bool = False  # auto-update README with markers (optional)
 
+    # Cache control
+    cache_salt: Optional[str] = None  # optional salt to invalidate cache
+
 
 # Small test config for quick verification
 TEST_CFG = Config(

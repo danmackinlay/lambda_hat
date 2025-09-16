@@ -93,26 +93,49 @@ pip install llc[modal]     # Modal support
 
 ---
 
-## Run Caching
+## Caching, Skipping, and Re-running
 
-Each configuration produces a deterministic run ID (hash of config + code version) to avoid re-running completed experiments:
+Every run gets a deterministic **run ID** derived from:
 
-```bash
-# Use caching (default behavior)
-uv run python main.py run --preset=quick
+* **Config hash**: the mathematical parts of your config (model, data, sampler settings).
+* **Code version**: by default, the current git commit (`abcdef12+dirty`). If git metadata is unavailable (e.g. Modal containers), we fall back to hashing the source files under `llc/**/*.py` and `pyproject.toml`.
 
-# Skip cache and force re-run
-uv run python main.py run --preset=quick --no-skip
+That means:
 
-# Check cache behavior in sweep mode
-uv run python main.py sweep --backend=local  # Caching enabled by default
-```
+* If you rerun the same config on the same code, the run ID is the same, and `--skip-if-exists` (the default) will cause the pipeline to short-circuit and just load cached metrics/artifacts.
+* If you change code or config, the run ID changes, and you’ll get a fresh run.
 
-**How it works:**
-- Run ID combines normalized config parameters + git commit hash
-- Cache hits load existing results in milliseconds vs. minutes of computation
-- Any change to mathematical parameters or code invalidates the cache
-- Non-mathematical flags (like `--no-artifacts`) don't affect the run ID
+### Forcing a re-run
+
+There are three supported ways to bust the cache:
+
+1. **`--no-skip`**
+   Completely disables caching for that invocation. All runs recompute even if results exist.
+
+   ```bash
+   uv run python main.py run --preset=quick --no-skip
+   ```
+
+2. **Code or config change**
+   Any edit to `llc/*.py` or to the config parameters produces a new run ID automatically (on Modal too, thanks to the file-hash fallback).
+
+3. **Explicit override**
+
+   * **Environment:** set `LLC_CODE_VERSION=foo123` to force a new “code version” string.
+   * **CLI:** use `--cache-salt=some_label` to append an arbitrary salt into the hash.
+
+   Both let you separate results even if code+config are unchanged (useful for A/B comparisons or when external state changes). Example:
+
+   ```bash
+   uv run python main.py run --preset=quick --cache-salt=sgld-tweak1
+   ```
+
+### Good defaults
+
+* **Local runs with git:** cache keys are human-readable (`commit+dirty`).
+* **Modal/SLURM without git:** file hashes ensure run IDs still change when you change code.
+* **CI/CD or experiments:** `LLC_CODE_VERSION` or `--cache-salt` let you opt-out of caching for selected jobs without throwing away all caches.
+
 
 ---
 

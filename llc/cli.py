@@ -64,6 +64,11 @@ def add_run_arguments(parser: argparse.ArgumentParser) -> None:
         action="store_true",
         help="Don't save artifacts (plots, data files, gallery)",
     )
+    parser.add_argument(
+        "--cache-salt",
+        type=str,
+        help="Append a salt to the cache key to force re-run",
+    )
 
     # Preset configurations
     parser.add_argument(
@@ -227,6 +232,7 @@ def override_config(cfg: Config, args: argparse.Namespace) -> Config:
         "mclmc_draws",
         "mclmc_eval_every",
         "mclmc_thin",
+        "cache_salt",
     ]
 
     for attr in direct_mappings:

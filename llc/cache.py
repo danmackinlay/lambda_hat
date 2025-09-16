@@ -21,6 +21,7 @@ def _normalize_cfg(cfg) -> Dict[str, Any]:
     d = asdict(cfg) if is_dataclass(cfg) else dict(cfg)
 
     # Remove flags that don't change mathematical results
+    # Note: cache_salt is NOT in this list - we want it to affect the cache key
     volatile_keys = [
         "use_tqdm",
         "auto_create_run_dir",
@@ -40,23 +41,42 @@ def _normalize_cfg(cfg) -> Dict[str, Any]:
 
 def _code_version() -> str:
     """
-    Get current code version from git.
-    Returns commit hash + '+dirty' if there are uncommitted changes.
+    Code version fingerprint.
+    Prefer git (rev + dirty). If git is unavailable (e.g. Modal runtime),
+    fall back to hashing the contents of the local source files.
+    Can be overridden by LLC_CODE_VERSION env var.
     """
+    # 0) explicit override
+    env_override = os.environ.get("LLC_CODE_VERSION")
+    if env_override:
+        return env_override
+
+    # 1) try git
     try:
-        # Get current commit hash
         rev = subprocess.check_output(
             ["git", "rev-parse", "HEAD"], text=True, stderr=subprocess.DEVNULL
         ).strip()
-
-        # Check if there are uncommitted changes
         dirty = subprocess.check_output(
             ["git", "status", "--porcelain"], text=True, stderr=subprocess.DEVNULL
         ).strip()
-
         return f"{rev[:12]}{'+dirty' if dirty else ''}"
     except Exception:
-        # Not in a git repo or git not available
+        pass
+
+    # 2) fallback: hash source files (stable across machines)
+    try:
+        import glob
+        paths = (
+            glob.glob("llc/**/*.py", recursive=True)
+            + glob.glob("llc/*.py")
+            + ["pyproject.toml"]
+        )
+        h = hashlib.sha1()
+        for p in sorted(set(filter(os.path.exists, paths))):
+            with open(p, "rb") as f:
+                h.update(f.read())
+        return f"filesha-{h.hexdigest()[:12]}"
+    except Exception:
         return "unknown"
 
 
