@@ -232,17 +232,10 @@ uv run python -m llc sweep --backend=local --workers=8
 
 #### Modal (serverless) — deploy once, then sweep
 ```bash
-# 1) Deploy the app
+# 1) Deploy the app (optional for object-based usage)
 uv run modal deploy modal_app.py
 
-# 2) Run a tiny validation job (cheap test)
-python - <<'PY'
-import modal
-fn = modal.Function.from_name("llc-experiments","run_experiment_remote")
-print(fn.remote({"preset":"quick","save_artifacts":True}))
-PY
-
-# 3) Sweep on Modal (use small n-seeds while testing)
+# 2) Sweep on Modal (use small n-seeds while testing)
 uv run python -m llc sweep --backend=modal --n-seeds=1 --preset=quick
 ```
 
@@ -350,19 +343,18 @@ uv run python -m llc sweep --backend=modal
 
 Artifacts are saved by default and automatically downloaded to `./artifacts/<run_id>/` as each job completes. Use `--no-artifacts` to disable saving.
 
-### Modal (deployed app) workflow
+### Modal workflow
 
-We use a **deployed Modal app** for sweeps.
-That means we deploy once, then the local client looks up the remote function by name and maps work to it.
+We use **object-based Modal function imports** for execution.
+The local client imports `run_experiment_remote` from `modal_app.py`, which auto-deploys current code.
 
 **Note:** We install Modal via `uv`. Run Modal CLI commands as `uv run modal ...`
-(e.g., `uv run modal deploy modal_app.py`, `uv run modal volume ls llc-artifacts`).
+(e.g., `uv run modal volume ls llc-artifacts`).
 
 **One-time setup**
 ```bash
 uv run modal token new                      # authenticate
 uv run modal volume create llc-artifacts    # optional; code can create it on first run
-uv run modal deploy modal_app.py            # build & register "llc-experiments/run_experiment_remote"
 ```
 
 `modal_app.py` defines resources/timeouts/volumes on the decorator:
@@ -379,21 +371,13 @@ def run_experiment_remote(cfg_dict: dict) -> dict:
     ...
 ```
 
-**Run a sweep (client)**
+**Run a sweep**
 
 ```bash
 uv run python -m llc sweep --backend=modal
 ```
 
-The client looks up the deployed function by name and calls `.map(...)`. Artifacts are saved to the **Modal volume** mounted at `/artifacts` in the app.
-
-**When to redeploy**
-
-* Change to `modal_app.py` (decorators, image, function body) → redeploy
-* Change to dependencies in `pyproject.toml` → redeploy
-* Change to repo code that should run remotely (we ship local source in the image) → redeploy
-
-Changes to local-only paths (like README) don't require redeploy.
+The client imports `run_experiment_remote` from `modal_app.py` and calls `.map(...)`. Modal auto-deploys the current code. Artifacts are saved to the **Modal volume** mounted at `/artifacts` in the app.
 
 **Tear down / clean up**
 
@@ -409,7 +393,6 @@ Changes to local-only paths (like README) don't require redeploy.
 
 #### Modal troubleshooting
 
-* **Hydration error:** "Function has not been hydrated…" → you forgot to deploy, or you tried to import the decorated function directly instead of looking it up by name. Fix: `uv run modal deploy modal_app.py`, and have the client use `modal.Function.from_name("llc-experiments", "run_experiment_remote")`.
 * **Timeouts not taking effect:** Remember timeouts are set in the decorator in `modal_app.py` (we use generous defaults), not per-call flags.
 * **Artifacts missing locally:** Fetch from the volume with the `modal volume get` commands above.
 
