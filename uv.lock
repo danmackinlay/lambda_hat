@@ -776,10 +776,11 @@ wheels = [
 [[package]]
 name = "llc"
 version = "0.1.0"
-source = { virtual = "." }
+source = { editable = "." }
 dependencies = [
     { name = "arviz" },
     { name = "blackjax" },
+    { name = "click" },
     { name = "marimo" },
     { name = "optax" },
     { name = "scipy" },
@@ -804,6 +805,7 @@ slurm = [
 requires-dist = [
     { name = "arviz", specifier = "~=0.22.0" },
     { name = "blackjax", specifier = "~=1.2.5" },
+    { name = "click", specifier = ">=8.2.1" },
     { name = "jax", marker = "extra == 'cpu'", specifier = ">=0.4.28" },
     { name = "jax", extras = ["cuda12-local"], marker = "extra == 'cuda12'", specifier = ">=0.4.28" },
     { name = "marimo", specifier = ">=0.15.2" },
