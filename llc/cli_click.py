@@ -1,10 +1,10 @@
 # llc/cli_click.py
 """
-Click-based CLI for LLC, mirroring argparse behavior:
+Click-based CLI for LLC:
 - Subcommands: run, sweep
-- Object-based Modal by default (auto-deploy). Set LLC_MODAL_LOOKUP_BY_NAME=1 to force lookup-by-name.
+- Object-based Modal by default (auto-deploy). Use --modal-use-deployed to use pre-deployed function.
 - Threads config_schema hash and skip_if_exists through to remote worker.
-- Identical options to argparse CLI.
+- Clean flag-only configuration (no environment variable overrides).
 """
 
 from __future__ import annotations
@@ -96,9 +96,9 @@ def _override_config(cfg: Config, args: dict) -> Config:
     return replace(cfg, **overrides) if overrides else cfg
 
 
-def _modal_remote_fn():
-    """Select Modal function handle: object-based default; lookup-by-name if env flag set."""
-    if os.environ.get("LLC_MODAL_LOOKUP_BY_NAME") == "1":
+def _modal_remote_fn(use_deployed: bool = False):
+    """Select Modal function handle: object-based default vs lookup-by-name."""
+    if use_deployed:
         import modal
 
         return modal.Function.from_name("llc-experiments", "run_experiment_remote")
@@ -165,9 +165,13 @@ def _run_shared_options(f):
         "--backend",
         type=click.Choice(["local", "submitit", "modal"]),
         default="local",
-        envvar="LLC_BACKEND",
-        show_envvar=True,
         help="Execution backend.",
+    )(f)
+    f = click.option(
+        "--modal-use-deployed/--modal-auto-deploy",
+        "modal_use_deployed",
+        default=False,
+        help="Use deployed Modal function by name (on) vs object-based auto-deploy (off, default).",
     )(f)
     f = click.option(
         "--preset",
@@ -296,6 +300,7 @@ def run(**kwargs):
     skip_if_exists = kwargs.pop("skip_if_exists", True)
     preset = kwargs.pop("preset", None)
     backend = (kwargs.pop("backend") or "local").lower()
+    modal_use_deployed = kwargs.pop("modal_use_deployed", False)
 
     # Build config = preset + overrides
     cfg = _apply_preset_then_overrides(CFG, preset, kwargs)
@@ -317,7 +322,7 @@ def run(**kwargs):
     from llc.tasks import run_experiment_task
 
     if backend == "modal":
-        remote_fn = _modal_remote_fn()
+        remote_fn = _modal_remote_fn(use_deployed=modal_use_deployed)
         executor = get_executor(backend="modal", remote_fn=remote_fn)
         [result_dict] = executor.map(run_experiment_task, [cfg_dict])
 
@@ -380,6 +385,7 @@ def sweep(**kwargs):
     save_artifacts = not kwargs.pop("no_artifacts", False)
     skip_if_exists = kwargs.pop("skip_if_exists", True)
     preset = kwargs.pop("preset", None)
+    modal_use_deployed = kwargs.pop("modal_use_deployed", False)
 
     # Build base config for sweep
     base_cfg = _apply_preset_then_overrides(CFG, preset, kwargs)
@@ -397,7 +403,7 @@ def sweep(**kwargs):
     # Modal handle (if needed)
     remote_fn = None
     if backend == "modal":
-        remote_fn = _modal_remote_fn()
+        remote_fn = _modal_remote_fn(use_deployed=modal_use_deployed)
         modal_opts = {"max_containers": 1, "min_containers": 0, "buffer_containers": 0}
     else:
         modal_opts = None

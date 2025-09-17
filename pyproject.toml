@@ -22,8 +22,7 @@ dependencies = [
 ]
 
 [project.scripts]
-llc = "llc.cli_click:cli"     # new Click CLI (primary)
-llc_legacy = "llc.cli:main"   # legacy argparse CLI (backup)
+llc = "llc.cli_click:cli"
 
 [project.optional-dependencies]
 # SLURM backend
