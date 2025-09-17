@@ -1,6 +1,7 @@
 """
 Manifest utilities for atomic run state management.
 """
+
 import json
 import os
 import tempfile
@@ -11,7 +12,7 @@ from typing import Dict, Any
 def write_manifest_atomic(path: Path, data: Dict[str, Any]) -> None:
     """Write manifest.json atomically via temporary file and rename."""
     d = path.parent
-    with tempfile.NamedTemporaryFile('w', dir=d, delete=False) as f:
+    with tempfile.NamedTemporaryFile("w", dir=d, delete=False) as f:
         json.dump(data, f, indent=2)
         tmp = f.name
     os.replace(tmp, path)  # atomic on POSIX
@@ -43,8 +44,8 @@ def is_run_completed(run_dir: Path) -> bool:
 
     # Fallback heuristics: has metrics.json or PNG files
     return bool(
-        (run_dir / "metrics.json").exists() or
-        any(p.suffix == ".png" for p in run_dir.glob("*.png"))
+        (run_dir / "metrics.json").exists()
+        or any(p.suffix == ".png" for p in run_dir.glob("*.png"))
     )
 
 
@@ -57,6 +58,7 @@ def get_run_start_time(run_dir: Path) -> float | None:
         # Check for timestamp field (pipeline format)
         if "timestamp" in manifest:
             from datetime import datetime
+
             try:
                 return datetime.fromisoformat(manifest["timestamp"]).timestamp()
             except Exception:
@@ -65,6 +67,7 @@ def get_run_start_time(run_dir: Path) -> float | None:
         # Check for started_at field (migration format)
         if "started_at" in manifest and manifest["started_at"]:
             from datetime import datetime
+
             try:
                 return datetime.fromisoformat(manifest["started_at"]).timestamp()
             except Exception:

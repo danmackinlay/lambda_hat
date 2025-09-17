@@ -7,12 +7,14 @@ image = (
     # Install all deps first
     .pip_install_from_pyproject("pyproject.toml", optional_dependencies=["modal"])
     # Set container env BEFORE adding local sources
-    .env({
-        "JAX_ENABLE_X64": "true",
-        "MPLBACKEND": "Agg",
-        # Optional: set LLC_CODE_VERSION here if you want to override the file hash
-        # "LLC_CODE_VERSION": "deploy-123",
-    })
+    .env(
+        {
+            "JAX_ENABLE_X64": "true",
+            "MPLBACKEND": "Agg",
+            # Optional: set LLC_CODE_VERSION here if you want to override the file hash
+            # "LLC_CODE_VERSION": "deploy-123",
+        }
+    )
     # LAST: mount local source so code edits don't rebuild the image
     .add_local_python_source("llc")
 )
@@ -43,7 +45,9 @@ def run_experiment_remote(cfg_dict: dict) -> dict:
     """
     Remote entrypoint: identical signature to local task but with artifact support.
     """
-    # Import needful libs here because they fail to propagate from the global scope
+    # Intentional local imports:
+    # - Keep JAX out of module import time (faster cold start)
+    # - Avoid importing SDKs globally in the image hydrate phase
     # Ensure x64 at runtime too (belt & suspenders; do this before heavy JAX use)
     import jax
 
@@ -100,10 +104,12 @@ def run_experiment_remote(cfg_dict: dict) -> dict:
 
 # --- SDK helpers for artifact management ---
 
+
 @app.function(volumes={"/artifacts": artifacts_volume})
 def list_artifacts(prefix: str = "/artifacts") -> list[str]:
     """List artifact directories on the Modal volume (server-side)."""
     import os
+
     try:
         entries = sorted(
             f"/artifacts/{name}"
@@ -122,7 +128,9 @@ def export_artifacts(run_id: str) -> bytes:
     import os
     import tarfile
 
-    run_path = f"/artifacts/{run_id}" if not run_id.startswith("/artifacts/") else run_id
+    run_path = (
+        f"/artifacts/{run_id}" if not run_id.startswith("/artifacts/") else run_id
+    )
     if not os.path.isdir(run_path):
         raise FileNotFoundError(f"Not found: {run_path}")
     buf = io.BytesIO()

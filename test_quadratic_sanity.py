@@ -8,11 +8,10 @@ target is Gaussian and E[L_n] = d/(2nβ), so LLC = nβ(E[L_n] - 0) = d/2.
 If any sampler reports LLC ≈ d instead of d/2, it suggests a hidden
 factor-of-2 in how L_n is computed or scaled.
 """
-import jax
-import jax.numpy as jnp
-import numpy as np
+
 from llc.config import Config
 from llc.pipeline import run_one
+
 
 def make_quadratic_config(d: int = 4, beta: float = 1.0) -> Config:
     """Create config for pure quadratic test L_n(θ) = 0.5||θ||²"""
@@ -20,15 +19,12 @@ def make_quadratic_config(d: int = 4, beta: float = 1.0) -> Config:
         # Target: use quadratic instead of mlp
         target="quadratic",
         quad_dim=d,
-
         # Data: dummy (required by interface but ignored)
         n_data=100,
-
         # Posterior: tempering only, no spatial prior
         beta_mode="fixed",
         beta0=beta,
         gamma=0.0,  # No spatial localization
-
         # Quick sampling for test
         chains=2,
         sgld_steps=500,
@@ -39,15 +35,14 @@ def make_quadratic_config(d: int = 4, beta: float = 1.0) -> Config:
         hmc_eval_every=2,
         mclmc_draws=300,
         mclmc_eval_every=3,
-
         # Use all samplers
         samplers=["sgld", "hmc", "mclmc"],
-
         # Save results
         save_plots=False,
         save_manifest=False,
         save_readme_snippet=False,
     )
+
 
 def run_quadratic_test():
     """Run quadratic sanity test on all samplers"""
@@ -75,7 +70,9 @@ def run_quadratic_test():
             results[sampler] = (llc_value, ratio)
 
             status = "✓ GOOD" if 0.8 <= ratio <= 1.2 else "✗ BAD"
-            print(f"{sampler.upper():6s}: LLC = {llc_value:.3f}, ratio = {ratio:.2f} {status}")
+            print(
+                f"{sampler.upper():6s}: LLC = {llc_value:.3f}, ratio = {ratio:.2f} {status}"
+            )
         else:
             print(f"{sampler.upper():6s}: No result found")
 
@@ -92,8 +89,9 @@ def run_quadratic_test():
         print(f"\n⚠️  POTENTIAL FACTOR-OF-2 BUG in: {', '.join(bad_samplers)}")
         return False
     else:
-        print(f"\n✅ All samplers passed the sanity test")
+        print("\n✅ All samplers passed the sanity test")
         return True
+
 
 if __name__ == "__main__":
     success = run_quadratic_test()

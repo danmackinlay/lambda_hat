@@ -91,7 +91,9 @@ def add_run_arguments(parser: argparse.ArgumentParser) -> None:
 
     # Target selection
     parser.add_argument("--target", choices=["mlp", "quadratic"], help="Target model")
-    parser.add_argument("--quad-dim", type=int, help="Parameter dimension for quadratic target")
+    parser.add_argument(
+        "--quad-dim", type=int, help="Parameter dimension for quadratic target"
+    )
 
     # SGLD parameters
     parser.add_argument("--sgld-steps", type=int, help="SGLD total steps")
@@ -127,8 +129,18 @@ def add_run_arguments(parser: argparse.ArgumentParser) -> None:
     parser.set_defaults(sgld_bias_correction=None)
 
     # Plotting
-    parser.add_argument("--save-plots", dest="save_plots", action="store_true", help="Save diagnostic plots")
-    parser.add_argument("--no-save-plots", dest="save_plots", action="store_false", help="Don't save diagnostic plots")
+    parser.add_argument(
+        "--save-plots",
+        dest="save_plots",
+        action="store_true",
+        help="Save diagnostic plots",
+    )
+    parser.add_argument(
+        "--no-save-plots",
+        dest="save_plots",
+        action="store_false",
+        help="Don't save diagnostic plots",
+    )
     parser.set_defaults(save_plots=None)
 
     # HMC parameters
@@ -272,7 +284,9 @@ def handle_run_command(args: argparse.Namespace) -> None:
 
     if backend == "local":
         # Original local path
-        result = run_one(cfg, save_artifacts=save_artifacts, skip_if_exists=skip_if_exists)
+        result = run_one(
+            cfg, save_artifacts=save_artifacts, skip_if_exists=skip_if_exists
+        )
 
     else:
         # Route through the same executor/task used by sweep
@@ -281,18 +295,24 @@ def handle_run_command(args: argparse.Namespace) -> None:
         from llc.config import config_schema_hash
 
         cfg_dict = cfg.__dict__.copy()
-        cfg_dict["save_artifacts"]  = save_artifacts
-        cfg_dict["skip_if_exists"]  = skip_if_exists
-        cfg_dict["config_schema"]   = config_schema_hash()
+        cfg_dict["save_artifacts"] = save_artifacts
+        cfg_dict["skip_if_exists"] = skip_if_exists
+        cfg_dict["config_schema"] = config_schema_hash()
 
         if backend == "modal":
             # Prefer auto-deploy of *this* code (avoids stale remote)
             # Set LLC_MODAL_LOOKUP_BY_NAME=1 to force lookup-by-name instead.
             if os.environ.get("LLC_MODAL_LOOKUP_BY_NAME") == "1":
                 import modal
-                remote_fn = modal.Function.from_name("llc-experiments", "run_experiment_remote")
+
+                remote_fn = modal.Function.from_name(
+                    "llc-experiments", "run_experiment_remote"
+                )
             else:
-                from modal_app import run_experiment_remote  # implicit deploy of current code
+                from modal_app import (
+                    run_experiment_remote,
+                )  # implicit deploy of current code
+
                 remote_fn = run_experiment_remote
             executor = get_executor(backend="modal", remote_fn=remote_fn)
             [result_dict] = executor.map(run_experiment_task, [cfg_dict])
@@ -304,7 +324,11 @@ def handle_run_command(args: argparse.Namespace) -> None:
             raise ValueError(f"Unknown backend: {backend}")
 
         # Auto-extract artifacts if present (for Modal)
-        if backend == "modal" and result_dict.get("artifact_tar") and result_dict.get("run_id"):
+        if (
+            backend == "modal"
+            and result_dict.get("artifact_tar")
+            and result_dict.get("run_id")
+        ):
             try:
                 import io
                 import tarfile
@@ -316,9 +340,12 @@ def handle_run_command(args: argparse.Namespace) -> None:
                 # Clean any existing directory to ensure fresh extraction
                 if os.path.exists(dest):
                     import shutil
+
                     shutil.rmtree(dest)
 
-                with tarfile.open(fileobj=io.BytesIO(result_dict["artifact_tar"]), mode="r:gz") as tf:
+                with tarfile.open(
+                    fileobj=io.BytesIO(result_dict["artifact_tar"]), mode="r:gz"
+                ) as tf:
                     tf.extractall("artifacts")
                 print(f"Artifacts downloaded and extracted to: {dest}")
                 # Update the run_dir to point to local path
@@ -361,9 +388,13 @@ def handle_sweep_command(args: argparse.Namespace) -> None:
     if (args.backend or "local").lower() == "modal":
         if os.environ.get("LLC_MODAL_LOOKUP_BY_NAME") == "1":
             import modal
-            remote_fn = modal.Function.from_name("llc-experiments", "run_experiment_remote")
+
+            remote_fn = modal.Function.from_name(
+                "llc-experiments", "run_experiment_remote"
+            )
         else:
             from modal_app import run_experiment_remote
+
             remote_fn = run_experiment_remote
 
     # Build sweep configuration
@@ -397,13 +428,18 @@ def handle_sweep_command(args: argparse.Namespace) -> None:
 
     # Normalize items -> list of cfg dicts the task/remote_fn expects
     from llc.config import config_schema_hash
+
     cfg_dicts = []
     for _name, _param, _val, _seed, cfg in items:
         # dataclass -> dict; you can also use dataclasses.asdict(cfg)
         cfg_d = cfg.__dict__.copy()
         cfg_d["save_artifacts"] = not getattr(args, "no_artifacts", False)
-        cfg_d["skip_if_exists"] = getattr(args, "skip_if_exists", True) if hasattr(args,"skip_if_exists") else True
-        cfg_d["config_schema"]  = config_schema_hash()
+        cfg_d["skip_if_exists"] = (
+            getattr(args, "skip_if_exists", True)
+            if hasattr(args, "skip_if_exists")
+            else True
+        )
+        cfg_d["config_schema"] = config_schema_hash()
         cfg_dicts.append(cfg_d)
 
     # Local/submitit: executor.map calls run_experiment_task(cfg_dict)
@@ -425,9 +461,12 @@ def handle_sweep_command(args: argparse.Namespace) -> None:
                     # Clean any existing directory to ensure fresh extraction
                     if os.path.exists(dest):
                         import shutil
+
                         shutil.rmtree(dest)
 
-                    with tarfile.open(fileobj=io.BytesIO(r["artifact_tar"]), mode="r:gz") as tf:
+                    with tarfile.open(
+                        fileobj=io.BytesIO(r["artifact_tar"]), mode="r:gz"
+                    ) as tf:
                         tf.extractall("artifacts")
                     print(f"Pulled artifacts for {rid} into artifacts/{rid}")
             except Exception as e:
@@ -436,7 +475,6 @@ def handle_sweep_command(args: argparse.Namespace) -> None:
     # Save detailed results summary with WNV fields
     import pandas as pd
     import json
-    import os
 
     rows = []
     for r in results:
@@ -458,37 +496,44 @@ def handle_sweep_command(args: argparse.Namespace) -> None:
         for s in ("sgld", "hmc", "mclmc"):
             if f"{s}_llc_mean" not in M:
                 continue
-            rows.append({
-                # sweep keys
-                "sweep": "dim",  # current sweep is dimension
-                "target_params": C.get("target_params"),
-                "depth": C.get("depth"),
-                "activation": C.get("activation"),
-                "sampler": s,
-                "seed": C.get("seed"),
-                # accuracy
-                "llc_mean": M.get(f"{s}_llc_mean"),
-                "llc_se": M.get(f"{s}_llc_se"),
-                "ess": M.get(f"{s}_ess"),
-                # cost
-                "t_sampling": M.get(f"timing_sampling") or M.get(f"{s}_timing_sampling"),
-                "work_grad": (
-                    M.get(f"{s}_n_leapfrog_grads")
-                    or M.get(f"{s}_n_steps")  # sgld/mclmc name
-                    or 0
-                ),
-                # efficiency (the ones you asked for)
-                "wnv_time": M.get(f"{s}_wnv_time"),
-                "wnv_grad": M.get(f"{s}_wnv_grad"),
-                # bookkeeping
-                "run_dir": run_dir,
-            })
+            rows.append(
+                {
+                    # sweep keys
+                    "sweep": "dim",  # current sweep is dimension
+                    "target_params": C.get("target_params"),
+                    "depth": C.get("depth"),
+                    "activation": C.get("activation"),
+                    "sampler": s,
+                    "seed": C.get("seed"),
+                    # accuracy
+                    "llc_mean": M.get(f"{s}_llc_mean"),
+                    "llc_se": M.get(f"{s}_llc_se"),
+                    "ess": M.get(f"{s}_ess"),
+                    # cost
+                    "t_sampling": M.get("timing_sampling")
+                    or M.get(f"{s}_timing_sampling"),
+                    "work_grad": (
+                        M.get(f"{s}_n_leapfrog_grads")
+                        or M.get(f"{s}_n_steps")  # sgld/mclmc name
+                        or 0
+                    ),
+                    # efficiency (the ones you asked for)
+                    "wnv_time": M.get(f"{s}_wnv_time"),
+                    "wnv_grad": M.get(f"{s}_wnv_grad"),
+                    # bookkeeping
+                    "run_dir": run_dir,
+                }
+            )
 
     if rows:
         df = pd.DataFrame(rows)
         df.to_csv("llc_sweep_results.csv", index=False)
-        print("\nSweep complete! Results saved to llc_sweep_results.csv with WNV fields.")
-        print(f"Successful runs: {len(rows)}/{len(results)} (rows include per-sampler results)")
+        print(
+            "\nSweep complete! Results saved to llc_sweep_results.csv with WNV fields."
+        )
+        print(
+            f"Successful runs: {len(rows)}/{len(results)} (rows include per-sampler results)"
+        )
     else:
         print("\nNo successful runs to save.")
 

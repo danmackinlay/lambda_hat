@@ -20,6 +20,7 @@ Array = jnp.ndarray
 
 # ---------- SGLD (BlackJAX 1.2.5 returns new_position only) ----------
 
+
 def run_sgld_chain(
     *,
     rng_key: Array,
@@ -539,7 +540,7 @@ def run_hmc_chains_batched(
         ),
         "energy": lambda info: getattr(
             info, "energy", jnp.zeros((init_thetas.shape[0],))
-        )
+        ),
     }
 
     result = drive_chains_batched(

@@ -11,21 +11,26 @@ Usage:
 
 It writes to ./artifacts/<run_id>/ locally.
 """
+
 import argparse
 import io
 import tarfile
 from pathlib import Path
 import modal
 
-APP = "llc-experiments"           # app name
-FN_LIST = "list_artifacts"        # server-side lister
-FN_EXPORT = "export_artifacts"    # server-side exporter
+APP = "llc-experiments"  # app name
+FN_LIST = "list_artifacts"  # server-side lister
+FN_EXPORT = "export_artifacts"  # server-side exporter
 
 
 def main():
     ap = argparse.ArgumentParser(description="Pull artifacts from Modal using SDK")
-    ap.add_argument("run_id", nargs="?", help="Run ID (e.g. f1ce73101e3d). Omit for latest.")
-    ap.add_argument("--target", default="artifacts", help="Local target root (default: ./artifacts)")
+    ap.add_argument(
+        "run_id", nargs="?", help="Run ID (e.g. f1ce73101e3d). Omit for latest."
+    )
+    ap.add_argument(
+        "--target", default="artifacts", help="Local target root (default: ./artifacts)"
+    )
     args = ap.parse_args()
 
     # Look up deployed functions
@@ -55,11 +60,12 @@ def main():
     target_dir = dest_root / run_id
     if target_dir.exists():
         import shutil
+
         shutil.rmtree(target_dir)
 
     with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as tf:
         tf.extractall(dest_root)
-    print(f"[pull-sdk] Extracted into {dest_root/run_id}")
+    print(f"[pull-sdk] Extracted into {dest_root / run_id}")
 
 
 if __name__ == "__main__":

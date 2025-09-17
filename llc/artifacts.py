@@ -6,7 +6,8 @@ import json
 from datetime import datetime
 from typing import Dict, List, Any, Optional
 import numpy as np
-import arviz as az
+
+# ArviZ is heavy; import lazily inside the functions that need it
 import pandas as pd
 from pathlib import Path
 
@@ -56,6 +57,8 @@ def save_idata_L(
         return None
 
     H = np.stack([h[:min_len] for h in Ln_histories], axis=0)
+    import arviz as az
+
     idata = az.from_dict(posterior={"L": H})
 
     path = f"{run_dir}/{name}_L.nc"
@@ -72,6 +75,8 @@ def save_idata_theta(
         return None
 
     k = S.shape[-1]
+    import arviz as az
+
     idata = az.from_dict(
         posterior={"theta": S},
         coords={"theta_dim": np.arange(k)},
@@ -176,6 +181,7 @@ def create_manifest(
 
     from llc.manifest import write_manifest_atomic
     from pathlib import Path
+
     manifest_path = Path(run_dir) / "manifest.json"
     write_manifest_atomic(manifest_path, manifest)
 

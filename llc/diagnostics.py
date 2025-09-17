@@ -1,5 +1,6 @@
 # llc/diagnostics.py
 """Diagnostic and plotting utilities for LLC analysis (lean + robust)."""
+
 from __future__ import annotations
 from typing import List, Optional, Tuple, Any
 import numpy as np
@@ -9,9 +10,11 @@ import pandas as pd
 
 ESS_METHOD = "bulk"  # ArviZ bulk ESS (rank-normalized)
 
+
 def _az():
     # Lazy import to avoid pulling heavy deps when not plotting/estimating
     import arviz as az
+
     return az
 
 
@@ -44,9 +47,11 @@ def llc_mean_and_se_from_histories(
     az = _az()
     idata = az.from_dict(
         posterior={"llc": lambda_vals},
-        coords={"chain": np.arange(lambda_vals.shape[0]),
-                "draw":  np.arange(lambda_vals.shape[1])},
-        dims={"llc": ["chain","draw"]},
+        coords={
+            "chain": np.arange(lambda_vals.shape[0]),
+            "draw": np.arange(lambda_vals.shape[1]),
+        },
+        dims={"llc": ["chain", "draw"]},
     )
 
     # Compute ESS and statistics
@@ -94,7 +99,7 @@ def llc_ci_from_histories(
     idata = az.from_dict(
         posterior={"L": H},
         coords={"chain": np.arange(H.shape[0]), "draw": np.arange(H.shape[1])},
-        dims={"L": ["chain","draw"]},
+        dims={"L": ["chain", "draw"]},
     )
     ess_L = az.ess(idata, method=ESS_METHOD)["L"].values
     eff_sample_size = float(np.mean(ess_L)) if not np.isnan(ess_L).all() else 1.0
@@ -143,7 +148,10 @@ def _idata_from_L(Ln_histories: List[np.ndarray]) -> Tuple[Optional[Any], int]:
 
 
 def _idata_from_llc(
-    Ln_histories: List[np.ndarray], n: int, beta: float, L0: float,
+    Ln_histories: List[np.ndarray],
+    n: int,
+    beta: float,
+    L0: float,
     acceptance_rates: Optional[List[np.ndarray]] = None,
     energies: Optional[List[np.ndarray]] = None,
 ) -> Optional[Any]:
@@ -180,11 +188,16 @@ def _idata_from_llc(
         posterior={"llc": llc},
         sample_stats=sample_stats if sample_stats else None,
         coords={"chain": np.arange(llc.shape[0]), "draw": np.arange(llc.shape[1])},
-        dims={"llc": ["chain", "draw"], **({k: ["chain", "draw"] for k in sample_stats} if sample_stats else {})},
+        dims={
+            "llc": ["chain", "draw"],
+            **({k: ["chain", "draw"] for k in sample_stats} if sample_stats else {}),
+        },
     )
     return idata
 
-def _idata_from_theta(samples_thin: np.ndarray, max_dims: int = 8
+
+def _idata_from_theta(
+    samples_thin: np.ndarray, max_dims: int = 8
 ) -> Tuple[Optional[Any], List[int]]:
     """ArviZ InferenceData from theta; accepts (C,K,D) or (K,D)."""
     S = np.asarray(samples_thin)
@@ -198,7 +211,7 @@ def _idata_from_theta(samples_thin: np.ndarray, max_dims: int = 8
     idx = list(range(min(k, max_dims)))
     az = _az()
     idata = az.from_dict(
-        posterior={"theta": (["chain","draw","theta_dim"], S)},
+        posterior={"theta": (["chain", "draw", "theta_dim"], S)},
         coords={"theta_dim": np.arange(k)},
     )
     return idata, idx
@@ -232,11 +245,13 @@ def plot_diagnostics(
     beta: float = 1.0,
     L0: float = 0.0,
     save_plots: bool = True,
-)-> None:
+) -> None:
     """Generate diagnostics for a sampler, aligned with ArviZ best practice."""
     # Build idata objects
     idata_L, _ = _idata_from_L(Ln_histories)
-    idata_llc = _idata_from_llc(Ln_histories, n, beta, L0, acceptance_rates=acceptance_rates, energies=energies)
+    idata_llc = _idata_from_llc(
+        Ln_histories, n, beta, L0, acceptance_rates=acceptance_rates, energies=energies
+    )
 
     # 1) L_n trace plots (raw and centered)
     if Ln_histories and any(len(h) > 0 for h in Ln_histories):
@@ -276,10 +291,17 @@ def plot_diagnostics(
         if lam_pooled is not None:
             ax.plot(lam_pooled, "k-", linewidth=2, label="Pooled")
         # final mean±2SE band using ESS-based estimator
-        mean_llc, se_llc, _ess = llc_mean_and_se_from_histories(Ln_histories, n, beta, L0)
+        mean_llc, se_llc, _ess = llc_mean_and_se_from_histories(
+            Ln_histories, n, beta, L0
+        )
         if np.isfinite(se_llc):
             ax.axhline(mean_llc, linestyle="--", linewidth=1)
-            ax.fill_between(np.arange(len(lam_pooled)), mean_llc-2*se_llc, mean_llc+2*se_llc, alpha=0.1)
+            ax.fill_between(
+                np.arange(len(lam_pooled)),
+                mean_llc - 2 * se_llc,
+                mean_llc + 2 * se_llc,
+                alpha=0.1,
+            )
         ax.set_xlabel("Evaluation")
         ax.set_ylabel("LLC = n·β·(E[Lₙ] − L₀)")
         ax.set_title(f"{sampler_name} Running LLC")
@@ -346,35 +368,45 @@ def plot_diagnostics(
             # rank plot
             axes = _az().plot_rank(idata_llc, var_names=["llc"])
             if save_plots:
-                if hasattr(axes, 'figure'):
-                    _finalize_figure(axes.figure, f"{run_dir}/{sampler_name}_llc_rank.png")
+                if hasattr(axes, "figure"):
+                    _finalize_figure(
+                        axes.figure, f"{run_dir}/{sampler_name}_llc_rank.png"
+                    )
                     plt.close(axes.figure)
-                elif isinstance(axes, np.ndarray) and hasattr(axes.flat[0], 'figure'):
-                    _finalize_figure(axes.flat[0].figure, f"{run_dir}/{sampler_name}_llc_rank.png")
+                elif isinstance(axes, np.ndarray) and hasattr(axes.flat[0], "figure"):
+                    _finalize_figure(
+                        axes.flat[0].figure, f"{run_dir}/{sampler_name}_llc_rank.png"
+                    )
                     plt.close(axes.flat[0].figure)
 
             # autocorr
             axes = _az().plot_autocorr(idata_llc, var_names=["llc"])
             if save_plots and axes is not None:
                 if isinstance(axes, np.ndarray) and len(axes) > 0:
-                    _finalize_figure(axes[0].figure, f"{run_dir}/{sampler_name}_llc_autocorr.png")
+                    _finalize_figure(
+                        axes[0].figure, f"{run_dir}/{sampler_name}_llc_autocorr.png"
+                    )
                     plt.close(axes[0].figure)
 
             # ESS evolution
             axes = _az().plot_ess(idata_llc, var_names=["llc"], kind="evolution")
-            if save_plots and hasattr(axes, 'figure'):
-                _finalize_figure(axes.figure, f"{run_dir}/{sampler_name}_llc_ess_evolution.png")
+            if save_plots and hasattr(axes, "figure"):
+                _finalize_figure(
+                    axes.figure, f"{run_dir}/{sampler_name}_llc_ess_evolution.png"
+                )
                 plt.close(axes.figure)
 
             # ESS quantile (interval reliability)
             axes = _az().plot_ess(idata_llc, var_names=["llc"], kind="quantile")
-            if save_plots and hasattr(axes, 'figure'):
-                _finalize_figure(axes.figure, f"{run_dir}/{sampler_name}_llc_ess_quantile.png")
+            if save_plots and hasattr(axes, "figure"):
+                _finalize_figure(
+                    axes.figure, f"{run_dir}/{sampler_name}_llc_ess_quantile.png"
+                )
                 plt.close(axes.figure)
 
             # energy (HMC only; harmless no-op if not present)
             try:
-                ax = _az().plot_energy(idata_llc)   # requires sample_stats.energy
+                ax = _az().plot_energy(idata_llc)  # requires sample_stats.energy
                 if save_plots:
                     _finalize_figure(ax.figure, f"{run_dir}/{sampler_name}_energy.png")
                     plt.close(ax.figure)
@@ -384,10 +416,22 @@ def plot_diagnostics(
             # R-hat/ESS summary table (to console)
             summ = _az().summary(idata_llc, var_names=["llc"])
             if not summ.empty:
-                rhat = float(summ["r_hat"].iloc[0]) if "r_hat" in summ.columns else np.nan
-                ess_bulk = float(summ["ess_bulk"].iloc[0]) if "ess_bulk" in summ.columns else np.nan
-                ess_tail = float(summ["ess_tail"].iloc[0]) if "ess_tail" in summ.columns else np.nan
-                print(f"[{sampler_name}] R-hat = {rhat:.4f}, ESS_bulk = {ess_bulk:.1f}, ESS_tail = {ess_tail:.1f}")
+                rhat = (
+                    float(summ["r_hat"].iloc[0]) if "r_hat" in summ.columns else np.nan
+                )
+                ess_bulk = (
+                    float(summ["ess_bulk"].iloc[0])
+                    if "ess_bulk" in summ.columns
+                    else np.nan
+                )
+                ess_tail = (
+                    float(summ["ess_tail"].iloc[0])
+                    if "ess_tail" in summ.columns
+                    else np.nan
+                )
+                print(
+                    f"[{sampler_name}] R-hat = {rhat:.4f}, ESS_bulk = {ess_bulk:.1f}, ESS_tail = {ess_tail:.1f}"
+                )
         except Exception as e:
             # ArviZ plotting can fail with insufficient data
             print(f"[{sampler_name}] Could not generate ArviZ diagnostics: {e}")

@@ -10,10 +10,8 @@ from typing import Dict, Any, Optional
 import logging
 import os
 
-import jax
 import jax.numpy as jnp
 from jax import random, jit
-from jax.flatten_util import ravel_pytree
 import numpy as np
 
 from .config import Config
@@ -48,7 +46,6 @@ from .artifacts import (
     create_manifest,
     generate_gallery_html,
 )
-from .experiments import train_erm
 from datetime import datetime
 
 
@@ -82,8 +79,8 @@ def run_one(
     # Compute deterministic run ID
     rid = run_id(cfg)
     # Use canonical runs/ directory, fallback to artifacts_dir for backward compatibility
-    if hasattr(cfg, 'artifacts_dir') and cfg.artifacts_dir.endswith('/artifacts'):
-        base_dir = cfg.artifacts_dir.replace('/artifacts', '')
+    if hasattr(cfg, "artifacts_dir") and cfg.artifacts_dir.endswith("/artifacts"):
+        base_dir = cfg.artifacts_dir.replace("/artifacts", "")
         run_dir = os.path.join(base_dir, "runs", rid)
     elif cfg.artifacts_dir == "artifacts":
         run_dir = os.path.join("runs", rid)
@@ -207,11 +204,13 @@ def run_one(
             return float(var * float(t_sampling)), float(var * float(work_sampling))
 
         # Approximate sampling-only work by splitting warmup/sample proportionally to steps
-        sgld_sample_frac = (
-            max(0, cfg.sgld_steps - cfg.sgld_warmup) / max(1, cfg.sgld_steps)
+        sgld_sample_frac = max(0, cfg.sgld_steps - cfg.sgld_warmup) / max(
+            1, cfg.sgld_steps
         )
         sgld_work_sampling = float(stats.n_sgld_minibatch_grads) * sgld_sample_frac
-        sgld_wnv_time, sgld_wnv_grad = _wnv(se_sgld, stats.t_sgld_sampling, sgld_work_sampling)
+        sgld_wnv_time, sgld_wnv_grad = _wnv(
+            se_sgld, stats.t_sgld_sampling, sgld_work_sampling
+        )
 
         # Store SGLD results
         all_metrics.update(
@@ -237,37 +236,49 @@ def run_one(
 
         # Choose batched or sequential HMC execution
         if cfg.use_batched_chains:
-            hmc_samples_thin, hmc_Es, hmc_Vars, hmc_Ns, accs_hmc, Ln_histories_hmc, energies_hmc = (
-                run_hmc_online_batched(
-                    k_hmc,
-                    init_thetas_hmc,
-                    logpost_and_grad_f64,
-                    cfg.hmc_draws,
-                    cfg.hmc_warmup,
-                    cfg.hmc_num_integration_steps,
-                    cfg.hmc_eval_every,
-                    cfg.hmc_thin,
-                    Ln_full64,
-                    **diag_targets,
-                )
+            (
+                hmc_samples_thin,
+                hmc_Es,
+                hmc_Vars,
+                hmc_Ns,
+                accs_hmc,
+                Ln_histories_hmc,
+                energies_hmc,
+            ) = run_hmc_online_batched(
+                k_hmc,
+                init_thetas_hmc,
+                logpost_and_grad_f64,
+                cfg.hmc_draws,
+                cfg.hmc_warmup,
+                cfg.hmc_num_integration_steps,
+                cfg.hmc_eval_every,
+                cfg.hmc_thin,
+                Ln_full64,
+                **diag_targets,
             )
         else:
-            hmc_samples_thin, hmc_Es, hmc_Vars, hmc_Ns, accs_hmc, Ln_histories_hmc, energies_hmc = (
-                run_hmc_online_with_adaptation(
-                    k_hmc,
-                    init_thetas_hmc,
-                    logpost_and_grad_f64,
-                    cfg.hmc_draws,
-                    cfg.hmc_warmup,
-                    cfg.hmc_num_integration_steps,
-                    cfg.hmc_eval_every,
-                    cfg.hmc_thin,
-                    Ln_full64,
-                    use_tqdm=cfg.use_tqdm,
-                    progress_update_every=cfg.progress_update_every,
-                    stats=stats,
-                    **diag_targets,
-                )
+            (
+                hmc_samples_thin,
+                hmc_Es,
+                hmc_Vars,
+                hmc_Ns,
+                accs_hmc,
+                Ln_histories_hmc,
+                energies_hmc,
+            ) = run_hmc_online_with_adaptation(
+                k_hmc,
+                init_thetas_hmc,
+                logpost_and_grad_f64,
+                cfg.hmc_draws,
+                cfg.hmc_warmup,
+                cfg.hmc_num_integration_steps,
+                cfg.hmc_eval_every,
+                cfg.hmc_thin,
+                Ln_full64,
+                use_tqdm=cfg.use_tqdm,
+                progress_update_every=cfg.progress_update_every,
+                stats=stats,
+                **diag_targets,
             )
 
         # Compute LLC with ESS-based uncertainty
@@ -282,7 +293,9 @@ def run_one(
 
         # Compute WNV for HMC (HMC counts sampling grads explicitly)
         hmc_work_sampling = float(stats.n_hmc_leapfrog_grads)
-        hmc_wnv_time, hmc_wnv_grad = _wnv(se_hmc, stats.t_hmc_sampling, hmc_work_sampling)
+        hmc_wnv_time, hmc_wnv_grad = _wnv(
+            se_hmc, stats.t_hmc_sampling, hmc_work_sampling
+        )
 
         # Store HMC results
         all_metrics.update(
@@ -381,7 +394,9 @@ def run_one(
 
         # Compute WNV for MCLMC
         mclmc_work_sampling = float(stats.n_mclmc_steps)
-        mclmc_wnv_time, mclmc_wnv_grad = _wnv(se_mclmc, stats.t_mclmc_sampling, mclmc_work_sampling)
+        mclmc_wnv_time, mclmc_wnv_grad = _wnv(
+            se_mclmc, stats.t_mclmc_sampling, mclmc_work_sampling
+        )
 
         # Store MCLMC results
         all_metrics.update(
@@ -500,6 +515,7 @@ def run_one(
         # Create convenience timestamp symlink in artifacts/ for completed runs
         try:
             from llc.manifest import create_timestamp_symlink
+
             ts = datetime.now().strftime("%Y%m%d-%H%M%S")
             # Determine artifacts directory from run_dir
             if "/runs/" in run_dir:

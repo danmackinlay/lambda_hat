@@ -15,6 +15,7 @@ from datetime import datetime
 
 # Add parent directory to path for llc module imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
+from llc.manifest import is_run_completed, get_run_start_time
 
 # Which files to copy (left = substring to match in artifacts, right = stable name in assets)
 SELECT = [
@@ -46,8 +47,6 @@ def latest_run_dir(root_dir: Path) -> Path:
         if not artifacts_dir.exists():
             raise SystemExit("Neither runs/ nor artifacts/ directory found")
         return _latest_from_artifacts(artifacts_dir)
-
-    from llc.manifest import is_run_completed, get_run_start_time
 
     candidates: list[tuple[float, Path]] = []
     for run_dir in runs_dir.iterdir():
