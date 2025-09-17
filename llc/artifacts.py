@@ -154,7 +154,7 @@ def create_manifest(
                 "llc_se": metrics.get(f"{sampler}_llc_se", None),
                 "ess": metrics.get(f"{sampler}_ess", None),
                 "wnv_time": metrics.get(f"{sampler}_wnv_time", None),
-                "wnv_grad": metrics.get(f"{sampler}_wnv_grad", None),
+                "wnv_fde": metrics.get(f"{sampler}_wnv_fde", None),
             }
             for sampler in samplers_run
         },
@@ -310,7 +310,7 @@ def generate_gallery_html(run_dir: str, cfg, metrics: Dict[str, Any]) -> str:
                     <th>LLC SE</th>
                     <th>ESS</th>
                     <th>WNV (Time)</th>
-                    <th>WNV (Grad)</th>
+                    <th>WNV (FDE)</th>
                 </tr>
             </thead>
             <tbody>
@@ -322,7 +322,7 @@ def generate_gallery_html(run_dir: str, cfg, metrics: Dict[str, Any]) -> str:
         llc_se = metrics.get(f"{sampler}_llc_se", "N/A")
         ess = metrics.get(f"{sampler}_ess", "N/A")
         wnv_time = metrics.get(f"{sampler}_wnv_time", "N/A")
-        wnv_grad = metrics.get(f"{sampler}_wnv_grad", "N/A")
+        wnv_fde = metrics.get(f"{sampler}_wnv_fde", "N/A")
 
         # Format values properly for display
         llc_mean_str = (
@@ -335,8 +335,8 @@ def generate_gallery_html(run_dir: str, cfg, metrics: Dict[str, Any]) -> str:
         wnv_time_str = (
             f"{wnv_time:.6f}" if isinstance(wnv_time, (int, float)) else str(wnv_time)
         )
-        wnv_grad_str = (
-            f"{wnv_grad:.6f}" if isinstance(wnv_grad, (int, float)) else str(wnv_grad)
+        wnv_fde_str = (
+            f"{wnv_fde:.6f}" if isinstance(wnv_fde, (int, float)) else str(wnv_fde)
         )
 
         html_content += f"""
@@ -346,7 +346,7 @@ def generate_gallery_html(run_dir: str, cfg, metrics: Dict[str, Any]) -> str:
                     <td>{llc_se_str}</td>
                     <td>{ess_str}</td>
                     <td>{wnv_time_str}</td>
-                    <td>{wnv_grad_str}</td>
+                    <td>{wnv_fde_str}</td>
                 </tr>
         """
 

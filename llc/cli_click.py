@@ -468,7 +468,7 @@ def sweep(**kwargs):
                         M.get(f"{s}_n_leapfrog_grads") or M.get(f"{s}_n_steps") or 0
                     ),
                     "wnv_time": M.get(f"{s}_wnv_time"),
-                    "wnv_grad": M.get(f"{s}_wnv_grad"),
+                    "wnv_fde": M.get(f"{s}_wnv_fde"),
                     "run_dir": run_dir,
                 }
             )

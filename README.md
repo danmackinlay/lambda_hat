@@ -36,6 +36,10 @@ Ultimately, we want to devise and evaluate new sampling algorithms for singular 
     - Optional trace/rank plots for a tiny subset or random projection of θ (memory-safe).
     - HMC acceptance-rate histogram; MCLMC energy-change histogram.
   - **Work-normalized variance (WNV)** metrics: variance of LLC estimate × (wall-clock time or gradient-equivalent count). Automatically computed for all samplers to enable efficiency comparisons across parameter dimensions.
+  - **Efficiency metrics** (per sampler):
+    - `ESS/sec` — wall-clock efficiency
+    - `ESS/FDE` — gradient-normalized efficiency (data-size-agnostic, where FDE = full-data-equivalent gradients)
+    - `time_to_se1`, `fde_to_se1` — projected costs to reach SE(LLC)=1.0
 
 ## Representative diagnostics
 

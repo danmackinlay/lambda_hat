@@ -2,7 +2,7 @@
 """Diagnostic and plotting utilities for LLC analysis (lean + robust)."""
 
 from __future__ import annotations
-from typing import List, Optional, Tuple, Any
+from typing import List, Optional, Tuple, Any, Sequence
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.stats import norm
@@ -95,17 +95,15 @@ def llc_ci_from_histories(
         return 0.0, (0.0, 0.0)
     H = np.stack([np.asarray(h[:m]) for h in Ln_histories], axis=0)  # (chains, m)
 
+    lam = n * beta * (H - L0)
     az = _az()
     idata = az.from_dict(
-        posterior={"L": H},
-        coords={"chain": np.arange(H.shape[0]), "draw": np.arange(H.shape[1])},
-        dims={"L": ["chain", "draw"]},
+        posterior={"llc": lam},
+        coords={"chain": np.arange(lam.shape[0]), "draw": np.arange(lam.shape[1])},
+        dims={"llc": ["chain", "draw"]},
     )
-    ess_L = az.ess(idata, method=ESS_METHOD)["L"].values
-    eff_sample_size = float(np.mean(ess_L)) if not np.isnan(ess_L).all() else 1.0
-
-    # Transform to LLC and compute stats
-    lam = n * beta * (H - L0)
+    ess_llc = az.ess(idata, method=ESS_METHOD)["llc"].values
+    eff_sample_size = float(np.mean(ess_llc)) if not np.isnan(ess_llc).all() else 1.0
     pooled = lam.flatten()
     mean_val = float(np.mean(pooled))
 
@@ -197,22 +195,66 @@ def _idata_from_llc(
 
 
 def _idata_from_theta(
-    samples_thin: np.ndarray, max_dims: int = 8
+    samples_thin: Sequence[np.ndarray] | np.ndarray, max_dims: int = 8
 ) -> Tuple[Optional[Any], List[int]]:
-    """ArviZ InferenceData from theta; accepts (C,K,D) or (K,D)."""
-    S = np.asarray(samples_thin)
-    if S.size == 0:
+    """
+    Build ArviZ InferenceData for theta from either:
+      • list/tuple of (draws, dims) arrays (ragged allowed), or
+      • ndarray shaped (chains, draws, dims) or (draws, dims).
+    Robust to ragged chains: truncates to the shortest non-empty chain.
+    """
+    # Normalise inputs
+    chains: list[np.ndarray] = []
+    if isinstance(samples_thin, np.ndarray):
+        S = samples_thin
+        if S.size == 0:
+            return None, []
+        if S.ndim == 2:  # (draws, dims) -> add singleton chain
+            if S.shape[0] < 2 or S.shape[1] < 1:
+                return None, []
+            chains = [S]
+        elif S.ndim == 3:  # (chains, draws, dims)
+            for c in range(S.shape[0]):
+                Si = S[c]
+                if Si.ndim == 2 and Si.shape[0] >= 2 and Si.shape[1] >= 1:
+                    chains.append(Si)
+        else:
+            return None, []
+    else:
+        # Sequence of arrays
+        for arr in samples_thin:
+            if arr is None:
+                continue
+            A = np.asarray(arr)
+            if A.ndim == 2 and A.shape[0] >= 2 and A.shape[1] >= 1:
+                chains.append(A)
+
+    # Guard: need at least one non-empty chain with ≥2 draws
+    if not chains:
         return None, []
-    if S.ndim == 2:  # (K,D) -> add singleton chain
-        S = S[None, ...]
-    if S.shape[1] < 2:
+
+    # Truncate to common length (min draws) to get rectangular (C, T, D)
+    min_len = min(c.shape[0] for c in chains)
+    if min_len < 2:
         return None, []
-    k = S.shape[-1]
-    idx = list(range(min(k, max_dims)))
+    # Use the same dims across chains (assume consistent model)
+    D = chains[0].shape[1]
+    if D < 1:
+        return None, []
+
+    # Downselect theta dims BEFORE stacking to keep memory bounded
+    idx = list(range(min(D, max_dims)))
+    stacked = np.stack([c[:min_len, :][:, idx] for c in chains], axis=0)  # (C, T, d')
+
     az = _az()
     idata = az.from_dict(
-        posterior={"theta": (["chain", "draw", "theta_dim"], S)},
-        coords={"theta_dim": np.arange(k)},
+        posterior={"theta": stacked},
+        coords={
+            "chain": np.arange(stacked.shape[0]),
+            "draw": np.arange(stacked.shape[1]),
+            "theta_dim": np.array(idx, dtype=int),
+        },
+        dims={"theta": ["chain", "draw", "theta_dim"]},
     )
     return idata, idx
 
@@ -396,6 +438,49 @@ def plot_diagnostics(
                 )
                 plt.close(axes.figure)
 
+            # Efficiency panel: SE vs draws (prefix-wise ESS)
+            try:
+                # Recompute s_hat and SE curve from the same data
+                H = _stack_histories(Ln_histories)
+                if H is not None and H.shape[1] > 5:
+                    lam = n * float(beta) * (H - L0)  # (chains, draws)
+                    pooled = lam.reshape(-1)
+                    s_hat = float(np.std(pooled, ddof=1))
+                    az = _az()
+                    T = lam.shape[1]
+                    # 50 checkpoints from 20 draws up to T
+                    checkpoints = np.unique(
+                        np.linspace(20, T, num=min(50, T), dtype=int)
+                    )
+                    ess_evo = []
+                    for t in checkpoints:
+                        id_pref = az.from_dict(
+                            posterior={"llc": lam[:, :t]},
+                            coords={
+                                "chain": np.arange(lam.shape[0]),
+                                "draw": np.arange(t),
+                            },
+                            dims={"llc": ["chain", "draw"]},
+                        )
+                        ess_t = az.ess(id_pref, method="bulk")["llc"].values
+                        ess_evo.append(float(np.nanmean(ess_t)))
+                    ess_evo = np.asarray(ess_evo)
+                    xs = checkpoints.astype(float)
+                    se_curve = s_hat / np.sqrt(np.maximum(1.0, ess_evo))
+                    fig, ax = plt.subplots(1, 1, figsize=(6, 4))
+                    ax.plot(xs, se_curve)
+                    ax.set_xlabel("Draws")
+                    ax.set_ylabel("SE(LLC)")
+                    ax.set_title(f"{sampler_name} SE vs draws")
+                    ax.grid(True, alpha=0.3)
+                    if save_plots:
+                        _finalize_figure(
+                            fig, f"{run_dir}/{sampler_name}_llc_se_vs_draws.png"
+                        )
+                    plt.close(fig)
+            except Exception:
+                pass
+
             # ESS quantile (interval reliability)
             axes = _az().plot_ess(idata_llc, var_names=["llc"], kind="quantile")
             if save_plots and hasattr(axes, "figure"):
@@ -458,7 +543,7 @@ def create_summary_dataframe(results: dict, samplers: List[str]) -> pd.DataFrame
                     "llc_se": res.get("llc_se", np.nan),
                     "ess": res.get("ess", np.nan),
                     "wnv_time": res.get("wnv_time", np.nan),
-                    "wnv_grad": res.get("wnv_grad", np.nan),
+                    "wnv_fde": res.get("wnv_fde", np.nan),
                     "acceptance": res.get("acceptance", np.nan)
                     if sampler == "hmc"
                     else np.nan,

@@ -198,18 +198,47 @@ def run_one(
         )
         print(f"SGLD LLC: {llc_sgld_mean:.4f} ± {se_sgld:.4f} (ESS: {ess_sgld:.1f})")
 
-        # Compute WNV (Work-Normalized Variance) for SGLD
-        def _wnv(se, t_sampling, work_sampling):
-            var = float(se) * float(se)
-            return float(var * float(t_sampling)), float(var * float(work_sampling))
-
-        # Approximate sampling-only work by splitting warmup/sample proportionally to steps
-        sgld_sample_frac = max(0, cfg.sgld_steps - cfg.sgld_warmup) / max(
-            1, cfg.sgld_steps
+        # Efficiency (wall-clock and gradient-normalized) + Work-Normalized Variance
+        # Full-data-equivalent gradients (FDE): minibatch grads scaled by b/n
+        b = getattr(cfg, "sgld_batch_size", 1)
+        n = cfg.n_data
+        fde_sgld = float(stats.n_sgld_full_loss) + float(
+            stats.n_sgld_minibatch_grads
+        ) * (b / n)
+        ess_per_sec_sgld = float(ess_sgld) / max(1e-9, stats.t_sgld_sampling)
+        ess_per_fde_sgld = float(ess_sgld) / max(1e-12, fde_sgld)
+        # Back out MC std s from se = s / sqrt(ess)
+        s_hat_sgld = (
+            float(se_sgld) * np.sqrt(max(1.0, ess_sgld))
+            if np.isfinite(se_sgld)
+            else np.nan
         )
-        sgld_work_sampling = float(stats.n_sgld_minibatch_grads) * sgld_sample_frac
-        sgld_wnv_time, sgld_wnv_grad = _wnv(
-            se_sgld, stats.t_sgld_sampling, sgld_work_sampling
+        # True WNV: Var(estimator) × cost = (s²/ESS) × cost
+        wnv_time_sgld = (
+            (s_hat_sgld**2 / ess_sgld) * stats.t_sgld_sampling
+            if np.isfinite(s_hat_sgld) and ess_sgld > 0
+            else np.nan
+        )
+        wnv_fde_sgld = (
+            (s_hat_sgld**2 / ess_sgld) * fde_sgld
+            if np.isfinite(s_hat_sgld) and ess_sgld > 0
+            else np.nan
+        )
+        target_se = 1.0  # configurable if you want
+        ess_target = (
+            (s_hat_sgld / target_se) ** 2
+            if np.isfinite(s_hat_sgld) and s_hat_sgld > 0
+            else np.nan
+        )
+        time_to_target_sgld = (
+            stats.t_sgld_sampling * (ess_target / ess_sgld)
+            if np.isfinite(ess_target) and ess_sgld > 0
+            else np.nan
+        )
+        fde_to_target_sgld = (
+            fde_sgld * (ess_target / ess_sgld)
+            if np.isfinite(ess_target) and ess_sgld > 0
+            else np.nan
         )
 
         # Store SGLD results
@@ -218,12 +247,16 @@ def run_one(
                 "sgld_llc_mean": float(llc_sgld_mean),
                 "sgld_llc_se": float(se_sgld),
                 "sgld_ess": float(ess_sgld),
+                "sgld_ess_per_sec": ess_per_sec_sgld,
+                "sgld_ess_per_fde": ess_per_fde_sgld,
+                "sgld_wnv_time": float(wnv_time_sgld),
+                "sgld_wnv_fde": float(wnv_fde_sgld),
+                "sgld_time_to_se1": float(time_to_target_sgld),
+                "sgld_fde_to_se1": float(fde_to_target_sgld),
                 "sgld_timing_warmup": float(stats.t_sgld_warmup),
                 "sgld_timing_sampling": float(stats.t_sgld_sampling),
                 "sgld_n_steps": int(stats.n_sgld_minibatch_grads),
                 "sgld_n_full_loss": int(stats.n_sgld_full_loss),
-                "sgld_wnv_time": sgld_wnv_time,
-                "sgld_wnv_grad": sgld_wnv_grad,
             }
         )
         histories["sgld"] = Ln_histories_sgld
@@ -291,10 +324,42 @@ def run_one(
         print(f"HMC LLC: {llc_hmc_mean:.4f} ± {se_hmc:.4f} (ESS: {ess_hmc:.1f})")
         print(f"HMC acceptance rate (mean over chains/draws): {mean_acc:.3f}")
 
-        # Compute WNV for HMC (HMC counts sampling grads explicitly)
-        hmc_work_sampling = float(stats.n_hmc_leapfrog_grads)
-        hmc_wnv_time, hmc_wnv_grad = _wnv(
-            se_hmc, stats.t_hmc_sampling, hmc_work_sampling
+        # Efficiency
+        fde_hmc = float(stats.n_hmc_full_loss) + float(
+            stats.n_hmc_leapfrog_grads
+        )  # leapfrog grads are full
+        ess_per_sec_hmc = float(ess_hmc) / max(1e-9, stats.t_hmc_sampling)
+        ess_per_fde_hmc = float(ess_hmc) / max(1e-12, fde_hmc)
+        s_hat_hmc = (
+            float(se_hmc) * np.sqrt(max(1.0, ess_hmc))
+            if np.isfinite(se_hmc)
+            else np.nan
+        )
+        # True WNV: Var(estimator) × cost = (s²/ESS) × cost
+        wnv_time_hmc = (
+            (s_hat_hmc**2 / ess_hmc) * stats.t_hmc_sampling
+            if np.isfinite(s_hat_hmc) and ess_hmc > 0
+            else np.nan
+        )
+        wnv_fde_hmc = (
+            (s_hat_hmc**2 / ess_hmc) * fde_hmc
+            if np.isfinite(s_hat_hmc) and ess_hmc > 0
+            else np.nan
+        )
+        ess_target = (
+            (s_hat_hmc / target_se) ** 2
+            if np.isfinite(s_hat_hmc) and s_hat_hmc > 0
+            else np.nan
+        )
+        time_to_target_hmc = (
+            stats.t_hmc_sampling * (ess_target / ess_hmc)
+            if np.isfinite(ess_target) and ess_hmc > 0
+            else np.nan
+        )
+        fde_to_target_hmc = (
+            fde_hmc * (ess_target / ess_hmc)
+            if np.isfinite(ess_target) and ess_hmc > 0
+            else np.nan
         )
 
         # Store HMC results
@@ -303,6 +368,12 @@ def run_one(
                 "hmc_llc_mean": float(llc_hmc_mean),
                 "hmc_llc_se": float(se_hmc),
                 "hmc_ess": float(ess_hmc),
+                "hmc_ess_per_sec": ess_per_sec_hmc,
+                "hmc_ess_per_fde": ess_per_fde_hmc,
+                "hmc_wnv_time": float(wnv_time_hmc),
+                "hmc_wnv_fde": float(wnv_fde_hmc),
+                "hmc_time_to_se1": float(time_to_target_hmc),
+                "hmc_fde_to_se1": float(fde_to_target_hmc),
                 "hmc_timing_warmup": float(stats.t_hmc_warmup),
                 "hmc_timing_sampling": float(stats.t_hmc_sampling),
                 "hmc_n_leapfrog_grads": int(stats.n_hmc_leapfrog_grads),
@@ -312,8 +383,6 @@ def run_one(
                 )
                 if any(a.size for a in accs_hmc)
                 else float("nan"),
-                "hmc_wnv_time": hmc_wnv_time,
-                "hmc_wnv_grad": hmc_wnv_grad,
             }
         )
         histories["hmc"] = Ln_histories_hmc
@@ -392,10 +461,47 @@ def run_one(
             f"MCLMC LLC: {llc_mclmc_mean:.4f} ± {se_mclmc:.4f} (ESS: {ess_mclmc:.1f})"
         )
 
-        # Compute WNV for MCLMC
-        mclmc_work_sampling = float(stats.n_mclmc_steps)
-        mclmc_wnv_time, mclmc_wnv_grad = _wnv(
-            se_mclmc, stats.t_mclmc_sampling, mclmc_work_sampling
+        # Efficiency (adapt to your bookkeeping)
+        fde_mclmc = (
+            float(stats.n_mclmc_full_loss)
+            if hasattr(stats, "n_mclmc_full_loss")
+            else 0.0
+        )
+        ess_per_sec_mclmc = float(ess_mclmc) / max(1e-9, stats.t_mclmc_sampling)
+        ess_per_fde_mclmc = (
+            float(ess_mclmc) / max(1e-12, fde_mclmc) if fde_mclmc > 0 else np.nan
+        )
+        s_hat_mclmc = (
+            float(se_mclmc) * np.sqrt(max(1.0, ess_mclmc))
+            if np.isfinite(se_mclmc)
+            else np.nan
+        )
+        ess_target = (
+            (s_hat_mclmc / target_se) ** 2
+            if np.isfinite(s_hat_mclmc) and s_hat_mclmc > 0
+            else np.nan
+        )
+        time_to_target_mclmc = (
+            stats.t_mclmc_sampling * (ess_target / ess_mclmc)
+            if np.isfinite(ess_target) and ess_mclmc > 0
+            else np.nan
+        )
+        fde_to_target_mclmc = (
+            fde_mclmc * (ess_target / ess_mclmc)
+            if np.isfinite(ess_target) and ess_mclmc > 0
+            else np.nan
+        )
+
+        # True WNV: Var(estimator) × cost = (s²/ESS) × cost
+        wnv_time_mclmc = (
+            (s_hat_mclmc**2 / ess_mclmc) * stats.t_mclmc_sampling
+            if np.isfinite(s_hat_mclmc) and ess_mclmc > 0
+            else np.nan
+        )
+        wnv_fde_mclmc = (
+            (s_hat_mclmc**2 / ess_mclmc) * fde_mclmc
+            if np.isfinite(s_hat_mclmc) and ess_mclmc > 0
+            else np.nan
         )
 
         # Store MCLMC results
@@ -404,12 +510,16 @@ def run_one(
                 "mclmc_llc_mean": float(llc_mclmc_mean),
                 "mclmc_llc_se": float(se_mclmc),
                 "mclmc_ess": float(ess_mclmc),
+                "mclmc_ess_per_sec": ess_per_sec_mclmc,
+                "mclmc_ess_per_fde": ess_per_fde_mclmc,
+                "mclmc_time_to_se1": float(time_to_target_mclmc),
+                "mclmc_fde_to_se1": float(fde_to_target_mclmc),
                 "mclmc_timing_warmup": float(stats.t_mclmc_warmup),
                 "mclmc_timing_sampling": float(stats.t_mclmc_sampling),
                 "mclmc_n_steps": int(stats.n_mclmc_steps),
                 "mclmc_n_full_loss": int(stats.n_mclmc_full_loss),
-                "mclmc_wnv_time": mclmc_wnv_time,
-                "mclmc_wnv_grad": mclmc_wnv_grad,
+                "mclmc_wnv_time": wnv_time_mclmc,
+                "mclmc_wnv_fde": wnv_fde_mclmc,
             }
         )
         histories["mclmc"] = Ln_histories_mclmc
