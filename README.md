@@ -37,34 +37,40 @@ Ultimately, we want to devise and evaluate new sampling algorithms for singular 
     - HMC acceptance-rate histogram; MCLMC energy-change histogram.
   - **Work-normalized variance (WNV)** metrics: variance of LLC estimate × (wall-clock time or gradient-equivalent count). Automatically computed for all samplers to enable efficiency comparisons across parameter dimensions.
 
-## Examples
+## Representative diagnostics
 
-These are examples from a recent run.
+These examples come from a quick run with 4 chains (`--preset=quick`), using ArviZ for convergence diagnostics.
 
-### Running LLC Estimates
+- **Running LLC (SGLD / HMC / MCLMC)** — per-chain and pooled running estimates of
+  $\mathrm{LLC} = n\,\beta\,(E[L_n] - L_0)$. Horizontal band shows final mean ± 2·SE (ESS-based).
 
 ![SGLD running LLC](assets/readme/sgld_llc_running.png)
-*SGLD: Running Local Learning Coefficient estimates showing convergence over sampling iterations*
-
 ![HMC running LLC](assets/readme/hmc_llc_running.png)
-*HMC: Running LLC estimates with multiple chains and pooled estimate*
-
 ![MCLMC running LLC](assets/readme/mclmc_llc_running.png)
-*MCLMC: Running LLC estimates showing sampling efficiency*
 
-### MCMC Diagnostics
+- **Rank plot (LLC)** — chain-wise rank histograms should be near-uniform when chains target the same posterior for LLC.
 
-![HMC L_n Traces](assets/readme/hmc_L_trace.png)
-*HMC: Trace plots of loss function values L_n across chains*
+![LLC rank](assets/readme/llc_rank.png)
 
-![HMC Autocorrelation](assets/readme/hmc_L_acf.png)
-*HMC: Autocorrelation function for L_n showing mixing properties*
+- **ESS evolution (LLC)** — effective sample size growth across draws; we aim for large ESS and plateauing curves.
 
-![HMC Acceptance](assets/readme/hmc_acceptance.png)
-*HMC: Acceptance rate distribution across chains*
+![LLC ESS evolution](assets/readme/llc_ess_evolution.png)
 
-![MCLMC Energy Changes](assets/readme/mclmc_energy_hist.png)
-*MCLMC: Energy change distribution showing microcanonical dynamics*
+- **HMC acceptance** — per-chain acceptance with reference bands (0.651 and 0.8).
+
+![HMC acceptance](assets/readme/hmc_acceptance.png)
+
+- **HMC energy** — Hamiltonian energy diagnostic (ArviZ). Heavy tails or multimodality show up as irregular densities.
+
+![HMC energy](assets/readme/hmc_energy.png)
+
+- *(Optional, pedagogical)* **Centered loss** — raw traces of $L_n - L_0$ per chain, to visualize what LLC centers on.
+
+![Centered Ln](assets/readme/Ln_centered.png)
+
+**Notes.**
+- We run **4 chains** by default for reliable R-hat and ESS.
+- If `llc_rank` looks non-uniform or R-hat ≥ 1.01, increase draws, reduce thinning, or adjust adaptation.
 
 ---
 

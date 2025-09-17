@@ -302,10 +302,12 @@ def run(**kwargs):
     from llc.tasks import run_experiment_task
 
     if backend == "modal":
-        from modal_app import run_experiment_remote
+        # Ensure the Modal App is running so the function hydrates
+        from modal_app import app, run_experiment_remote
 
-        executor = get_executor(backend="modal", remote_fn=run_experiment_remote)
-        [result_dict] = executor.map(run_experiment_task, [cfg_dict])
+        with app.run():
+            executor = get_executor(backend="modal", remote_fn=run_experiment_remote)
+            [result_dict] = executor.map(run_experiment_task, [cfg_dict])
 
         # Download artifacts locally (optional convenience)
         _extract_modal_artifacts_locally(result_dict)
@@ -383,7 +385,7 @@ def sweep(**kwargs):
     # Modal handle (if needed)
     remote_fn = None
     if backend == "modal":
-        from modal_app import run_experiment_remote
+        from modal_app import app, run_experiment_remote
 
         remote_fn = run_experiment_remote
         modal_opts = {"max_containers": 1, "min_containers": 0, "buffer_containers": 0}
@@ -394,12 +396,14 @@ def sweep(**kwargs):
     from llc.execution import get_executor
     from llc.tasks import run_experiment_task
 
-    executor = get_executor(
-        backend=backend,
-        workers=workers if backend == "local" else None,
-        remote_fn=remote_fn,
-        options=modal_opts,
-    )
+    def _run_map():
+        ex = get_executor(
+            backend=backend,
+            workers=workers if backend == "local" else None,
+            remote_fn=remote_fn,
+            options=modal_opts,
+        )
+        return ex.map(run_experiment_task, cfg_dicts)
 
     # Build cfg dicts with schema hash
     cfg_dicts = []
@@ -411,7 +415,12 @@ def sweep(**kwargs):
         d["config_schema"] = schema
         cfg_dicts.append(d)
 
-    results = executor.map(run_experiment_task, cfg_dicts)
+    if backend == "modal":
+        # Hydrate functions by running inside the app context
+        with app.run():
+            results = _run_map()
+    else:
+        results = _run_map()
 
     # For Modal, optionally pull artifacts locally (convenience)
     if backend == "modal":

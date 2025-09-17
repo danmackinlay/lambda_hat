@@ -17,15 +17,23 @@ from datetime import datetime
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from llc.manifest import is_run_completed, get_run_start_time
 
-# Which files to copy (left = substring to match in artifacts, right = stable name in assets)
+# Which files to copy (source key -> stable asset name).
+# We prefer exact filename matches; else substring fallback.
 SELECT = [
-    ("sgld_running_llc", "sgld_llc_running.png"),
-    ("hmc_running_llc", "hmc_llc_running.png"),
-    ("mclmc_running_llc", "mclmc_llc_running.png"),
-    ("hmc_acceptance", "hmc_acceptance.png"),
-    ("hmc_Ln_trace", "hmc_L_trace.png"),
-    ("hmc_Ln_acf", "hmc_L_acf.png"),
-    ("mclmc_energy_hist", "mclmc_energy_hist.png"),
+    # Running LLC (one per sampler)
+    ("sgld_running_llc.png", "sgld_llc_running.png"),
+    ("hmc_running_llc.png", "hmc_llc_running.png"),
+    ("mclmc_running_llc.png", "mclmc_llc_running.png"),
+    # HMC diagnostics
+    ("hmc_acceptance.png", "hmc_acceptance.png"),
+    ("hmc_energy.png", "hmc_energy.png"),
+    # ArviZ-first LLC diagnostics
+    ("hmc_llc_rank.png", "llc_rank.png"),
+    ("hmc_llc_ess_evolution.png", "llc_ess_evolution.png"),
+    # Optionally include one centered L_n for pedagogy
+    ("hmc_Ln_centered.png", "Ln_centered.png"),
+    # If you still want an energy histogram for MCLMC, keep it:
+    ("mclmc_energy_hist.png", "mclmc_energy_hist.png"),
 ]
 
 
@@ -106,8 +114,14 @@ def _latest_from_artifacts(artifacts_dir: Path) -> Path:
 
 
 def find_first_match(run_dir: Path, key: str) -> Path | None:
-    """Find the first PNG file containing the key substring (follow symlinks)."""
+    """
+    Prefer exact filename match; fall back to substring.
+    """
     base = run_dir.resolve() if run_dir.exists() else run_dir
+    exact = base / key
+    if exact.exists():
+        return exact
+    # substring fallback for backward compatibility
     for p in sorted(base.glob("*.png")):
         if key in p.name:
             return p
@@ -143,7 +157,10 @@ def main():
         copied += 1
 
     if copied == 0:
-        print("No images copied. Did this run save plots? (save_plots=True)")
+        print(
+            "No images copied. Did this run save plots? (save_plots=True) "
+            "Or are you running an old diagnostics set?"
+        )
     else:
         print(f"Done. Copied {copied} images.")
         print(
