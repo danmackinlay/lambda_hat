@@ -1,5 +1,11 @@
 # llc/diagnostics.py
-"""Diagnostic and plotting utilities for LLC analysis (lean + robust)."""
+"""Diagnostic and plotting utilities for LLC analysis (lean + robust).
+
+Note on ESS (Effective Sample Size):
+For MCMC samplers like HMC, ESS provides a relatively rigorous estimate of statistical efficiency.
+For SGLD and MCLMC, ESS is a useful heuristic for comparison but not a strict guarantee
+due to their non-reversible dynamics and different theoretical foundations.
+"""
 
 from __future__ import annotations
 from typing import List, Optional, Tuple, Any, Sequence
@@ -25,7 +31,7 @@ def llc_mean_and_se_from_histories(
     Compute LLC mean and standard error from L_n evaluation histories using ESS.
 
     This is the primary method for LLC estimation, using ArviZ bulk ESS for
-    proper uncertainty quantification that accounts for autocorrelation.
+    uncertainty quantification that attempts to account for autocorrelation.
 
     Args:
         Ln_histories: Per-chain histories of L_n evaluations
@@ -41,15 +47,15 @@ def llc_mean_and_se_from_histories(
         return 0.0, np.nan, 0
 
     # Transform to LLC
-    lambda_vals = n * beta * (H - L0)  # (chains, evals)
+    llc_vals = n * beta * (H - L0)  # (chains, evals)
 
     # Create ArviZ InferenceData
     az = _az()
     idata = az.from_dict(
-        posterior={"llc": lambda_vals},
+        posterior={"llc": llc_vals},
         coords={
-            "chain": np.arange(lambda_vals.shape[0]),
-            "draw": np.arange(lambda_vals.shape[1]),
+            "chain": np.arange(llc_vals.shape[0]),
+            "draw": np.arange(llc_vals.shape[1]),
         },
         dims={"llc": ["chain", "draw"]},
     )
@@ -59,7 +65,7 @@ def llc_mean_and_se_from_histories(
     eff_sample_size = float(np.mean(ess)) if not np.isnan(ess).all() else 1.0
 
     # Pool across chains for final estimate
-    pooled = lambda_vals.flatten()
+    pooled = llc_vals.flatten()
     mean_llc = float(np.mean(pooled))
 
     # Standard error accounting for ESS
@@ -290,7 +296,6 @@ def plot_diagnostics(
 ) -> None:
     """Generate diagnostics for a sampler, aligned with ArviZ best practice."""
     # Build idata objects
-    idata_L, _ = _idata_from_L(Ln_histories)
     idata_llc = _idata_from_llc(
         Ln_histories, n, beta, L0, acceptance_rates=acceptance_rates, energies=energies
     )
@@ -514,9 +519,16 @@ def plot_diagnostics(
                     if "ess_tail" in summ.columns
                     else np.nan
                 )
-                print(
-                    f"[{sampler_name}] R-hat = {rhat:.4f}, ESS_bulk = {ess_bulk:.1f}, ESS_tail = {ess_tail:.1f}"
-                )
+                # Check if single chain run
+                n_chains = idata_llc.posterior.dims.get("chain", 1)
+                if n_chains < 2:
+                    print(
+                        f"[{sampler_name}] ESS_bulk = {ess_bulk:.1f}, ESS_tail = {ess_tail:.1f} (Note: only one chain — R-hat is not informative)"
+                    )
+                else:
+                    print(
+                        f"[{sampler_name}] R-hat = {rhat:.4f}, ESS_bulk = {ess_bulk:.1f}, ESS_tail = {ess_tail:.1f}"
+                    )
         except Exception as e:
             # ArviZ plotting can fail with insufficient data
             print(f"[{sampler_name}] Could not generate ArviZ diagnostics: {e}")
