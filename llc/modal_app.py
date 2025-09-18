@@ -1,8 +1,8 @@
 # modal_app.py
 import modal
 
-# --- image: install from pyproject.toml + modal extra ---
-image = (
+# --- Base image: all build steps before adding local code ---
+base = (
     modal.Image.debian_slim(python_version="3.11")
     # Install all deps first
     .pip_install_from_pyproject("pyproject.toml", optional_dependencies=["modal"])
@@ -15,15 +15,19 @@ image = (
             # "LLC_CODE_VERSION": "deploy-123",
         }
     )
-    # LAST: mount local source so code edits don't rebuild the image
-    .add_local_python_source("llc")
 )
 
-# GPU image with CUDA JAX wheel
-gpu_image = image.pip_install("jax[cuda12_local]", force_build=True)
+# CPU image: add local code last
+image = base.add_local_python_source("llc")
 
-# Create persistent volume for artifacts
-artifacts_volume = modal.Volume.from_name("llc-artifacts", create_if_missing=True)
+# GPU image: do the GPU install first, then add local code last
+gpu_image = (
+    base.pip_install("jax[cuda12_local]", force_build=True)
+        .add_local_python_source("llc")
+)
+
+# Create persistent volume for runs
+runs_volume = modal.Volume.from_name("llc-runs", create_if_missing=True)
 
 app = modal.App("llc-experiments", image=image)
 
