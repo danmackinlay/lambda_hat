@@ -4,8 +4,7 @@ Single source of truth for running one complete experiment.
 """
 
 from __future__ import annotations
-from dataclasses import dataclass
-from typing import Dict, Any, Optional
+from typing import Optional
 import logging
 import os
 
@@ -15,6 +14,7 @@ import numpy as np
 
 from .config import Config
 from .cache import run_id, load_cached_outputs
+from .types import RunOutputs, RunStats
 
 # Set up logger
 logger = logging.getLogger(__name__)
@@ -47,15 +47,6 @@ from .artifacts import (
 )
 from datetime import datetime
 
-
-@dataclass
-class RunOutputs:
-    """Results from running one complete experiment"""
-
-    run_dir: Optional[str]
-    metrics: Dict[str, Any]
-    histories: Dict[str, Any]  # {"sgld": [...], "hmc": [...], "mclmc": [...]}
-    L0: float
 
 
 def run_one(

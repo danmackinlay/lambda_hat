@@ -1,14 +1,13 @@
 # llc/losses.py
 """Loss function utilities"""
 
+from __future__ import annotations
+
 from typing import TYPE_CHECKING
 import jax.numpy as jnp
 
 if TYPE_CHECKING:
     from .config import Config
-else:
-    # Runtime import to avoid circular dependency
-    Config = "Config"
 
 from .models import mlp_forward
 

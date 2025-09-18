@@ -1,15 +1,14 @@
 # llc/posterior.py
 """Posterior construction utilities for tempered local posteriors"""
 
+from __future__ import annotations
+
 from typing import TYPE_CHECKING
 import jax.numpy as jnp
 from jax import grad, value_and_grad, jit
 
 if TYPE_CHECKING:
     from .config import Config
-else:
-    # Runtime import to avoid circular dependency
-    Config = "Config"
 
 
 def compute_beta_gamma(cfg: Config, d: int) -> tuple[float, float]:

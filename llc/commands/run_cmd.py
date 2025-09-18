@@ -1,7 +1,6 @@
 """Run command implementation."""
 
 from llc.config import CFG, config_schema_hash
-from llc.pipeline import run_one
 from llc.util.config_overrides import apply_preset_then_overrides
 from llc.util.modal_utils import extract_modal_artifacts_locally
 
@@ -17,6 +16,9 @@ def run_entry(kwargs: dict) -> None:
     cfg = apply_preset_then_overrides(CFG, preset, kwargs)
 
     if backend == "local":
+        # Import heavy JAX-touching modules only when needed
+        from llc.pipeline import run_one
+
         result = run_one(
             cfg, save_artifacts=save_artifacts, skip_if_exists=skip_if_exists
         )
@@ -29,6 +31,7 @@ def run_entry(kwargs: dict) -> None:
     cfg_dict["skip_if_exists"] = skip_if_exists
     cfg_dict["config_schema"] = config_schema_hash()
 
+    # Import execution modules only when needed for remote backends
     from llc.execution import get_executor
     from llc.tasks import run_experiment_task
 

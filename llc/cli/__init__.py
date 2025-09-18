@@ -8,9 +8,9 @@ All business logic moved to command modules.
 from __future__ import annotations
 import logging
 
+import os
 import click
 
-from llc.cli.env import configure_runtime
 from llc.cli.options import (
     run_shared_options,
     sweep_shared_options,
@@ -25,7 +25,9 @@ from llc.cli.options import (
 @click.option("--verbose", is_flag=True, help="Enable verbose logging.")
 def cli(verbose: bool):
     """LLC command-line interface (Click)."""
-    configure_runtime()
+    # Configure JAX and matplotlib environment for CLI usage
+    os.environ.setdefault("JAX_ENABLE_X64", "true")
+    os.environ.setdefault("MPLBACKEND", "Agg")  # headless backend for server environments
 
     logging.basicConfig(
         level=logging.DEBUG if verbose else logging.INFO,

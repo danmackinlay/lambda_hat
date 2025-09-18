@@ -20,7 +20,7 @@ def sweep_entry(kwargs: dict) -> None:
     # Build base config for sweep
     base_cfg = apply_preset_then_overrides(CFG, preset, kwargs)
 
-    # Build worklist
+    # Build worklist - import only when needed
     from llc.experiments import build_sweep_worklist, sweep_space
 
     sw = sweep_space()
@@ -40,7 +40,7 @@ def sweep_entry(kwargs: dict) -> None:
     else:
         modal_opts = None
 
-    # Executor
+    # Import execution modules only when needed
     from llc.execution import get_executor
     from llc.tasks import run_experiment_task
 
