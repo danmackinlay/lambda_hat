@@ -538,21 +538,6 @@ def run_one(
             idata_mclmc.attrs.update({"n_data": int(cfg.n_data), "beta": float(beta), "L0": float(L0), "sampler": "mclmc"})
             az.to_netcdf(idata_mclmc, f"{run_dir}/mclmc.nc")
 
-        # Keep legacy format for compatibility
-        if "sgld" in getattr(cfg, "samplers", []):
-            save_idata_L(run_dir, "sgld", histories.get("sgld", []))
-        if "hmc" in getattr(cfg, "samplers", []):
-            save_idata_L(run_dir, "hmc", histories.get("hmc", []))
-        if "mclmc" in getattr(cfg, "samplers", []):
-            save_idata_L(run_dir, "mclmc", histories.get("mclmc", []))
-
-        # Save thinned theta samples as ArviZ InferenceData (legacy)
-        if "sgld" in getattr(cfg, "samplers", []) and 'res_sgld' in locals():
-            save_idata_theta(run_dir, "sgld", res_sgld.theta_thin)
-        if "hmc" in getattr(cfg, "samplers", []) and 'res_hmc' in locals():
-            save_idata_theta(run_dir, "hmc", res_hmc.theta_thin)
-        if "mclmc" in getattr(cfg, "samplers", []) and 'res_mclmc' in locals():
-            save_idata_theta(run_dir, "mclmc", res_mclmc.theta_thin)
 
         # Save all metrics
         save_metrics(run_dir, all_metrics)

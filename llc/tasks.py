@@ -58,11 +58,6 @@ def run_experiment_task(cfg_dict: Dict[str, Any]) -> Dict[str, Any]:
             if f"{s}_llc_mean" in out.metrics:
                 result[f"llc_{s}"] = float(out.metrics[f"{s}_llc_mean"])
 
-        # Legacy keys for backwards compatibility
-        if "sgld_llc_mean" in out.metrics and "hmc_llc_mean" in out.metrics:
-            result["llc_sgld"] = float(out.metrics["sgld_llc_mean"])
-            result["llc_hmc"] = float(out.metrics["hmc_llc_mean"])
-
         return result
 
     else:
