@@ -16,6 +16,7 @@ from .samplers.adapters import (
     run_sgld_chains_batched,
     run_mclmc_chains_batched,
 )
+from .types import SamplerResult
 
 if TYPE_CHECKING:
     from .config import Config
@@ -171,7 +172,27 @@ def run_sgld_online(
             stats.n_sgld_full_loss += int(res.n_L)
 
     samples_thin = stack_thinned(kept_all)
-    return samples_thin, np.array(means), np.array(vars_), np.array(ns), L_histories
+
+    # Build timings dict
+    timings = {}
+    if stats:
+        timings["warmup"] = float(stats.t_sgld_warmup)
+        timings["sampling"] = float(stats.t_sgld_sampling)
+
+    # Build work dict
+    work = {}
+    if stats:
+        work["n_minibatch_grads"] = int(stats.n_sgld_minibatch_grads)
+        work["n_full_loss"] = int(stats.n_sgld_full_loss)
+
+    return SamplerResult(
+        Ln_histories=[np.asarray(h, dtype=float) for h in L_histories],
+        theta_thin=samples_thin,
+        acceptance=None,  # SGLD doesn't have acceptance rates
+        energy=None,      # SGLD doesn't have energy
+        timings=timings,
+        work=work,
+    )
 
 
 def run_hmc_online_with_adaptation(
@@ -257,14 +278,27 @@ def run_hmc_online_with_adaptation(
                 stats.n_hmc_warmup_leapfrog_grads += int(res.extras["warmup_grads"][0])
 
     samples_thin = stack_thinned(kept_all)
-    return (
-        samples_thin,
-        np.array(means),
-        np.array(vars_),
-        np.array(ns),
-        accs,
-        L_histories,
-        energies,
+
+    # Build timings dict
+    timings = {}
+    if stats:
+        timings["warmup"] = float(stats.t_hmc_warmup)
+        timings["sampling"] = float(stats.t_hmc_sampling)
+
+    # Build work dict
+    work = {}
+    if stats:
+        work["n_leapfrog_grads"] = int(stats.n_hmc_leapfrog_grads)
+        work["n_full_loss"] = int(stats.n_hmc_full_loss)
+        work["n_warmup_leapfrog_grads"] = int(stats.n_hmc_warmup_leapfrog_grads)
+
+    return SamplerResult(
+        Ln_histories=[np.asarray(h, dtype=float) for h in L_histories],
+        theta_thin=samples_thin,
+        acceptance=[np.asarray(a, dtype=float) for a in accs],
+        energy=[np.asarray(e, dtype=float) for e in energies],
+        timings=timings,
+        work=work,
     )
 
 
@@ -350,13 +384,26 @@ def run_mclmc_online(
             stats.n_mclmc_full_loss += int(res.n_L)
 
     samples_thin = stack_thinned(kept_all)
-    return (
-        samples_thin,
-        np.array(means),
-        np.array(vars_),
-        np.array(ns),
-        energy_deltas,
-        L_histories,
+
+    # Build timings dict
+    timings = {}
+    if stats:
+        timings["warmup"] = float(stats.t_mclmc_warmup)
+        timings["sampling"] = float(stats.t_mclmc_sampling)
+
+    # Build work dict
+    work = {}
+    if stats:
+        work["n_steps"] = int(stats.n_mclmc_steps)
+        work["n_full_loss"] = int(stats.n_mclmc_full_loss)
+
+    return SamplerResult(
+        Ln_histories=[np.asarray(h, dtype=float) for h in L_histories],
+        theta_thin=samples_thin,
+        acceptance=None,  # MCLMC doesn't have acceptance rates
+        energy=[np.asarray(e, dtype=float) for e in energy_deltas],  # MCLMC has energy changes
+        timings=timings,
+        work=work,
     )
 
 
@@ -442,7 +489,14 @@ def run_sgld_online_batched(
     ns = np.asarray(result.n_L)  # (C,)
     L_histories = [np.asarray(result.L_hist[c]) for c in range(result.L_hist.shape[0])]
 
-    return kept_stacked, means, vars_, ns, L_histories
+    return SamplerResult(
+        Ln_histories=L_histories,
+        theta_thin=kept_stacked,
+        acceptance=None,
+        energy=None,
+        timings={},  # Batched version doesn't track timing details
+        work={},     # Batched version doesn't track work details
+    )
 
 
 def run_hmc_online_batched(
@@ -497,7 +551,14 @@ def run_hmc_online_batched(
     energy_list = [np.asarray(energy[c]) for c in range(energy.shape[0])]
     L_histories = [np.asarray(result.L_hist[c]) for c in range(result.L_hist.shape[0])]
 
-    return kept_stacked, means, vars_, ns, acc_list, L_histories, energy_list
+    return SamplerResult(
+        Ln_histories=L_histories,
+        theta_thin=kept_stacked,
+        acceptance=acc_list,
+        energy=energy_list,
+        timings={},  # Batched version doesn't track timing details
+        work={},     # Batched version doesn't track work details
+    )
 
 
 def run_mclmc_online_batched(
@@ -554,4 +615,11 @@ def run_mclmc_online_batched(
     dE_list = [np.asarray(dE[c]) for c in range(dE.shape[0])]
     L_histories = [np.asarray(result.L_hist[c]) for c in range(result.L_hist.shape[0])]
 
-    return kept_stacked, means, vars_, ns, dE_list, L_histories
+    return SamplerResult(
+        Ln_histories=L_histories,
+        theta_thin=kept_stacked,
+        acceptance=None,  # MCLMC doesn't have acceptance rates
+        energy=dE_list,   # MCLMC has energy changes
+        timings={},       # Batched version doesn't track timing details
+        work={},          # Batched version doesn't track work details
+    )
