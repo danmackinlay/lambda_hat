@@ -23,6 +23,7 @@ runs/*
 *.jpg
 *.jpeg
 *.pdf
+todo*.md
 
 # Exception: tracked README example images
 !assets/readme/*.png
