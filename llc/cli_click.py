@@ -564,5 +564,173 @@ def analyze(run_dir, which, plots, out, overwrite):
                 print(f"[analyze] failed {s}:{p}: {e}")
 
 
+@cli.command("promote-readme-images")
+@click.argument("run_dir", required=False, type=click.Path(exists=True, file_okay=False))
+@click.option("--root", type=click.Path(exists=True, file_okay=False), default=".", help="Repository root (default: .)")
+def promote_readme_images_cmd(run_dir, root):
+    """
+    Copy a curated set of diagnostic PNGs from a run dir into assets/readme/.
+    If RUN_DIR is omitted, pick the newest completed run under runs/.
+    """
+    from pathlib import Path
+    import shutil
+    import re
+    from datetime import datetime
+    import sys
+
+    root = Path(root).resolve()
+    assets = root / "assets" / "readme"
+    assets.mkdir(parents=True, exist_ok=True)
+
+    # --- selection identical to scripts/promote_readme_images.py ---
+    SELECT = [
+        ("sgld_running_llc.png", "sgld_llc_running.png"),
+        ("hmc_running_llc.png", "hmc_llc_running.png"),
+        ("mclmc_running_llc.png", "mclmc_llc_running.png"),
+        ("hmc_acceptance.png", "hmc_acceptance.png"),
+        ("hmc_energy.png", "hmc_energy.png"),
+        ("hmc_llc_rank.png", "llc_rank.png"),
+        ("hmc_llc_ess_evolution.png", "llc_ess_evolution.png"),
+        ("hmc_Ln_centered.png", "Ln_centered.png"),
+        ("mclmc_energy_hist.png", "mclmc_energy_hist.png"),
+    ]
+
+    # helpers (ported from scripts module)
+    sys.path.insert(0, str(root))  # allow 'llc' imports from CLI context
+    from llc.manifest import is_run_completed, get_run_start_time
+
+    def _has_needed_artifacts(p: Path) -> bool:
+        if (p / "metrics.json").exists():
+            return True
+        pngs = [q.name for q in p.glob("*.png")]
+        return any(key in name for key, _ in SELECT for name in pngs)
+
+    def _latest_from_artifacts(artifacts_dir: Path) -> Path:
+        candidates = []
+        for p in artifacts_dir.iterdir():
+            if not p.is_dir():
+                continue
+            try:
+                q = p.resolve()
+            except Exception:
+                q = p
+            if not _has_needed_artifacts(q):
+                continue
+            ts = None
+            if re.fullmatch(r"\d{8}-\d{6}", p.name):
+                try:
+                    ts = datetime.strptime(p.name, "%Y%m%d-%H%M%S").timestamp()
+                except ValueError:
+                    ts = None
+            if ts is None:
+                mtimes = [f.stat().st_mtime for f in q.glob("*.png")]
+                if (q / "metrics.json").exists():
+                    mtimes.append((q / "metrics.json").stat().st_mtime)
+                ts = max(mtimes) if mtimes else q.stat().st_mtime
+            candidates.append((ts, p))
+        if not candidates:
+            raise SystemExit("No runs with artifacts found under artifacts/")
+        candidates.sort(key=lambda t: t[0])
+        return candidates[-1][1]
+
+    def latest_run_dir(repo_root: Path) -> Path:
+        runs_dir = repo_root / "runs"
+        if not runs_dir.exists():
+            artifacts_dir = repo_root / "artifacts"
+            if not artifacts_dir.exists():
+                raise SystemExit("Neither runs/ nor artifacts/ directory found")
+            return _latest_from_artifacts(artifacts_dir)
+        candidates = []
+        for rd in runs_dir.iterdir():
+            if not rd.is_dir():
+                continue
+            if not is_run_completed(rd):
+                continue
+            start_time = get_run_start_time(rd) or rd.stat().st_mtime
+            candidates.append((start_time, rd))
+        if not candidates:
+            raise SystemExit("No completed runs found in runs/")
+        candidates.sort(key=lambda t: t[0])
+        return candidates[-1][1]
+
+    def find_first_match(run_dir: Path, key: str) -> Path | None:
+        base = run_dir.resolve() if run_dir.exists() else run_dir
+        exact = base / key
+        if exact.exists():
+            return exact
+        for p in sorted(base.glob("*.png")):
+            if key in p.name:
+                return p
+        return None
+
+    run_dir = Path(run_dir).resolve() if run_dir else latest_run_dir(root)
+    if not run_dir.exists():
+        raise SystemExit(f"Run dir not found: {run_dir}")
+
+    click.echo(f"Promoting images from: {run_dir}")
+    copied = 0
+    for key, outname in SELECT:
+        src = find_first_match(run_dir, key)
+        if not src:
+            click.echo(f"  [skip] no match for '{key}'")
+            continue
+        dst = assets / outname
+        shutil.copy2(src, dst)
+        click.echo(f"  copied {src.name} -> {dst.relative_to(root)}")
+        copied += 1
+
+    if copied == 0:
+        click.echo("No images copied. Did this run save plots? (save_plots=True) "
+                   "Or are you running an old diagnostics set?")
+    else:
+        click.echo(f"Done. Copied {copied} images.")
+        click.echo("Commit updated assets/readme/*.png and refresh README references if needed.")
+
+
+@cli.command("pull-artifacts")
+@click.argument("run_id", required=False)
+@click.option("--target", default="artifacts", show_default=True,
+              type=click.Path(file_okay=False), help="Local target root")
+def pull_artifacts_cmd(run_id, target):
+    """
+    Pull artifacts from Modal using the deployed SDK functions.
+    If RUN_ID is omitted, discover the latest on the server.
+    """
+    import io, tarfile
+    from pathlib import Path
+    import modal
+
+    APP = "llc-experiments"
+    FN_LIST = "list_artifacts"
+    FN_EXPORT = "export_artifacts"
+
+    list_fn = modal.Function.from_name(APP, FN_LIST)
+    export_fn = modal.Function.from_name(APP, FN_EXPORT)
+
+    if run_id:
+        click.echo(f"[pull-sdk] Pulling specific run: {run_id}")
+    else:
+        click.echo("[pull-sdk] Discovering latest run on server...")
+        paths = list_fn.remote("/artifacts")
+        if not paths:
+            raise SystemExit("No remote artifacts found.")
+        run_id = Path(sorted(paths)[-1]).name
+        click.echo(f"[pull-sdk] Latest on server: {run_id}")
+
+    click.echo(f"[pull-sdk] Downloading and extracting {run_id}...")
+    data = export_fn.remote(run_id)
+    dest_root = Path(target)
+    dest_root.mkdir(parents=True, exist_ok=True)
+
+    target_dir = dest_root / run_id
+    if target_dir.exists():
+        import shutil
+        shutil.rmtree(target_dir)
+
+    with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as tf:
+        tf.extractall(dest_root)
+    click.echo(f"[pull-sdk] Extracted into {dest_root / run_id}")
+
+
 if __name__ == "__main__":
     cli()
