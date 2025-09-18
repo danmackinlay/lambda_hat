@@ -46,40 +46,59 @@ Ultimately, we want to devise and evaluate new sampling algorithms for singular 
     - No JAX dependencies — runs instantly on any machine
     - Reproducible figure generation with custom themes/options
 
+---
+
 ## Representative diagnostics
 
 These examples come from a quick run with 4 chains (`--preset=quick`), using ArviZ for convergence diagnostics.
 
-- **Running LLC (SGLD / HMC / MCLMC)** — per-chain and pooled running estimates of
-  $\mathrm{LLC} = n\,\beta\,(E[L_n] - L_0)$. Horizontal band shows final mean ± 2·SE (ESS-based).
+* **Running LLC (SGLD / HMC / MCLMC)** — per-chain and pooled running estimates of
+  \$\mathrm{LLC} = n,\beta,(E\[L\_n] - L\_0)\$.
+  The shaded band shows the final mean ± 2·SE (based on effective sample size).
+  *Why it matters:* curves should stabilize and different chains should agree; instability or divergence signals insufficient draws or poor mixing.
 
 ![SGLD running LLC](assets/readme/sgld_llc_running.png)
 ![HMC running LLC](assets/readme/hmc_llc_running.png)
 ![MCLMC running LLC](assets/readme/mclmc_llc_running.png)
 
-- **Rank plot (LLC)** — chain-wise rank histograms should be near-uniform when chains target the same posterior for LLC.
+* **Rank plot (LLC)** — chain-wise rank histograms.
+  *Why it matters:* under convergence, draws from each chain should be roughly uniformly distributed; strong deviations indicate mixing problems or multimodality.
 
 ![LLC rank](assets/readme/llc_rank.png)
 
-- **ESS evolution (LLC)** — effective sample size growth across draws; we aim for large ESS and plateauing curves.
+* **ESS evolution (LLC)** — effective sample size (ESS) as a function of draws.
+  *Why it matters:* ESS should grow steadily and plateau at a high value; slow growth indicates high autocorrelation and low statistical efficiency.
 
 ![LLC ESS evolution](assets/readme/llc_ess_evolution.png)
 
-- **HMC acceptance** — per-chain acceptance with reference bands (0.651 and 0.8).
+* **Autocorrelation (LLC)** — lag-k autocorrelation of the LLC series.
+  *Why it matters:* autocorrelations should drop quickly toward zero. Long tails suggest highly correlated chains and reduced effective sample size.
 
-![HMC acceptance](assets/readme/hmc_acceptance.png)
+![LLC autocorr](assets/readme/llc_autocorr.png)
 
-- **HMC energy** — Hamiltonian energy diagnostic (ArviZ). Heavy tails or multimodality show up as irregular densities.
+* **Energy diagnostics**
+
+  * **HMC:** Hamiltonian energy distribution.
+    *Why it matters:* well-behaved HMC shows a tight, regular distribution; heavy tails or multimodality can indicate poor adaptation or pathologies.
+  * **MCLMC:** distribution of per-step energy changes.
+    *Why it matters:* should be centered and not too wide; large or skewed changes can indicate unstable integration.
 
 ![HMC energy](assets/readme/hmc_energy.png)
+![MCLMC energy](assets/readme/mclmc_energy.png)
 
-- *(Optional, pedagogical)* **Centered loss** — raw traces of $L_n - L_0$ per chain, to visualize what LLC centers on.
+* **Theta traces** — a subset of parameter dimensions for each sampler.
+  *Why it matters:* traces should look like stationary noise around a stable mean. Trends, drifts, or stuck chains suggest non-convergence.
 
-![Centered Ln](assets/readme/Ln_centered.png)
+![HMC theta trace](assets/readme/hmc_theta_trace.png)
+![SGLD theta trace](assets/readme/sgld_theta_trace.png)
+![MCLMC theta trace](assets/readme/mclmc_theta_trace.png)
+
+---
 
 **Notes.**
-- We run **4 chains** by default for reliable R-hat and ESS.
-- If `llc_rank` looks non-uniform or R-hat ≥ 1.01, increase draws, reduce thinning, or adjust adaptation.
+
+* We run **4 chains** by default for reliable R-hat and ESS diagnostics.
+* If rank plots look non-uniform, autocorrelation tails are long, or R-hat ≥ 1.01, increase draws, reduce thinning, or adjust adaptation settings.
 
 ---
 
@@ -135,7 +154,6 @@ uv run llc_CODE_VERSION=deploy-123 uv run python -m llc run
 - Editing any `llc/*.py` file changes the fingerprint automatically
 - On Modal/CI, set `LLC_CODE_VERSION` to a build ID if you want explicit control
 - The cache works everywhere (local, Modal, SLURM) with the same logic
-
 
 ---
 
