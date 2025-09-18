@@ -1,5 +1,10 @@
 # llc/runners.py
-"""Sampler orchestration and runner utilities"""
+"""
+Batched runners only. Each runner returns a `SamplerResult` with: ragged `Ln_histories`,
+thinned `theta`, `acceptance`/`energy` (if any), and **filled** `timings`/`work`.
+Timing = wall-clock − eval-time estimate − warmup; Work = deterministic counts.
+Use these for ESS/sec and WNV in metrics.
+"""
 
 from __future__ import annotations
 
@@ -13,10 +18,8 @@ from jax import numpy as jnp
 from .samplers.base import default_tiny_store
 from .convert import stack_ragged_2d
 from .samplers.adapters import (
-    run_sgld_chain,
-    run_hmc_chain,
-    run_mclmc_chain,
     run_sgld_chains_batched,
+    run_hmc_chains_batched,
     run_mclmc_chains_batched,
 )
 from .types import SamplerResult, RunStats
@@ -41,347 +44,12 @@ def llc_from_running_mean(E_L, L0, n, beta):
 
 
 
-def run_sgld_online(
-    key,
-    init_thetas,
-    grad_logpost_minibatch,
-    X,
-    Y,
-    n,
-    step_size,
-    num_steps,
-    warmup,
-    batch_size,
-    eval_every,
-    thin,
-    Ln_full64,
-    use_tqdm=True,
-    progress_update_every=50,
-    stats: RunStats | None = None,
-    diag_dims=None,
-    Rproj=None,
-    # NEW: preconditioning options (threaded through to adapter)
-    precond_mode: str = "none",
-    beta1: float = 0.9,
-    beta2: float = 0.999,
-    eps: float = 1e-8,
-    bias_correction: bool = True,
-):
-    """Run SGLD chains with online LLC evaluation"""
-    chains = init_thetas.shape[0]
-    kept_all, means, vars_, ns, L_histories = [], [], [], [], []
-
-    def tiny_store(vec: np.ndarray):
-        return default_tiny_store(vec, diag_dims, Rproj)
-
-    for c in range(chains):
-        ck = jax.random.fold_in(key, c)
-        # Work accounting: per SGLD step add one minibatch grad
-        work_bump = (
-            (
-                lambda: setattr(
-                    stats, "n_sgld_minibatch_grads", stats.n_sgld_minibatch_grads + 1
-                )
-            )
-            if stats
-            else None
-        )
-
-        # Time the sampling
-        t0 = time.time()
-        res = run_sgld_chain(
-            rng_key=ck,
-            init_theta=init_thetas[c],
-            grad_logpost_minibatch=grad_logpost_minibatch,
-            X=X,
-            Y=Y,
-            n_data=n,
-            step_size=step_size,
-            n_steps=num_steps,
-            warmup=warmup,
-            batch_size=batch_size,
-            eval_every=eval_every,
-            thin=thin,
-            Ln_eval_f64=Ln_full64,
-            tiny_store_fn=tiny_store,
-            use_tqdm=use_tqdm,
-            progress_label=f"SGLD(c{c})",
-            progress_update_every=progress_update_every,
-            work_bump=work_bump,
-            precond_mode=precond_mode,
-            beta1=beta1,
-            beta2=beta2,
-            eps=eps,
-            bias_correction=bias_correction,
-        )
-        # Accumulate sampling time (subtract eval time)
-        elapsed = time.time() - t0
-        if stats and hasattr(res, "eval_time_seconds"):
-            net_time = max(0.0, elapsed - res.eval_time_seconds)
-            # naive split: attribute first (warmup/num_steps) fraction to warmup
-            frac = float(warmup) / float(max(1, num_steps))
-            stats.t_sgld_warmup += frac * net_time
-            stats.t_sgld_sampling += (1.0 - frac) * net_time
-
-        kept_all.append(res.kept)
-        means.append(res.mean_L)
-        vars_.append(res.var_L)
-        ns.append(res.n_L)
-        L_histories.append(res.L_hist)
-        if stats:
-            stats.n_sgld_full_loss += int(res.n_L)
-
-    S = stack_ragged_2d(kept_all)
-    samples_thin = S if S is not None else None
-
-    # Build timings dict
-    timings = {}
-    if stats:
-        timings["warmup"] = float(stats.t_sgld_warmup)
-        timings["sampling"] = float(stats.t_sgld_sampling)
-
-    # Build work dict
-    work = {}
-    if stats:
-        work["n_minibatch_grads"] = int(stats.n_sgld_minibatch_grads)
-        work["n_full_loss"] = int(stats.n_sgld_full_loss)
-
-    return SamplerResult(
-        Ln_histories=[np.asarray(h, dtype=float) for h in L_histories],
-        theta_thin=samples_thin,
-        acceptance=None,  # SGLD doesn't have acceptance rates
-        energy=None,  # SGLD doesn't have energy
-        timings=timings,
-        work=work,
-    )
 
 
-def run_hmc_online_with_adaptation(
-    key,
-    init_thetas,
-    logpost_and_grad,
-    num_draws,
-    warmup_draws,
-    L,
-    eval_every,
-    thin,
-    Ln_full64,
-    use_tqdm=True,
-    progress_update_every=50,
-    stats: RunStats | None = None,
-    diag_dims=None,
-    Rproj=None,
-):
-    """Run HMC chains with window adaptation and online LLC evaluation"""
-    chains = init_thetas.shape[0]
-    kept_all, means, vars_, ns, accs, L_histories, energies = [], [], [], [], [], [], []
-
-    def tiny_store(vec: np.ndarray):
-        return default_tiny_store(vec, diag_dims, Rproj)
-
-    for c in range(chains):
-        ck = jax.random.fold_in(key, c)
-        # Work accounting
-        work_bump = (
-            (
-                lambda n_grads=1: setattr(
-                    stats, "n_hmc_leapfrog_grads", stats.n_hmc_leapfrog_grads + n_grads
-                )
-            )
-            if stats
-            else None
-        )
-
-        # Time the sampling
-        t0 = time.time()
-        res = run_hmc_chain(
-            rng_key=ck,
-            init_theta=init_thetas[c],
-            logpost_and_grad=logpost_and_grad,
-            draws=num_draws,
-            warmup=warmup_draws,
-            L=L,
-            eval_every=eval_every,
-            thin=thin,
-            Ln_eval_f64=Ln_full64,
-            tiny_store_fn=tiny_store,
-            use_tqdm=use_tqdm,
-            progress_label=f"HMC(c{c})",
-            progress_update_every=progress_update_every,
-            work_bump=work_bump,
-        )
-        # Accumulate sampling time (subtract eval time)
-        elapsed = time.time() - t0
-        if stats and hasattr(res, "eval_time_seconds"):
-            stats.t_hmc_sampling += max(0.0, elapsed - res.eval_time_seconds)
-
-        kept_all.append(res.kept)
-        means.append(res.mean_L)
-        vars_.append(res.var_L)
-        ns.append(res.n_L)
-        L_histories.append(res.L_hist)
-        # Extract acceptance rates from extras
-        if "accept" in res.extras:
-            accs.append(np.asarray(res.extras["accept"]))
-        else:
-            accs.append(np.asarray([]))
-        # Extract energies from extras
-        if "energy" in res.extras:
-            energies.append(np.asarray(res.extras["energy"]))
-        else:
-            energies.append(np.asarray([]))
-        if stats:
-            stats.n_hmc_full_loss += int(res.n_L)
-            # Extract warmup timing and work from extras
-            if "warmup_time" in res.extras:
-                stats.t_hmc_warmup += float(res.extras["warmup_time"][0])
-            if "warmup_grads" in res.extras:
-                stats.n_hmc_warmup_leapfrog_grads += int(res.extras["warmup_grads"][0])
-
-    S = stack_ragged_2d(kept_all)
-    samples_thin = S if S is not None else None
-
-    # Build timings dict
-    timings = {}
-    if stats:
-        timings["warmup"] = float(stats.t_hmc_warmup)
-        timings["sampling"] = float(stats.t_hmc_sampling)
-
-    # Build work dict
-    work = {}
-    if stats:
-        work["n_leapfrog_grads"] = int(stats.n_hmc_leapfrog_grads)
-        work["n_full_loss"] = int(stats.n_hmc_full_loss)
-        work["n_warmup_leapfrog_grads"] = int(stats.n_hmc_warmup_leapfrog_grads)
-
-    return SamplerResult(
-        Ln_histories=[np.asarray(h, dtype=float) for h in L_histories],
-        theta_thin=samples_thin,
-        acceptance=[np.asarray(a, dtype=float) for a in accs],
-        energy=[np.asarray(e, dtype=float) for e in energies],
-        timings=timings,
-        work=work,
-    )
 
 
-def run_mclmc_online(
-    key,
-    init_thetas,
-    logdensity_fn,
-    num_draws,
-    eval_every,
-    thin,
-    Ln_full64,
-    tuner_steps=2000,
-    diagonal_preconditioning=False,
-    desired_energy_var=5e-4,
-    integrator_name="isokinetic_mclachlan",
-    use_tqdm=True,
-    progress_update_every=50,
-    stats: RunStats | None = None,
-    diag_dims=None,
-    Rproj=None,
-):
-    """Run MCLMC chains with auto-tuning and online LLC evaluation"""
-    chains = init_thetas.shape[0]
-    kept_all, means, vars_, ns, energy_deltas, L_histories = [], [], [], [], [], []
-
-    def tiny_store(vec: np.ndarray):
-        return default_tiny_store(vec, diag_dims, Rproj)
-
-    for c in range(chains):
-        ck = jax.random.fold_in(key, c)
-        # Work accounting
-        work_bump = (
-            (
-                lambda n_steps=1: setattr(
-                    stats, "n_mclmc_steps", stats.n_mclmc_steps + n_steps
-                )
-            )
-            if stats
-            else None
-        )
-
-        # Time the sampling
-        t0 = time.time()
-        res = run_mclmc_chain(
-            rng_key=ck,
-            init_theta=init_thetas[c],
-            logdensity_fn=logdensity_fn,
-            draws=num_draws,
-            eval_every=eval_every,
-            thin=thin,
-            Ln_eval_f64=Ln_full64,
-            tuner_steps=tuner_steps,
-            diagonal_preconditioning=diagonal_preconditioning,
-            desired_energy_var=desired_energy_var,
-            integrator_name=integrator_name,
-            tiny_store_fn=tiny_store,
-            use_tqdm=use_tqdm,
-            progress_label=f"MCLMC(c{c})",
-            progress_update_every=progress_update_every,
-            work_bump=work_bump,
-        )
-        # Accumulate sampling time (subtract eval time)
-        elapsed = time.time() - t0
-        if stats and hasattr(res, "eval_time_seconds"):
-            net_time = max(0.0, elapsed - res.eval_time_seconds)
-            # naive split: attribute (tuner_steps/(tuner_steps+num_draws)) to warmup
-            total_steps = tuner_steps + num_draws
-            frac = float(tuner_steps) / float(max(1, total_steps))
-            stats.t_mclmc_warmup += frac * net_time
-            stats.t_mclmc_sampling += (1.0 - frac) * net_time
-
-        kept_all.append(res.kept)
-        means.append(res.mean_L)
-        vars_.append(res.var_L)
-        ns.append(res.n_L)
-        L_histories.append(res.L_hist)
-        # Extract energy deltas from extras
-        if "energy" in res.extras:
-            energy_deltas.append(np.asarray(res.extras["energy"]))
-        else:
-            energy_deltas.append(np.asarray([]))
-        if stats:
-            stats.n_mclmc_full_loss += int(res.n_L)
-
-    S = stack_ragged_2d(kept_all)
-    samples_thin = S if S is not None else None
-
-    # Build timings dict
-    timings = {}
-    if stats:
-        timings["warmup"] = float(stats.t_mclmc_warmup)
-        timings["sampling"] = float(stats.t_mclmc_sampling)
-
-    # Build work dict
-    work = {}
-    if stats:
-        work["n_steps"] = int(stats.n_mclmc_steps)
-        work["n_full_loss"] = int(stats.n_mclmc_full_loss)
-
-    return SamplerResult(
-        Ln_histories=[np.asarray(h, dtype=float) for h in L_histories],
-        theta_thin=samples_thin,
-        acceptance=None,  # MCLMC doesn't have acceptance rates
-        energy=[
-            np.asarray(e, dtype=float) for e in energy_deltas
-        ],  # MCLMC has energy changes
-        timings=timings,
-        work=work,
-    )
 
 
-def run_sampler(sampler_name: str, sampler_cfg, **shared_kwargs):
-    """Unified sampler dispatcher"""
-    if sampler_name == "sgld":
-        return run_sgld_online(**sampler_cfg, **shared_kwargs)
-    elif sampler_name == "hmc":
-        return run_hmc_online_with_adaptation(**sampler_cfg, **shared_kwargs)
-    elif sampler_name == "mclmc":
-        return run_mclmc_online(**sampler_cfg, **shared_kwargs)
-    else:
-        raise ValueError(f"Unknown sampler: {sampler_name}")
 
 
 # ---------- Batched (fast) versions of the above runners ----------
@@ -425,6 +93,8 @@ def run_sgld_online_batched(
         def tiny_store(vec_batch):
             return jax.vmap(lambda v: Rproj @ v)(vec_batch)
 
+    # Time the adapter call
+    t0 = time.perf_counter()
     result = run_sgld_chains_batched(
         rng_key=key,
         init_thetas=init_thetas,
@@ -446,6 +116,19 @@ def run_sgld_online_batched(
         eps=eps,
         bias_correction=bias_correction,
     )
+    total_time = time.perf_counter() - t0
+
+    # Estimate and subtract eval time
+    C, M = result.L_hist.shape  # chains, eval points
+    # Micro-benchmark a single vmapped eval
+    Ln_vmapped = jax.jit(jax.vmap(Ln_full64))
+    dummy_theta = init_thetas  # (C, d)
+    t_eval_start = time.perf_counter()
+    _ = Ln_vmapped(dummy_theta).block_until_ready()
+    t_eval_per_call = time.perf_counter() - t_eval_start
+
+    eval_time_est = t_eval_per_call * M
+    sampling_time = max(0.0, total_time - result.warmup_time_seconds - eval_time_est)
 
     # Convert back to the expected format
     kept_stacked = np.asarray(result.kept)  # (C, K, k)
@@ -454,13 +137,26 @@ def run_sgld_online_batched(
     ns = np.asarray(result.n_L)  # (C,)
     L_histories = [np.asarray(result.L_hist[c]) for c in range(result.L_hist.shape[0])]
 
+    # Build timing and work dictionaries
+    timings = {
+        "warmup": float(result.warmup_time_seconds),
+        "sampling": float(sampling_time),
+    }
+
+    # SGLD work computation
+    chains = init_thetas.shape[0]
+    work = {
+        "n_minibatch_grads": int(chains * num_steps),
+        "n_full_loss": int(chains * M),
+    }
+
     return SamplerResult(
         Ln_histories=L_histories,
         theta_thin=kept_stacked,
         acceptance=None,
         energy=None,
-        timings={},  # Batched version doesn't track timing details
-        work={},  # Batched version doesn't track work details
+        timings=timings,
+        work=work,
     )
 
 
@@ -492,6 +188,8 @@ def run_hmc_online_batched(
         def tiny_store(vec_batch):
             return jax.vmap(lambda v: Rproj @ v)(vec_batch)
 
+    # Time the adapter call
+    t0 = time.perf_counter()
     result = run_hmc_chains_batched(
         rng_key=key,
         init_thetas=init_thetas,
@@ -504,6 +202,19 @@ def run_hmc_online_batched(
         Ln_eval_f64=Ln_full64,
         tiny_store_fn=tiny_store,
     )
+    total_time = time.perf_counter() - t0
+
+    # Estimate and subtract eval time
+    C, M = result.L_hist.shape  # chains, eval points
+    # Micro-benchmark a single vmapped eval
+    Ln_vmapped = jax.jit(jax.vmap(Ln_full64))
+    dummy_theta = init_thetas  # (C, d)
+    t_eval_start = time.perf_counter()
+    _ = Ln_vmapped(dummy_theta).block_until_ready()
+    t_eval_per_call = time.perf_counter() - t_eval_start
+
+    eval_time_est = t_eval_per_call * M
+    sampling_time = max(0.0, total_time - result.warmup_time_seconds - eval_time_est)
 
     # Convert back to expected format
     kept_stacked = np.asarray(result.kept)  # (C, K, k)
@@ -516,13 +227,27 @@ def run_hmc_online_batched(
     energy_list = [np.asarray(energy[c]) for c in range(energy.shape[0])]
     L_histories = [np.asarray(result.L_hist[c]) for c in range(result.L_hist.shape[0])]
 
+    # Build timing and work dictionaries
+    timings = {
+        "warmup": float(result.warmup_time_seconds),
+        "sampling": float(sampling_time),
+    }
+
+    # HMC work computation
+    chains = init_thetas.shape[0]
+    work = {
+        "n_leapfrog_grads": int(chains * draws * (L + 1)),
+        "n_full_loss": int(chains * M),
+        "n_warmup_leapfrog_grads": int(result.warmup_grads),
+    }
+
     return SamplerResult(
         Ln_histories=L_histories,
         theta_thin=kept_stacked,
         acceptance=acc_list,
         energy=energy_list,
-        timings={},  # Batched version doesn't track timing details
-        work={},  # Batched version doesn't track work details
+        timings=timings,
+        work=work,
     )
 
 
@@ -556,6 +281,8 @@ def run_mclmc_online_batched(
         def tiny_store(vec_batch):
             return jax.vmap(lambda v: Rproj @ v)(vec_batch)
 
+    # Time the adapter call
+    t0 = time.perf_counter()
     result = run_mclmc_chains_batched(
         rng_key=key,
         init_thetas=init_thetas,
@@ -570,6 +297,19 @@ def run_mclmc_online_batched(
         integrator_name=integrator_name,
         tiny_store_fn=tiny_store,
     )
+    total_time = time.perf_counter() - t0
+
+    # Estimate and subtract eval time
+    C, M = result.L_hist.shape  # chains, eval points
+    # Micro-benchmark a single vmapped eval
+    Ln_vmapped = jax.jit(jax.vmap(Ln_full64))
+    dummy_theta = init_thetas  # (C, d)
+    t_eval_start = time.perf_counter()
+    _ = Ln_vmapped(dummy_theta).block_until_ready()
+    t_eval_per_call = time.perf_counter() - t_eval_start
+
+    eval_time_est = t_eval_per_call * M
+    sampling_time = max(0.0, total_time - result.warmup_time_seconds - eval_time_est)
 
     # Convert back to expected format
     kept_stacked = np.asarray(result.kept)  # (C, K, k)
@@ -580,11 +320,24 @@ def run_mclmc_online_batched(
     dE_list = [np.asarray(dE[c]) for c in range(dE.shape[0])]
     L_histories = [np.asarray(result.L_hist[c]) for c in range(result.L_hist.shape[0])]
 
+    # Build timing and work dictionaries
+    timings = {
+        "warmup": float(result.warmup_time_seconds),
+        "sampling": float(sampling_time),
+    }
+
+    # MCLMC work computation
+    chains = init_thetas.shape[0]
+    work = {
+        "n_steps": int(chains * draws),
+        "n_full_loss": int(chains * M),
+    }
+
     return SamplerResult(
         Ln_histories=L_histories,
         theta_thin=kept_stacked,
         acceptance=None,  # MCLMC doesn't have acceptance rates
         energy=dE_list,  # MCLMC has energy changes
-        timings={},  # Batched version doesn't track timing details
-        work={},  # Batched version doesn't track work details
+        timings=timings,
+        work=work,
     )

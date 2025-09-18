@@ -1,4 +1,9 @@
 # llc/samplers/base.py
+"""
+Batched-only driver. `BatchedResult` carries small warmup/tuner scalars so runners can produce
+WNV and FDE without per-step hooks.
+"""
+
 from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable, Any, Optional, Dict, List, Tuple
@@ -35,6 +40,8 @@ class BatchedResult:
     var_L: Array  # (C,) running var over eval points (Welford)
     n_L: Array  # (C,) count of eval points
     eval_time_seconds: float  # fill on host if you want, else 0.0
+    warmup_time_seconds: float = 0.0  # time spent in warmup/tuning
+    warmup_grads: int = 0  # gradient evaluations in warmup
 
 
 @dataclass
@@ -142,136 +149,6 @@ def default_tiny_store(
     if Rproj is not None:
         return Rproj @ vec
     return None
-
-
-def drive_chain(
-    *,
-    rng_key: Array,
-    init_state: Any,
-    step_fn: Callable[[Array, Any], Tuple[Any, Any] | Any],
-    # If step_fn returns only `state` (SGLD 1.2.5), set `step_returns_info=False`
-    step_returns_info: bool,
-    n_steps: int,
-    warmup: int = 0,
-    eval_every: int = 1,
-    thin: int = 1,
-    # State accessors
-    position_fn: Callable[[Any], Array],
-    # L_n evaluator (float64): Array[dim] -> scalar
-    Ln_eval_f64: Callable[[Array], Array],
-    # Tiny storage (subset/projection)
-    tiny_store_fn: Callable[[np.ndarray], Optional[np.ndarray]] = default_tiny_store,
-    # Progress & timing callbacks
-    use_tqdm: bool = True,
-    progress_label: str = "",
-    progress_update_every: int = 50,
-    # Hooks: called every step after step_fn
-    info_hooks: List[Callable[[Any, Dict[str, Any]], None]] | None = None,
-) -> ChainResult:
-    """
-    Generic single-chain driver:
-      - runs warmup + sampling,
-      - periodically evaluates full-data L_n for LLC,
-      - stores thinned tiny θ for diagnostics,
-      - records sampler-specific extras via hooks.
-    """
-    info_hooks = info_hooks or []
-    rm = RunningMeanVar()
-    kept: List[np.ndarray] = []
-    Lhist: List[float] = []
-    extras_acc: Dict[str, List[float]] = {}  # e.g., {"accept": [...], "energy": [...]}
-    eval_time = 0.0
-
-    # warmup boundary handled by `t == warmup`
-    keys = jax.random.split(rng_key, n_steps)
-    state = init_state
-
-    # Prime extras dict for known keys lazily
-    def put_extra(name: str, value: float):
-        if name not in extras_acc:
-            extras_acc[name] = []
-        extras_acc[name].append(float(value))
-
-    rng = range(n_steps)
-    pbar = (
-        tqdm(rng, total=n_steps, desc=progress_label, leave=False) if use_tqdm else rng
-    )
-
-    # Helper: record Ln and tiny θ after warmup only
-    def record_if_needed(t: int):
-        nonlocal eval_time
-        if t < warmup:
-            return
-        # L_n
-        if ((t - warmup) % eval_every) == 0:
-            t0 = time.time()
-            Ln = float(
-                jax.device_get(Ln_eval_f64(position_fn(state).astype(jnp.float64)))
-            )
-            eval_time += time.time() - t0
-            rm.update(Ln)
-            Lhist.append(Ln)
-        # tiny θ
-        if ((t - warmup) % thin) == 0:
-            vec = np.array(position_fn(state))
-            s = tiny_store_fn(vec)
-            if s is not None:
-                kept.append(s)
-
-    # First step
-    out = step_fn(keys[0], state)
-    if step_returns_info:
-        state, info = out
-    else:
-        state, info = out, None
-    record_if_needed(0)
-    # Hooks
-    if info is not None:
-        ctx = {"put_extra": put_extra}
-        for h in info_hooks:
-            h(info, ctx)
-    if use_tqdm:
-        meanL = rm.value()[0] if rm.n > 0 else float("nan")
-        pbar.set_postfix_str(f"L̄≈{meanL:.4f}")
-        pbar.update(1)
-
-    # Remaining steps
-    for t in range(1, n_steps):
-        out = step_fn(keys[t], state)
-        if step_returns_info:
-            state, info = out
-        else:
-            state, info = out, None
-        record_if_needed(t)
-        if info is not None:
-            ctx = {"put_extra": put_extra}
-            for h in info_hooks:
-                h(info, ctx)
-        if use_tqdm and (t % progress_update_every == 0 or t == n_steps - 1):
-            meanL = rm.value()[0] if rm.n > 0 else float("nan")
-            pbar.set_postfix_str(f"L̄≈{meanL:.4f}")
-        if use_tqdm:
-            pbar.update(1)
-
-    if use_tqdm and hasattr(pbar, "close"):
-        pbar.close()
-
-    m, v, n = rm.value()
-    # Build extras dict -> arrays
-    extras: Dict[str, np.ndarray] = {k: np.asarray(v) for k, v in extras_acc.items()}
-
-    # Shape for empty kept tensor
-    kdim = kept[0].shape[-1] if kept else 0
-    kept_arr = np.stack(kept, 0) if kept else np.empty((0, kdim))
-    return ChainResult(
-        kept=kept_arr,
-        L_hist=np.asarray(Lhist),
-        extras=extras,
-        mean_L=m,
-        var_L=v,
-        n_L=n,
-        eval_time_seconds=float(eval_time),
-    )
 
 
 def select_diag_dims(dim, k, seed):

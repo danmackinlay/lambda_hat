@@ -1,4 +1,8 @@
 # llc/tasks.py
+"""
+Experiment task runner. All execution paths now use batched samplers exclusively.
+Safe for pickling and cluster/cloud execution.
+"""
 from __future__ import annotations
 from typing import Dict, Any
 
