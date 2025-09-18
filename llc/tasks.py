@@ -9,8 +9,8 @@ def run_experiment_task(cfg_dict: Dict[str, Any]) -> Dict[str, Any]:
     Run one experiment config and return a small, JSON-serializable result.
     Safe to pickle (top-level def) and safe to import on cluster/cloud.
 
-    If cfg_dict contains 'save_artifacts': True, will generate full artifact pipeline
-    and return run_dir path for artifact retrieval.
+    Always delegates to pipeline.run_one with save_artifacts controlling I/O.
+    Returns uniform shape with cfg, run_dir, and llc_{sampler} values.
     """
     from dataclasses import fields
     from llc.config import Config, config_schema_hash
@@ -41,47 +41,16 @@ def run_experiment_task(cfg_dict: Dict[str, Any]) -> Dict[str, Any]:
 
     cfg = Config(**cfg_kwargs)
 
-    if save_artifacts:
-        # Use the unified pipeline for full artifact generation
-        from llc.pipeline import run_one
+    # Single path: pipeline is source of truth. save_artifacts governs I/O.
+    out = run_one(cfg, save_artifacts=save_artifacts, skip_if_exists=skip_if_exists)
 
-        out = run_one(cfg, save_artifacts=True, skip_if_exists=skip_if_exists)
-
-        # Keep return shape backwards-compatible with existing callers
-        result = {
-            "cfg": cfg_dict,
-            "run_dir": out.run_dir,
-        }
-
-        # Add individual sampler results for backwards compatibility
-        for s in ("sgld", "hmc", "mclmc"):
-            if f"{s}_llc_mean" in out.metrics:
-                result[f"llc_{s}"] = float(out.metrics[f"{s}_llc_mean"])
-
-        return result
-
-    else:
-        # Original lightweight mode - just run experiment function
-        try:
-            result = run_one(cfg, save_artifacts=False, skip_if_exists=skip_if_exists)
-            # Extract LLC values from metrics
-            llc_sgld = result.metrics.get("sgld_llc_mean", float("nan"))
-            llc_hmc = result.metrics.get("hmc_llc_mean", float("nan"))
-            return {
-                "cfg": cfg_dict,
-                "llc_sgld": float(llc_sgld),
-                "llc_hmc": float(llc_hmc),
-            }
-        except ValueError as e:
-            # Handle cases where sampling doesn't produce enough samples
-            if "min() arg is an empty sequence" in str(
-                e
-            ) or "too many values to unpack" in str(e):
-                return {
-                    "cfg": cfg_dict,
-                    "llc_sgld": float("nan"),
-                    "llc_hmc": float("nan"),
-                    "error": str(e),
-                }
-            else:
-                raise
+    # Uniform, JSON-serializable result shape.
+    result: Dict[str, Any] = {
+        "cfg": cfg_dict,
+        "run_dir": out.run_dir or "",
+    }
+    for s in ("sgld", "hmc", "mclmc"):
+        k = f"{s}_llc_mean"
+        if k in out.metrics:
+            result[f"llc_{s}"] = float(out.metrics[k])
+    return result
