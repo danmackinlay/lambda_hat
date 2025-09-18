@@ -132,60 +132,8 @@ def save_summary_csv(run_dir: str, summary_df: pd.DataFrame) -> str:
     return csv_path
 
 
-def create_manifest(
-    run_dir: str, cfg, metrics: Dict[str, Any], files: List[str]
-) -> str:
-    """Create a manifest file describing the run"""
-    # Determine which samplers actually ran based on metrics
-    samplers_run = [s for s in ("sgld", "hmc", "mclmc") if f"{s}_llc_mean" in metrics]
-
-    manifest = {
-        "timestamp": datetime.now().isoformat(),
-        "config_summary": {
-            "samplers": samplers_run,
-            "n_data": cfg.n_data,
-            "chains": cfg.chains,
-            "loss": cfg.loss,
-            "ess_method": "bulk",  # hardcoded constant
-        },
-        "results": {
-            sampler: {
-                "llc_mean": metrics.get(f"{sampler}_llc_mean", None),
-                "llc_se": metrics.get(f"{sampler}_llc_se", None),
-                "ess": metrics.get(f"{sampler}_ess", None),
-                "wnv_time": metrics.get(f"{sampler}_wnv_time", None),
-                "wnv_fde": metrics.get(f"{sampler}_wnv_fde", None),
-            }
-            for sampler in samplers_run
-        },
-        "artifacts": {
-            "plots": [f for f in files if f.endswith(".png")],
-            "data": [f for f in files if f.endswith((".nc", ".json", ".csv"))],
-            "gallery": "index.html",
-        },
-        "notes": {
-            "gradient_work_definition": "SGLD: minibatch gradients, HMC: leapfrog steps, MCLMC: integration steps",
-            "llc_scale_caveat": f"LLC computed with respect to {getattr(cfg, 'loss', 'unknown')} energy; for SLT-compatible LLC use proper NLL",
-            "eval_density": {
-                s: getattr(cfg, f"{s}_eval_every", "N/A")
-                if hasattr(cfg, f"{s}_eval_every")
-                else (
-                    cfg.get(f"{s}_eval_every", "N/A")
-                    if isinstance(cfg, dict)
-                    else "N/A"
-                )
-                for s in samplers_run
-            },
-        },
-    }
-
-    from llc.manifest import write_manifest_atomic
-    from pathlib import Path
-
-    manifest_path = Path(run_dir) / "manifest.json"
-    write_manifest_atomic(manifest_path, manifest)
-
-    return manifest_path
+# NOTE: create_manifest has been removed - use generate_gallery_html instead
+# The HTML gallery provides a lightweight preview without manifest machinery
 
 
 def generate_gallery_html(run_dir: str, cfg, metrics: Dict[str, Any]) -> str:

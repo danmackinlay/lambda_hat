@@ -43,7 +43,6 @@ from .artifacts import (
     save_L0,
     save_config,
     save_metrics,
-    create_manifest,
     generate_gallery_html,
 )
 from datetime import datetime
@@ -589,44 +588,9 @@ def run_one(
             if "idata_mclmc" in locals():
                 generate_diagnostics(idata_mclmc, "mclmc", run_dir)
 
-        # Create manifest
-        from pathlib import Path
-
-        pngs = [p.name for p in Path(run_dir).glob("*.png")]
-        artifact_files = [
-            "config.json",
-            "metrics.json",
-            "L0.txt",
-            "sgld_L.nc",
-            "hmc_L.nc",
-            "mclmc_L.nc",
-            "sgld_theta.nc",
-            "hmc_theta.nc",
-            "mclmc_theta.nc",
-            *pngs,
-        ]
-        create_manifest(run_dir, cfg, all_metrics, artifact_files)
-
-        # Generate HTML gallery
+        # Generate lightweight HTML preview (no manifest)
         gallery_path = generate_gallery_html(run_dir, cfg, all_metrics)
-        print(f"HTML gallery: {gallery_path}")
-
-        # Create convenience timestamp symlink in artifacts/ for completed runs
-        try:
-            from llc.manifest import create_timestamp_symlink
-
-            ts = datetime.now().strftime("%Y%m%d-%H%M%S")
-            # Determine artifacts directory from run_dir
-            if "/runs/" in run_dir:
-                artifacts_dir = Path(run_dir).parent.parent / "artifacts"
-            else:
-                artifacts_dir = Path(cfg.artifacts_dir)
-            artifacts_dir.mkdir(exist_ok=True)
-            create_timestamp_symlink(artifacts_dir, ts, rid)
-            print(f"Created timestamp symlink: {ts} -> runs/{rid}")
-        except Exception as e:
-            logger.warning(f"Could not create timestamp symlink: {e}")
-
+        print(f"HTML preview: {gallery_path}")
         print(f"Artifacts saved to: {run_dir}")
 
     return RunOutputs(

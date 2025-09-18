@@ -159,5 +159,22 @@ def plot_sweep_cmd(csv_path, out_dir, size_col, samplers, filters, logx, overwri
     )
 
 
+@cli.command("preview")
+@click.argument("run_dir", type=click.Path(exists=True, file_okay=False))
+def preview_cmd(run_dir):
+    """(Re)generate the HTML preview for a run directory."""
+    import json
+    import os
+    from llc.config import Config
+    from llc.artifacts import generate_gallery_html
+
+    cfg_path = os.path.join(run_dir, "config.json")
+    metrics_path = os.path.join(run_dir, "metrics.json")
+    cfg = Config(**json.load(open(cfg_path))) if os.path.exists(cfg_path) else Config()
+    metrics = json.load(open(metrics_path)) if os.path.exists(metrics_path) else {}
+    path = generate_gallery_html(run_dir, cfg, metrics)
+    print(f"HTML preview: {path}")
+
+
 if __name__ == "__main__":
     cli()

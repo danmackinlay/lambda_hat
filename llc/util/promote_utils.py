@@ -73,27 +73,22 @@ def latest_run_dir(root_dir: Path, selection: List[Tuple[str, str]] = None) -> P
 
     runs_dir = root_dir / "runs"
 
-    # Import here to avoid circular dependencies
-    from llc.manifest import is_run_completed, get_run_start_time
-
     candidates = []
     for run_dir in runs_dir.iterdir():
         if not run_dir.is_dir():
             continue
 
-        # Only consider completed runs
-        if not is_run_completed(run_dir):
+        # Consider a run completed if it has metrics.json
+        if not (run_dir / "metrics.json").exists():
             continue
 
-        # Get start time for sorting
-        start_time = get_run_start_time(run_dir)
-        if start_time is None:
-            start_time = run_dir.stat().st_mtime  # fallback to dir mtime
+        # Sort by modification time of metrics.json (indicates completion time)
+        start_time = (run_dir / "metrics.json").stat().st_mtime
 
         candidates.append((start_time, run_dir))
 
     if not candidates:
-        raise RuntimeError("No completed runs found in runs/")
+        raise RuntimeError("No completed runs found in runs/ (looking for metrics.json)")
 
     candidates.sort(key=lambda t: t[0])
     return candidates[-1][1]
