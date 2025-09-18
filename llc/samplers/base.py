@@ -7,13 +7,11 @@ WNV and FDE without per-step hooks.
 from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable, Any, Optional, Dict, List, Tuple
-import time
 
 import jax
 import jax.numpy as jnp
 from jax import lax
 import numpy as np
-from tqdm.auto import tqdm
 
 Array = jnp.ndarray
 

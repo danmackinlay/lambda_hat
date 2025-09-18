@@ -27,7 +27,9 @@ def cli(verbose: bool):
     """LLC command-line interface (Click)."""
     # Configure JAX and matplotlib environment for CLI usage
     os.environ.setdefault("JAX_ENABLE_X64", "true")
-    os.environ.setdefault("MPLBACKEND", "Agg")  # headless backend for server environments
+    os.environ.setdefault(
+        "MPLBACKEND", "Agg"
+    )  # headless backend for server environments
 
     logging.basicConfig(
         level=logging.DEBUG if verbose else logging.INFO,

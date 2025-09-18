@@ -1,4 +1,4 @@
-"""Modal artifact utilities for CLI."""
+"""Modal run utilities for CLI."""
 
 import io
 import os
@@ -6,8 +6,8 @@ import tarfile
 from pathlib import Path
 
 
-def extract_modal_artifacts_locally(result_dict: dict) -> None:
-    """Download and extract artifact tarball to ./runs/<run_id> if present."""
+def extract_modal_runs_locally(result_dict: dict) -> None:
+    """Download and extract run tarball to ./runs/<run_id> if present."""
     if result_dict.get("artifact_tar") and result_dict.get("run_id"):
         rid = result_dict["run_id"]
         dest_root = "runs"
@@ -24,11 +24,11 @@ def extract_modal_artifacts_locally(result_dict: dict) -> None:
             fileobj=io.BytesIO(result_dict["artifact_tar"]), mode="r:gz"
         ) as tf:
             tf.extractall(dest_root)
-        print(f"Artifacts downloaded and extracted to: {dest}")
+        print(f"Run downloaded and extracted to: {dest}")
         result_dict["run_dir"] = dest
 
 
-def pull_and_extract_artifacts(run_id: str = None, target: str = "runs") -> str:
+def pull_and_extract_runs(run_id: str = None, target: str = "runs") -> str:
     """Pull runs from Modal using SDK and extract locally."""
     import modal
 

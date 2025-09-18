@@ -6,7 +6,7 @@ from dataclasses import replace
 
 from llc.config import CFG, config_schema_hash
 from llc.util.config_overrides import apply_preset_then_overrides
-from llc.util.modal_utils import extract_modal_artifacts_locally
+from llc.util.modal_utils import extract_modal_runs_locally
 
 
 def sweep_entry(kwargs: dict) -> None:
@@ -92,7 +92,7 @@ def sweep_entry(kwargs: dict) -> None:
         os.makedirs("artifacts", exist_ok=True)
         for r in results:
             try:
-                extract_modal_artifacts_locally(r)
+                extract_modal_runs_locally(r)
             except Exception as e:
                 print(f"Warning: failed to extract artifacts for a job: {e}")
 

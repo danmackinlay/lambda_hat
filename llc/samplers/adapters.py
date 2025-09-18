@@ -4,17 +4,15 @@ Batched adapters only. Single-chain adapters were removed. Each adapter times it
 warmup/tuning and sets `BatchedResult.warmup_time_seconds`/`warmup_grads`. No per-step
 Python hooks; all diagnostics flow via `extras` and `L_hist`.
 """
+
 from __future__ import annotations
-from typing import Callable
 import time
 
 import jax
 import jax.numpy as jnp
-import numpy as np
 import blackjax
 
 from .base import (
-    default_tiny_store,
     drive_chains_batched,
     BatchedResult,
 )
@@ -22,7 +20,6 @@ from .base import (
 Array = jnp.ndarray
 
 # ---------- SGLD (BlackJAX 1.2.5 returns new_position only) ----------
-
 
 
 def run_sgld_chains_batched(

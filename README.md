@@ -173,10 +173,9 @@ The system includes comprehensive visualization saving capabilities for systemat
 
 ### Automatic Run Organization
 
-- **Timestamped Directories**: Each run creates `artifacts/YYYYMMDD-HHMMSS/` directories
-- **Deterministic Naming**: Plots use consistent `<sampler>_<plotname>.png` format
-- **Run Manifest**: `manifest.txt` contains complete configuration and runtime statistics
-- **Documentation**: `README_snippet.md` provides formatted run summaries
+- **Deterministic Directories**: Each run creates `runs/<run_id>/` directories with hash-based IDs
+- **Consistent Naming**: Plots use consistent `<sampler>_<plotname>.png` format
+- **Complete Metadata**: `config.json` and `metrics.json` contain configuration and statistics
 
 ### Saved Diagnostic Plots
 
@@ -199,7 +198,7 @@ Additional sampler-specific plots:
 Control visualization and artifact saving via CLI flags:
 
 ```bash
-# Save artifacts with plots (default behavior)
+# Save runs with plots (default behavior)
 uv run python -m llc run --preset=quick
 
 # Run without saving plots (faster)
@@ -218,7 +217,7 @@ Below are copy-paste commands for typical workflows:
 # Fastest smoke test (no plots)
 uv run python -m llc run --preset=quick --no-save-plots
 
-# Quick with artifacts (plots, NetCDF, manifest, gallery)
+# Quick with full run data (plots and NetCDF files)
 uv run python -m llc run --preset=quick
 ```
 
@@ -261,8 +260,8 @@ uv run python -m llc sweep --backend=submitit  # add your submitit params if nee
 
 #### Development utilities
 ```bash
-# Clean generated artifacts
-rm -rf artifacts/* llc_sweep_results.csv __pycache__ *.pyc
+# Clean generated runs
+rm -rf runs/* llc_sweep_results.csv __pycache__ *.pyc
 
 # Promote plots for README
 uv run llc promote-readme-images
@@ -292,8 +291,8 @@ git commit -m "refresh README examples"
 
 Notes:
 
-* The Modal volume name is `llc-artifacts` (see Makefile targets `modal-ls`, `modal-get`).
-* The pipeline writes artifacts under `artifacts/<run_id>` locally, and `/artifacts/<run_id>` on Modal; the README promoter already selects the **latest** local run automatically.
+* The Modal volume name is `llc-runs`.
+* The pipeline writes runs under `runs/<run_id>` locally, and `/runs/<run_id>` on Modal; the README promoter selects the **latest** local run automatically.
 * Use `--no-skip` if you need to force recompute; by default identical config+code uses the cached run (see the caching logic driven by `run_id(cfg)` in `llc/cache.py`).
 
 
@@ -339,10 +338,10 @@ uv run python -m llc analyze runs/<run_id> --which=hmc --plots=running_llc,rank,
 # Generate figures in custom directory
 uv run python -m llc analyze runs/<run_id> --out=figures/ --overwrite
 
-uv run python -m llc analyze artifacts/<RUN_ID> \
+uv run python -m llc analyze runs/<RUN_ID> \
   --which all \
   --plots running_llc,rank,ess_evolution,ess_quantile,autocorr,energy,theta \
-  --out artifacts/<RUN_ID> \
+  --out runs/<RUN_ID> \
   --overwrite
 ```
 
@@ -397,7 +396,8 @@ uv run python -m llc sweep --backend=submitit \
 uv run python -m llc sweep --backend=modal
 ```
 
-Artifacts are saved by default and automatically downloaded to `./artifacts/<run_id>/` as each job completes. Use `--no-artifacts` to disable saving.
+Runs are saved by default and automatically downloaded to `./runs/<run_id>/` as each job completes.
+Use `--no-artifacts` to disable saving.
 
 ### Modal workflow
 
@@ -405,12 +405,12 @@ We use **object-based Modal function imports** for execution.
 The local client imports `run_experiment_remote` from `modal_app.py`, which auto-deploys current code.
 
 **Note:** We install Modal via `uv`. Run Modal CLI commands as `uv run modal ...`
-(e.g., `uv run modal volume ls llc-artifacts`).
+(e.g., `uv run modal volume ls llc-runs`).
 
 **One-time setup**
 ```bash
-uv run modal token new                      # authenticate
-uv run modal volume create llc-artifacts    # optional; code can create it on first run
+uv run modal token new                   # authenticate
+uv run modal volume create llc-runs      # optional; code can create it on first run
 ```
 
 `modal_app.py` defines resources/timeouts/volumes on the decorator:
@@ -420,7 +420,7 @@ app = modal.App("llc-experiments", image=image)
 
 @app.function(
     timeout=3*60*60,  # generous 3 hours
-    volumes={"/artifacts": artifacts_volume},
+    volumes={"/runs": runs_volume},
     retries=modal.Retries(max_retries=3, backoff_coefficient=2.0, initial_delay=10.0)
 )
 def run_experiment_remote(cfg_dict: dict) -> dict:
@@ -433,24 +433,24 @@ def run_experiment_remote(cfg_dict: dict) -> dict:
 uv run python -m llc sweep --backend=modal
 ```
 
-The client imports `run_experiment_remote` from `modal_app.py` and calls `.map(...)`. Modal auto-deploys the current code. Artifacts are saved to the **Modal volume** mounted at `/artifacts` in the app.
+The client imports `run_experiment_remote` from `modal_app.py` and calls `.map(...)`. Modal auto-deploys the current code. Runs are saved to the **Modal volume** mounted at `/runs` in the app.
 
 **Tear down / clean up**
 
 * Remove old run folders from the volume (optional housekeeping):
-  `uv run modal volume rm llc-artifacts /artifacts/<run-id>`
+  `uv run modal volume rm llc-runs /runs/<run-id>`
 * Stop the app (rare): `uv run modal app stop llc-experiments`
 
-#### Modal artifacts
+#### Modal runs
 
-**Automatic download**: When you run `main.py run/sweep --backend=modal`, artifacts are automatically downloaded to `./artifacts/<run_id>/` as each job completes. No separate pull step needed!
+**Automatic download**: When you run `llc run/sweep --backend=modal`, runs are automatically downloaded to `./runs/<run_id>/` as each job completes. No separate pull step needed!
 
-**Manual retrieval** (if needed): For browsing or recovering old runs from the Modal volume:
+**Manual retrieval** (if needed): For browsing or recovering old runs from the Modal volume use `llc pull-artifacts`.
 
 #### Modal troubleshooting
 
 * **Timeouts not taking effect:** Remember timeouts are set in the decorator in `modal_app.py` (we use generous defaults), not per-call flags.
-* **Artifacts missing locally:** Fetch from the volume with the `modal volume get` commands above.
+* **Runs missing locally:** Fetch from the volume with `llc pull-artifacts <run_id>`.
 
 ---
 
@@ -462,14 +462,14 @@ The client imports `run_experiment_remote` from `modal_app.py` and calls `.map(.
 * **Scaling studies**: push toward larger ReLU/GELU networks, beyond HMC’s limit, to stress-test SGLD/MCLMC.
 * **Better LLC error estimation**: block bootstrap on $L_n$ traces, multi-chain variance combination.
 
-## Runs and Artifacts
+## Runs and Results
 
-When you execute an experiment (`llc run`, `llc sweep`), the system creates a **run** identified by a deterministic `run_id`. That run produces a directory of **artifacts** — the saved outputs of the experiment.
+When you execute an experiment (`llc run`, `llc sweep`), the system creates a **run** identified by a deterministic `run_id`. That run produces a directory of **results** — the saved outputs of the experiment.
 
 ### Where runs live
 
 * **Local:** `runs/<run_id>/`
-* **Modal backend:** the same folder is written to the shared `/artifacts` volume; you can later `llc pull-artifacts` to copy it back locally.
+* **Modal backend:** the same folder is written to the shared `/runs` volume; you can later `llc pull-artifacts` to copy it back locally.
 
 ### What’s inside a run directory
 
@@ -483,11 +483,11 @@ Every run folder contains:
 
 That’s all you need for post-hoc analysis.
 
-### Why some commands ask for a *run* and others for *artifacts*
+### Why some commands ask for a *run* and others for *run_id*
 
 * `llc run` / `llc sweep` **create a run**. You usually just see the run ID in the logs.
 * `llc analyze <run_dir>` and `llc promote-readme-images <run_dir>` expect a **run directory** (the canonical output of a run). If you omit `run_dir` in `promote-readme-images`, it picks the newest run automatically.
-* `llc pull-artifacts [run_id]` is Modal-specific: it looks up a run on the remote volume by ID and downloads the **artifact directory** back under `artifacts/<run_id>/`. From there you can browse or analyze locally.
+* `llc pull-artifacts [run_id]` is Modal-specific: it looks up a run on the remote volume by ID and downloads the **run directory** back under `runs/<run_id>/`. From there you can browse or analyze locally.
 
 In other words:
 
@@ -518,7 +518,7 @@ runs/
         └── ...              # whatever plots you requested
 ```
 
-* Every run lives under `runs/<run_id>/` locally (or `/artifacts/<run_id>/` on Modal).
+* Every run lives under `runs/<run_id>/` locally (or `/runs/<run_id>/` on Modal).
 * `config.json` = how the job was configured.
 * `metrics.json` = the numbers you usually quote in the paper.
 * `.nc` files = full traces for reproducible post-hoc analysis.

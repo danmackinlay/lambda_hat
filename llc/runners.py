@@ -9,23 +9,20 @@ Use these for ESS/sec and WNV in metrics.
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
 from typing import TYPE_CHECKING
 import jax
 import numpy as np
 from jax import numpy as jnp
 
-from .samplers.base import default_tiny_store
-from .convert import stack_ragged_2d
 from .samplers.adapters import (
     run_sgld_chains_batched,
     run_hmc_chains_batched,
     run_mclmc_chains_batched,
 )
-from .types import SamplerResult, RunStats
+from .types import SamplerResult
 
 if TYPE_CHECKING:
-    from .config import Config
+    pass
 
 
 def tic():
@@ -41,15 +38,6 @@ def toc(t0):
 def llc_from_running_mean(E_L, L0, n, beta):
     """Compute LLC from running mean of loss values"""
     return float(n * beta * (E_L - L0))
-
-
-
-
-
-
-
-
-
 
 
 # ---------- Batched (fast) versions of the above runners ----------

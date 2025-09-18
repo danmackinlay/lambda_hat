@@ -21,10 +21,9 @@ base = (
 image = base.add_local_python_source("llc")
 
 # GPU image: do the GPU install first, then add local code last
-gpu_image = (
-    base.pip_install("jax[cuda12_local]", force_build=True)
-        .add_local_python_source("llc")
-)
+gpu_image = base.pip_install(
+    "jax[cuda12_local]", force_build=True
+).add_local_python_source("llc")
 
 # Create persistent volume for runs
 runs_volume = modal.Volume.from_name("llc-runs", create_if_missing=True)
@@ -66,9 +65,7 @@ def run_experiment_remote(cfg_dict: dict) -> dict:
         cfg_dict.setdefault("save_artifacts", True)
         cfg_dict["artifacts_dir"] = "/runs"
     else:
-        print(
-            "[Modal] Warning: Volume /runs not found, using default artifacts_dir"
-        )
+        print("[Modal] Warning: Volume /runs not found, using default artifacts_dir")
 
     result = run_experiment_task(cfg_dict)
 
@@ -200,9 +197,7 @@ def export_run(run_id: str) -> bytes:
     import os
     import tarfile
 
-    run_path = (
-        f"/runs/{run_id}" if not run_id.startswith("/runs/") else run_id
-    )
+    run_path = f"/runs/{run_id}" if not run_id.startswith("/runs/") else run_id
     if not os.path.isdir(run_path):
         raise FileNotFoundError(f"Not found: {run_path}")
     buf = io.BytesIO()

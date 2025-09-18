@@ -6,7 +6,6 @@ No legacy saves, manifests, or galleries.
 """
 
 from __future__ import annotations
-from typing import Optional
 import logging
 import os
 
@@ -65,13 +64,6 @@ def run_one(
     if hasattr(cfg, "artifacts_dir") and cfg.artifacts_dir.endswith("/runs"):
         # Modal path: cfg.artifacts_dir="/runs" -> run_dir="/runs/rid"
         run_dir = os.path.join(cfg.artifacts_dir, rid)
-    elif hasattr(cfg, "artifacts_dir") and cfg.artifacts_dir.endswith("/artifacts"):
-        # Legacy: artifacts_dir="/path/artifacts" -> runs/rid under same parent
-        base_dir = cfg.artifacts_dir.replace("/artifacts", "")
-        run_dir = os.path.join(base_dir, "runs", rid)
-    elif cfg.artifacts_dir == "artifacts":
-        # Legacy local: artifacts_dir="artifacts" -> runs/rid
-        run_dir = os.path.join("runs", rid)
     else:
         # Default: use runs/ under current directory
         run_dir = os.path.join("runs", rid)
@@ -145,14 +137,22 @@ def run_one(
     SAMPLERS = {
         "sgld": {
             "init": lambda key, d, theta0_f32, cfg: (
-                theta0_f32 + 0.01 * random.normal(key, (cfg.chains, d)).astype(jnp.float32)
+                theta0_f32
+                + 0.01 * random.normal(key, (cfg.chains, d)).astype(jnp.float32)
             ),
             "run": lambda key, init, env: run_sgld_online_batched(
-                key, init,
+                key,
+                init,
                 env["grad_logpost_minibatch_f32"],
-                env["X_f32"], env["Y_f32"], cfg.n_data,
-                cfg.sgld_step_size, cfg.sgld_steps, cfg.sgld_warmup,
-                cfg.sgld_batch_size, cfg.sgld_eval_every, cfg.sgld_thin,
+                env["X_f32"],
+                env["Y_f32"],
+                cfg.n_data,
+                cfg.sgld_step_size,
+                cfg.sgld_steps,
+                cfg.sgld_warmup,
+                cfg.sgld_batch_size,
+                cfg.sgld_eval_every,
+                cfg.sgld_thin,
                 env["Ln_full64"],
                 precond_mode=getattr(cfg, "sgld_precond", "none"),
                 beta1=getattr(cfg, "sgld_beta1", 0.9),
@@ -167,10 +167,14 @@ def run_one(
                 theta0_f64 + 0.01 * random.normal(key, (cfg.chains, d))
             ),
             "run": lambda key, init, env: run_hmc_online_batched(
-                key, init,
+                key,
+                init,
                 env["logpost_and_grad_f64"],
-                cfg.hmc_draws, cfg.hmc_warmup, cfg.hmc_num_integration_steps,
-                cfg.hmc_eval_every, cfg.hmc_thin,
+                cfg.hmc_draws,
+                cfg.hmc_warmup,
+                cfg.hmc_num_integration_steps,
+                cfg.hmc_eval_every,
+                cfg.hmc_thin,
                 env["Ln_full64"],
                 **env["diag_targets"],
             ),
@@ -180,9 +184,12 @@ def run_one(
                 theta0_f64 + 0.01 * random.normal(key, (cfg.chains, d))
             ),
             "run": lambda key, init, env: run_mclmc_online_batched(
-                key, init,
+                key,
+                init,
                 env["logdensity_mclmc"],
-                cfg.mclmc_draws, cfg.mclmc_eval_every, cfg.mclmc_thin,
+                cfg.mclmc_draws,
+                cfg.mclmc_eval_every,
+                cfg.mclmc_thin,
                 env["Ln_full64"],
                 tuner_steps=cfg.mclmc_tune_steps,
                 diagonal_preconditioning=cfg.mclmc_diagonal_preconditioning,
@@ -198,8 +205,11 @@ def run_one(
         Ln_full64=Ln_full64,
         grad_logpost_minibatch_f32=grad_logpost_minibatch_f32,
         logpost_and_grad_f64=logpost_and_grad_f64,
-        logdensity_mclmc=make_logdensity_for_mclmc(loss_full_f64, theta0_f64, cfg.n_data, beta, gamma),
-        X_f32=X_f32, Y_f32=Y_f32,
+        logdensity_mclmc=make_logdensity_for_mclmc(
+            loss_full_f64, theta0_f64, cfg.n_data, beta, gamma
+        ),
+        X_f32=X_f32,
+        Y_f32=Y_f32,
         diag_targets=diag_targets,
     )
 
@@ -214,30 +224,43 @@ def run_one(
 
         logger.info(f"Running {name.upper()} (BlackJAX, online)")
         k = random.fold_in(key, hash(name) & 0xFFFF)
-        init = SAMPLERS[name]["init"](k, dim, theta0_f32 if name=="sgld" else theta0_f64, cfg)
+        init = SAMPLERS[name]["init"](
+            k, dim, theta0_f32 if name == "sgld" else theta0_f64, cfg
+        )
         init = device_put(init)
         res = SAMPLERS[name]["run"](k, init, env)
 
         # Build idata (once; reuse for metrics + later save)
         idata = to_idata(
-            Ln_histories=res.Ln_histories, theta_thin=res.theta_thin,
-            acceptance=res.acceptance, energy=res.energy,
-            n=cfg.n_data, beta=beta, L0=L0,
+            Ln_histories=res.Ln_histories,
+            theta_thin=res.theta_thin,
+            acceptance=res.acceptance,
+            energy=res.energy,
+            n=cfg.n_data,
+            beta=beta,
+            L0=L0,
         )
 
         # Metrics
         m_core = llc_point_se(idata)
         m_eff = efficiency_metrics(
-            idata=idata, timings=res.timings, work=res.work,
-            n_data=cfg.n_data, sgld_batch=(cfg.sgld_batch_size if name=="sgld" else None)
+            idata=idata,
+            timings=res.timings,
+            work=res.work,
+            n_data=cfg.n_data,
+            sgld_batch=(cfg.sgld_batch_size if name == "sgld" else None),
         )
 
-        print(f"{name.upper()} LLC: {m_core['llc_mean']:.4f} ± {m_core['llc_se']:.4f} (ESS: {int(m_core['ess_bulk']):.1f})")
+        print(
+            f"{name.upper()} LLC: {m_core['llc_mean']:.4f} ± {m_core['llc_se']:.4f} (ESS: {int(m_core['ess_bulk']):.1f})"
+        )
 
         # Optional: HMC mean acceptance (scalar)
         if name == "hmc" and res.acceptance:
             try:
-                acc_scalar = float(np.nanmean([a.mean() for a in res.acceptance if a.size]))
+                acc_scalar = float(
+                    np.nanmean([a.mean() for a in res.acceptance if a.size])
+                )
                 m_eff["mean_acceptance"] = acc_scalar
                 print(f"HMC acceptance rate (mean over chains/draws): {acc_scalar:.3f}")
             except Exception:
@@ -250,7 +273,14 @@ def run_one(
 
         # Save idata when saving artifacts
         if save_artifacts and run_dir:
-            idata.attrs.update({"n_data": int(cfg.n_data), "beta": float(beta), "L0": float(L0), "sampler": name})
+            idata.attrs.update(
+                {
+                    "n_data": int(cfg.n_data),
+                    "beta": float(beta),
+                    "L0": float(L0),
+                    "sampler": name,
+                }
+            )
             az.to_netcdf(idata, f"{run_dir}/{name}.nc")
 
     # Save other artifacts if requested

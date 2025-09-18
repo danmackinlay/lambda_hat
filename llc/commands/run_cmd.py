@@ -4,7 +4,7 @@ import os
 from dataclasses import replace
 from llc.config import CFG, config_schema_hash
 from llc.util.config_overrides import apply_preset_then_overrides
-from llc.util.modal_utils import extract_modal_artifacts_locally
+from llc.util.modal_utils import extract_modal_runs_locally
 
 
 def run_entry(kwargs: dict) -> None:
@@ -58,9 +58,11 @@ def run_entry(kwargs: dict) -> None:
         # Choose GPU or CPU Modal function based on gpu_mode
         if gpu_mode == "off":
             from llc.modal_app import app, run_experiment_remote
+
             remote_fn = run_experiment_remote
         else:
             from llc.modal_app import app, run_experiment_remote_gpu
+
             remote_fn = run_experiment_remote_gpu
 
         with app.run():
@@ -68,7 +70,7 @@ def run_entry(kwargs: dict) -> None:
             [result_dict] = executor.map(run_experiment_task, [cfg_dict])
 
         # Download artifacts locally (optional convenience)
-        extract_modal_artifacts_locally(result_dict)
+        extract_modal_runs_locally(result_dict)
 
         # Adapt to summary printer shape
         result = type("RunOutputs", (), {})()

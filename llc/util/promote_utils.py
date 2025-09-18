@@ -88,7 +88,9 @@ def latest_run_dir(root_dir: Path, selection: List[Tuple[str, str]] = None) -> P
         candidates.append((start_time, run_dir))
 
     if not candidates:
-        raise RuntimeError("No completed runs found in runs/ (looking for metrics.json)")
+        raise RuntimeError(
+            "No completed runs found in runs/ (looking for metrics.json)"
+        )
 
     candidates.sort(key=lambda t: t[0])
     return candidates[-1][1]
