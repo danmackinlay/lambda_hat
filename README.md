@@ -128,7 +128,7 @@ uv run python -m llc run --preset=quick
 uv run python -m llc run --preset=quick --no-skip
 
 # Override code version (for CI/Modal deployments)
-LLC_CODE_VERSION=deploy-123 uv run python -m llc run
+uv run llc_CODE_VERSION=deploy-123 uv run python -m llc run
 ```
 
 **Tips:**
@@ -265,7 +265,7 @@ uv run python -m llc sweep --backend=submitit  # add your submitit params if nee
 rm -rf artifacts/* llc_sweep_results.csv __pycache__ *.pyc
 
 # Promote plots for README
-uv run python scripts/promote_readme_images.py
+uv run llc promote-readme-images
 ```
 
 ## Refreshing README figures
@@ -276,7 +276,7 @@ We keep a few diagnostic plots in `assets/readme/` for illustration.
 
 ```bash
 uv run python -m llc run --preset=quick
-uv run python scripts/promote_readme_images.py
+uv run llc promote-readme-images
 git add assets/readme
 git commit -m "refresh README examples"
 ```
@@ -285,7 +285,7 @@ git commit -m "refresh README examples"
 
 ```bash
 uv run python -m llc run --backend=modal --preset=quick
-uv run python scripts/promote_readme_images.py
+uv run llc promote-readme-images
 git add assets/readme
 git commit -m "refresh README examples"
 ```
@@ -353,6 +353,22 @@ uv run python -m llc sweep
 
 * Iterates over parameter dimensions (500-10k), depth/width/activation/data/noise settings (see `sweep_space()`),
 * logs per-run LLC results with WNV metrics and saves to `llc_sweep_results.csv`.
+
+Plot the sweep
+
+```bash
+# vanilla
+uv run llc plot-sweep
+
+# filter to a fixed data/model family
+uv run llc plot-sweep --filters "activation=relu,x_dist=gauss_iso"
+
+# different size axis
+uv run llc plot-sweep --size-col n_data
+
+# focus on HMC/MCLMC only
+uv run llc plot-sweep --samplers hmc,mclmc
+```
 
 ## Parallelism
 

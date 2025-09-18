@@ -732,5 +732,182 @@ def pull_artifacts_cmd(run_id, target):
     click.echo(f"[pull-sdk] Extracted into {dest_root / run_id}")
 
 
+@cli.command("plot-sweep")
+@click.option(
+    "--csv",
+    "csv_path",
+    type=click.Path(exists=True, dir_okay=False),
+    default="llc_sweep_results.csv",
+    show_default=True,
+    help="Sweep results CSV (from `llc sweep`).",
+)
+@click.option(
+    "--out",
+    "out_dir",
+    type=click.Path(file_okay=False),
+    default="sweep_plots",
+    show_default=True,
+    help="Directory to write PNGs.",
+)
+@click.option(
+    "--size-col",
+    type=click.Choice(["target_params", "n_data", "depth", "hidden"]),
+    default="target_params",
+    show_default=True,
+    help="Which column to treat as 'problem size' on the x-axis.",
+)
+@click.option(
+    "--samplers",
+    default="sgld,hmc,mclmc",
+    help="Comma-separated subset of samplers to plot (default: all).",
+)
+@click.option(
+    "--filters",
+    default="",
+    help='Comma-separated equality filters like "activation=relu,x_dist=gauss_iso".',
+)
+@click.option(
+    "--logx/--no-logx",
+    default=True,
+    show_default=True,
+    help="Log-scale for the size axis.",
+)
+@click.option("--overwrite", is_flag=True, help="Overwrite any existing PNGs.")
+def plot_sweep_cmd(csv_path, out_dir, size_col, samplers, filters, logx, overwrite):
+    """
+    Plot sweep efficiency: ESS/sec and WNV vs problem size, plus a SE frontier.
+
+    Examples:
+      llc plot-sweep --csv llc_sweep_results.csv --filters "activation=relu,x_dist=gauss_iso"
+      llc plot-sweep --size-col n_data --samplers hmc,mclmc
+    """
+    import pandas as pd
+    import numpy as np
+    import matplotlib.pyplot as plt
+    from pathlib import Path
+
+    out = Path(out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+
+    # Load
+    df = pd.read_csv(csv_path)
+
+    # Basic sanity
+    required = {"sampler", size_col, "llc_mean", "llc_se", "ess"}
+    missing = sorted([c for c in required if c not in df.columns])
+    if missing:
+        raise click.BadParameter(f"CSV missing required columns: {missing}")
+
+    # Optional columns (compute if absent)
+    if "t_sampling" in df.columns and "ess_per_sec" not in df.columns:
+        df["ess_per_sec"] = df["ess"] / df["t_sampling"].replace({0: np.nan})
+    for col in ("wnv_time", "wnv_fde"):
+        if col not in df.columns:
+            df[col] = np.nan  # keep pipeline robust even if WNV not computed yet
+
+    # Filters: activation=relu,x_dist=gauss_iso
+    if filters.strip():
+        for clause in filters.split(","):
+            if "=" not in clause:
+                raise click.BadParameter(f"Bad filter '{clause}'. Use key=value.")
+            k, v = [x.strip() for x in clause.split("=", 1)]
+            if k not in df.columns:
+                raise click.BadParameter(f"Unknown filter column '{k}'.")
+            df = df[df[k].astype(str) == v]
+
+    if df.empty:
+        click.echo("[plot-sweep] No rows after filtering.")
+        return
+
+    # Normalize/clean
+    keep_samplers = [s.strip() for s in samplers.split(",") if s.strip()]
+    df = df[df["sampler"].isin(keep_samplers)]
+
+    # Group to medians across seeds/config duplicates
+    agg = df.groupby(["sampler", size_col], as_index=False).agg(
+        ess=("ess", "median"),
+        ess_per_sec=("ess_per_sec", "median"),
+        wnv_time=("wnv_time", "median"),
+        wnv_fde=("wnv_fde", "median"),
+        se=("llc_se", "median"),
+    )
+
+    if agg.empty:
+        click.echo("[plot-sweep] No rows for selected samplers/filters.")
+        return
+
+    # Helper to save-or-skip
+    def save_fig(fig, path):
+        path = Path(path)
+        if path.exists() and not overwrite:
+            click.echo(f"[plot-sweep] exists: {path.name} (use --overwrite)")
+        else:
+            fig.savefig(path, dpi=150, bbox_inches="tight", facecolor="white")
+            click.echo(f"[plot-sweep] saved: {path.name}")
+        plt.close(fig)
+
+    # 1) ESS/sec vs size
+    for s in agg["sampler"].unique():
+        d = agg[(agg["sampler"] == s) & np.isfinite(agg["ess_per_sec"])]
+        if d.empty:
+            continue
+        fig, ax = plt.subplots(figsize=(6, 4))
+        ax.plot(d[size_col], d["ess_per_sec"], marker="o")
+        ax.set_xlabel(size_col)
+        ax.set_ylabel("ESS/sec")
+        ax.set_title(f"{s.upper()}: ESS/sec vs {size_col}")
+        if logx:
+            ax.set_xscale("log")
+        ax.grid(True, alpha=0.3)
+        save_fig(fig, out / f"{s}_ess_per_sec_vs_{size_col}.png")
+
+    # 2) WNV (time) vs size
+    for s in agg["sampler"].unique():
+        d = agg[(agg["sampler"] == s) & np.isfinite(agg["wnv_time"])]
+        if d.empty:
+            continue
+        fig, ax = plt.subplots(figsize=(6, 4))
+        ax.plot(d[size_col], d["wnv_time"], marker="o")
+        ax.set_xlabel(size_col)
+        ax.set_ylabel("WNV (Var × seconds)")
+        ax.set_title(f"{s.upper()}: WNV_time vs {size_col}")
+        if logx:
+            ax.set_xscale("log")
+        ax.grid(True, alpha=0.3)
+        save_fig(fig, out / f"{s}_wnv_time_vs_{size_col}.png")
+
+    # 3) WNV (FDE) vs size
+    for s in agg["sampler"].unique():
+        d = agg[(agg["sampler"] == s) & np.isfinite(agg["wnv_fde"])]
+        if d.empty:
+            continue
+        fig, ax = plt.subplots(figsize=(6, 4))
+        ax.plot(d[size_col], d["wnv_fde"], marker="o")
+        ax.set_xlabel(size_col)
+        ax.set_ylabel("WNV (Var × FDE)")
+        ax.set_title(f"{s.upper()}: WNV_FDE vs {size_col}")
+        if logx:
+            ax.set_xscale("log")
+        ax.grid(True, alpha=0.3)
+        save_fig(fig, out / f"{s}_wnv_fde_vs_{size_col}.png")
+
+    # 4) Frontier: SE vs size colored by WNV_FDE
+    for s in agg["sampler"].unique():
+        d = agg[(agg["sampler"] == s) & np.isfinite(agg["se"])]
+        if d.empty:
+            continue
+        fig, ax = plt.subplots(figsize=(6, 4))
+        sc = ax.scatter(d[size_col], d["se"], c=d["wnv_fde"], cmap="viridis")
+        ax.set_xlabel(size_col)
+        ax.set_ylabel("SE(LLC)")
+        ax.set_title(f"{s.upper()}: SE vs {size_col} (color=WNV_FDE)")
+        if logx:
+            ax.set_xscale("log")
+        ax.grid(True, alpha=0.3)
+        cbar = fig.colorbar(sc, ax=ax)
+        cbar.set_label("WNV_FDE")
+        save_fig(fig, out / f"{s}_se_vs_{size_col}_colored_by_wnv_fde.png")
+
+
 if __name__ == "__main__":
     cli()
