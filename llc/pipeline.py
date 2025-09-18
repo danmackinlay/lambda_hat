@@ -1,7 +1,8 @@
 # llc/pipeline.py
 """
-Lean pipeline. Always uses batched runners. Saves `{sampler}.nc`, `metrics.json`,
-`config.json`, and `L0.txt`.
+Batched-only pipeline. Uses registry-based sampler loop with centralized metrics
+via analysis.py. Saves only {sampler}.nc, metrics.json, config.json, and L0.txt.
+No legacy saves, manifests, or galleries.
 """
 
 from __future__ import annotations
@@ -15,7 +16,7 @@ import numpy as np
 
 from .config import Config
 from .cache import run_id, load_cached_outputs
-from .types import RunOutputs, RunStats
+from .types import RunOutputs
 
 # Set up logger
 logger = logging.getLogger(__name__)
@@ -26,9 +27,6 @@ from .posterior import (
     make_logdensity_for_mclmc,
 )
 from .runners import (
-    RunStats,
-    tic,
-    toc,
     run_sgld_online_batched,
     run_hmc_online_batched,
     run_mclmc_online_batched,
@@ -36,16 +34,12 @@ from .runners import (
 from .convert import to_idata
 import arviz as az
 from .samplers.base import prepare_diag_targets
-from llc.analysis import llc_point_se_from_histories as llc_mean_and_se_from_histories
-from llc.analysis import llc_point_se, efficiency_metrics, generate_diagnostics
+from .analysis import llc_point_se, efficiency_metrics
 from .artifacts import (
     save_L0,
     save_config,
     save_metrics,
-    generate_gallery_html,
 )
-from datetime import datetime
-
 
 
 def run_one(
@@ -97,15 +91,10 @@ def run_one(
         run_dir = ""  # Don't save if not requested
 
     logger.info("Building target")
-    stats = RunStats()
-
-    # Build timing
-    t0 = tic()
     key = random.PRNGKey(cfg.seed)
 
     # Build a self-contained target (NN, quadratic, …)
     bundle = build_target(key, cfg)
-    stats.t_build = toc(t0)
 
     theta0_f32 = bundle.theta0_f32
     theta0_f64 = bundle.theta0_f64
@@ -139,7 +128,6 @@ def run_one(
     # L0 at the empirical minimizer (from target bundle)
     L0 = float(bundle.L0)
     print(f"L0 at empirical minimizer: {L0:.6f}")
-    target_se = 1.0  # used for time/fde-to-target across samplers
 
     # JIT compile the loss evaluator for LLC computation
     Ln_full64 = jit(loss_full_f64)
@@ -147,314 +135,124 @@ def run_one(
     # Prepare diagnostic targets based on config
     diag_targets = prepare_diag_targets(dim, cfg)
 
+    # Sampler registry with init and run functions
+    SAMPLERS = {
+        "sgld": {
+            "init": lambda key, d, theta0_f32, cfg: (
+                theta0_f32 + 0.01 * random.normal(key, (cfg.chains, d)).astype(jnp.float32)
+            ),
+            "run": lambda key, init, env: run_sgld_online_batched(
+                key, init,
+                env["grad_logpost_minibatch_f32"],
+                env["X_f32"], env["Y_f32"], cfg.n_data,
+                cfg.sgld_step_size, cfg.sgld_steps, cfg.sgld_warmup,
+                cfg.sgld_batch_size, cfg.sgld_eval_every, cfg.sgld_thin,
+                env["Ln_full64"],
+                precond_mode=getattr(cfg, "sgld_precond", "none"),
+                beta1=getattr(cfg, "sgld_beta1", 0.9),
+                beta2=getattr(cfg, "sgld_beta2", 0.999),
+                eps=getattr(cfg, "sgld_eps", 1e-8),
+                bias_correction=getattr(cfg, "sgld_bias_correction", True),
+                **env["diag_targets"],
+            ),
+        },
+        "hmc": {
+            "init": lambda key, d, theta0_f64, cfg: (
+                theta0_f64 + 0.01 * random.normal(key, (cfg.chains, d))
+            ),
+            "run": lambda key, init, env: run_hmc_online_batched(
+                key, init,
+                env["logpost_and_grad_f64"],
+                cfg.hmc_draws, cfg.hmc_warmup, cfg.hmc_num_integration_steps,
+                cfg.hmc_eval_every, cfg.hmc_thin,
+                env["Ln_full64"],
+                **env["diag_targets"],
+            ),
+        },
+        "mclmc": {
+            "init": lambda key, d, theta0_f64, cfg: (
+                theta0_f64 + 0.01 * random.normal(key, (cfg.chains, d))
+            ),
+            "run": lambda key, init, env: run_mclmc_online_batched(
+                key, init,
+                env["logdensity_mclmc"],
+                cfg.mclmc_draws, cfg.mclmc_eval_every, cfg.mclmc_thin,
+                env["Ln_full64"],
+                tuner_steps=cfg.mclmc_tune_steps,
+                diagonal_preconditioning=cfg.mclmc_diagonal_preconditioning,
+                desired_energy_var=cfg.mclmc_desired_energy_var,
+                integrator_name=cfg.mclmc_integrator,
+                **env["diag_targets"],
+            ),
+        },
+    }
+
+    # Environment dictionary with all shared data
+    env = dict(
+        Ln_full64=Ln_full64,
+        grad_logpost_minibatch_f32=grad_logpost_minibatch_f32,
+        logpost_and_grad_f64=logpost_and_grad_f64,
+        logdensity_mclmc=make_logdensity_for_mclmc(loss_full_f64, theta0_f64, cfg.n_data, beta, gamma),
+        X_f32=X_f32, Y_f32=Y_f32,
+        diag_targets=diag_targets,
+    )
+
     # Storage for results
     all_metrics = {}
     histories = {}
 
-    # ===== SGLD (Online) =====
-    if "sgld" in getattr(cfg, "samplers", ["sgld"]):
-        logger.info("Running SGLD (BlackJAX, online)")
-        k_sgld = random.split(key, 1)[0]
-        # simple overdispersed inits around w0
-        init_thetas_sgld = theta0_f32 + 0.01 * random.normal(
-            k_sgld, (cfg.chains, dim)
-        ).astype(jnp.float32)
-        init_thetas_sgld = device_put(init_thetas_sgld)
+    # Run samplers using registry-based loop
+    for name in cfg.samplers:
+        if name not in SAMPLERS:
+            continue
 
-        # Always use batched SGLD execution
-        res_sgld = run_sgld_online_batched(
-            k_sgld,
-            init_thetas_sgld,
-            grad_logpost_minibatch_f32,
-            X_f32,
-            Y_f32,
-            cfg.n_data,
-            cfg.sgld_step_size,
-            cfg.sgld_steps,
-            cfg.sgld_warmup,
-            cfg.sgld_batch_size,
-            cfg.sgld_eval_every,
-            cfg.sgld_thin,
-            Ln_full64,
-            use_tqdm=cfg.use_tqdm,
-            progress_update_every=cfg.progress_update_every,
-            **diag_targets,
-            # NEW: optional preconditioning (works even if cfg lacks these fields)
-            precond_mode=getattr(cfg, "sgld_precond", "none"),
-            beta1=getattr(cfg, "sgld_beta1", 0.9),
-            beta2=getattr(cfg, "sgld_beta2", 0.999),
-            eps=getattr(cfg, "sgld_eps", 1e-8),
-            bias_correction=getattr(cfg, "sgld_bias_correction", True),
+        logger.info(f"Running {name.upper()} (BlackJAX, online)")
+        k = random.fold_in(key, hash(name) & 0xFFFF)
+        init = SAMPLERS[name]["init"](k, dim, theta0_f32 if name=="sgld" else theta0_f64, cfg)
+        init = device_put(init)
+        res = SAMPLERS[name]["run"](k, init, env)
+
+        # Build idata (once; reuse for metrics + later save)
+        idata = to_idata(
+            Ln_histories=res.Ln_histories, theta_thin=res.theta_thin,
+            acceptance=res.acceptance, energy=res.energy,
+            n=cfg.n_data, beta=beta, L0=L0,
         )
 
-        # Build idata and compute centralized metrics
-        idata_sgld = to_idata(
-            Ln_histories=res_sgld.Ln_histories,
-            theta_thin=res_sgld.theta_thin,
-            acceptance=res_sgld.acceptance,
-            energy=res_sgld.energy,
-            n=cfg.n_data,
-            beta=beta,
-            L0=L0,
-        )
-
-        # Core LLC metrics
-        m_core = llc_point_se(idata_sgld)
-        print(f"SGLD LLC: {m_core['llc_mean']:.4f} ± {m_core['llc_se']:.4f} (ESS: {int(m_core['ess_bulk']):.1f})")
-
-        # Efficiency metrics
+        # Metrics
+        m_core = llc_point_se(idata)
         m_eff = efficiency_metrics(
-            idata=idata_sgld,
-            timings=res_sgld.timings,
-            work=res_sgld.work,
-            n_data=cfg.n_data,
-            sgld_batch=cfg.sgld_batch_size,
+            idata=idata, timings=res.timings, work=res.work,
+            n_data=cfg.n_data, sgld_batch=(cfg.sgld_batch_size if name=="sgld" else None)
         )
 
-        # Store SGLD results with prefixed keys
-        sgld_metrics = {}
-        for k, v in m_core.items():
-            sgld_metrics[f"sgld_{k}"] = v
-        for k, v in m_eff.items():
-            sgld_metrics[f"sgld_{k}"] = v
-        # Add timing and work details
-        sgld_metrics.update({
-            "sgld_timing_warmup": res_sgld.timings.get("warmup", 0.0),
-            "sgld_timing_sampling": res_sgld.timings.get("sampling", 0.0),
-            "sgld_n_steps": res_sgld.work.get("n_minibatch_grads", 0),
-            "sgld_n_full_loss": res_sgld.work.get("n_full_loss", 0),
-        })
-        all_metrics.update(sgld_metrics)
-        histories["sgld"] = res_sgld.Ln_histories
+        print(f"{name.upper()} LLC: {m_core['llc_mean']:.4f} ± {m_core['llc_se']:.4f} (ESS: {int(m_core['ess_bulk']):.1f})")
 
-    # ===== HMC (Online) =====
-    if "hmc" in getattr(cfg, "samplers", ["sgld"]):
-        logger.info("Running HMC (BlackJAX, online)")
-        k_hmc = random.fold_in(key, 123)
-        init_thetas_hmc = theta0_f64 + 0.01 * random.normal(k_hmc, (cfg.chains, dim))
-        init_thetas_hmc = device_put(init_thetas_hmc)
+        # Optional: HMC mean acceptance (scalar)
+        if name == "hmc" and res.acceptance:
+            try:
+                acc_scalar = float(np.nanmean([a.mean() for a in res.acceptance if a.size]))
+                m_eff["mean_acceptance"] = acc_scalar
+                print(f"HMC acceptance rate (mean over chains/draws): {acc_scalar:.3f}")
+            except Exception:
+                pass
 
-        # Always use batched HMC execution
-        res_hmc = run_hmc_online_batched(
-            k_hmc,
-            init_thetas_hmc,
-            logpost_and_grad_f64,
-            cfg.hmc_draws,
-            cfg.hmc_warmup,
-            cfg.hmc_num_integration_steps,
-            cfg.hmc_eval_every,
-            cfg.hmc_thin,
-            Ln_full64,
-            **diag_targets,
-        )
+        # prefix + collect
+        for k2, v in {**m_core, **m_eff}.items():
+            all_metrics[f"{name}_{k2}"] = v
+        histories[name] = res.Ln_histories
 
-        # Build idata and compute centralized metrics
-        idata_hmc = to_idata(
-            Ln_histories=res_hmc.Ln_histories,
-            theta_thin=res_hmc.theta_thin,
-            acceptance=res_hmc.acceptance,
-            energy=res_hmc.energy,
-            n=cfg.n_data,
-            beta=beta,
-            L0=L0,
-        )
+        # Save idata when saving artifacts
+        if save_artifacts and run_dir:
+            idata.attrs.update({"n_data": int(cfg.n_data), "beta": float(beta), "L0": float(L0), "sampler": name})
+            az.to_netcdf(idata, f"{run_dir}/{name}.nc")
 
-        # Core LLC metrics
-        m_core = llc_point_se(idata_hmc)
-
-        # Acceptance rate calculation
-        vals = (
-            [np.nanmean(a) for a in res_hmc.acceptance if a.size]
-            if res_hmc.acceptance
-            else []
-        )
-        mean_acc = float(np.nanmean(vals)) if vals else float("nan")
-
-        print(f"HMC LLC: {m_core['llc_mean']:.4f} ± {m_core['llc_se']:.4f} (ESS: {int(m_core['ess_bulk']):.1f})")
-        print(f"HMC acceptance rate (mean over chains/draws): {mean_acc:.3f}")
-
-        # Efficiency metrics
-        m_eff = efficiency_metrics(
-            idata=idata_hmc,
-            timings=res_hmc.timings,
-            work=res_hmc.work,
-            n_data=cfg.n_data,
-            sgld_batch=None,  # HMC doesn't use minibatches
-        )
-
-        # Store HMC results with prefixed keys
-        hmc_metrics = {}
-        for k, v in m_core.items():
-            hmc_metrics[f"hmc_{k}"] = v
-        for k, v in m_eff.items():
-            hmc_metrics[f"hmc_{k}"] = v
-        # Add timing, work, and acceptance details
-        hmc_metrics.update({
-            "hmc_timing_warmup": res_hmc.timings.get("warmup", 0.0),
-            "hmc_timing_sampling": res_hmc.timings.get("sampling", 0.0),
-            "hmc_n_leapfrog_grads": res_hmc.work.get("n_leapfrog_grads", 0),
-            "hmc_n_full_loss": res_hmc.work.get("n_full_loss", 0),
-            "hmc_mean_acceptance": mean_acc,
-        })
-        all_metrics.update(hmc_metrics)
-        histories["hmc"] = res_hmc.Ln_histories
-
-    # ===== MCLMC (Online) =====
-    if "mclmc" in getattr(cfg, "samplers", ["sgld"]):
-        logger.info("Running MCLMC (BlackJAX, online)")
-        k_mclmc = random.fold_in(key, 456)
-        init_thetas_mclmc = theta0_f64 + 0.01 * random.normal(
-            k_mclmc, (cfg.chains, dim)
-        )
-        init_thetas_mclmc = device_put(init_thetas_mclmc)
-
-        # Create logdensity for MCLMC
-        logdensity_mclmc = make_logdensity_for_mclmc(
-            loss_full_f64, theta0_f64, cfg.n_data, beta, gamma
-        )
-
-        # Always use batched MCLMC execution
-        res_mclmc = run_mclmc_online_batched(
-            k_mclmc,
-            init_thetas_mclmc,
-            logdensity_mclmc,
-            cfg.mclmc_draws,
-            cfg.mclmc_eval_every,
-            cfg.mclmc_thin,
-            Ln_full64,
-            tuner_steps=cfg.mclmc_tune_steps,
-            diagonal_preconditioning=cfg.mclmc_diagonal_preconditioning,
-            desired_energy_var=cfg.mclmc_desired_energy_var,
-            integrator_name=cfg.mclmc_integrator,
-            use_tqdm=cfg.use_tqdm,
-            progress_update_every=cfg.progress_update_every,
-            **diag_targets,
-        )
-
-        # Build idata and compute centralized metrics
-        idata_mclmc = to_idata(
-            Ln_histories=res_mclmc.Ln_histories,
-            theta_thin=res_mclmc.theta_thin,
-            acceptance=res_mclmc.acceptance,
-            energy=res_mclmc.energy,
-            n=cfg.n_data,
-            beta=beta,
-            L0=L0,
-        )
-
-        # Core LLC metrics
-        m_core = llc_point_se(idata_mclmc)
-        print(f"MCLMC LLC: {m_core['llc_mean']:.4f} ± {m_core['llc_se']:.4f} (ESS: {int(m_core['ess_bulk']):.1f})")
-
-        # Efficiency metrics
-        m_eff = efficiency_metrics(
-            idata=idata_mclmc,
-            timings=res_mclmc.timings,
-            work=res_mclmc.work,
-            n_data=cfg.n_data,
-            sgld_batch=None,
-        )
-
-        # Store MCLMC results with unified keys
-        all_metrics.update({f"mclmc_{k}": v for k, v in m_core.items()})
-        all_metrics.update({f"mclmc_{k}": v for k, v in m_eff.items()})
-        histories["mclmc"] = res_mclmc.Ln_histories
-
-    print(f"\nTotal Runtime: {toc(t0):.2f}s")
-
-    # Save artifacts if requested
+    # Save other artifacts if requested
     if save_artifacts and run_dir:
         logger.info("Saving artifacts")
-
-        # Save L0 for running LLC reconstruction
         save_L0(run_dir, L0)
-
-        # Save unified InferenceData files per sampler (new format)
-        if "sgld" in getattr(cfg, "samplers", []) and "res_sgld" in locals():
-            idata_sgld = to_idata(
-                Ln_histories=res_sgld.Ln_histories,
-                theta_thin=res_sgld.theta_thin,
-                acceptance=res_sgld.acceptance,
-                energy=res_sgld.energy,
-                n=cfg.n_data,
-                beta=beta,
-                L0=L0,
-            )
-            idata_sgld.attrs.update(
-                {
-                    "n_data": int(cfg.n_data),
-                    "beta": float(beta),
-                    "L0": float(L0),
-                    "sampler": "sgld",
-                }
-            )
-            az.to_netcdf(idata_sgld, f"{run_dir}/sgld.nc")
-
-        if "hmc" in getattr(cfg, "samplers", []) and "res_hmc" in locals():
-            idata_hmc = to_idata(
-                Ln_histories=res_hmc.Ln_histories,
-                theta_thin=res_hmc.theta_thin,
-                acceptance=res_hmc.acceptance,
-                energy=res_hmc.energy,
-                n=cfg.n_data,
-                beta=beta,
-                L0=L0,
-            )
-            idata_hmc.attrs.update(
-                {
-                    "n_data": int(cfg.n_data),
-                    "beta": float(beta),
-                    "L0": float(L0),
-                    "sampler": "hmc",
-                }
-            )
-            az.to_netcdf(idata_hmc, f"{run_dir}/hmc.nc")
-
-        if "mclmc" in getattr(cfg, "samplers", []) and "res_mclmc" in locals():
-            idata_mclmc = to_idata(
-                Ln_histories=res_mclmc.Ln_histories,
-                theta_thin=res_mclmc.theta_thin,
-                acceptance=res_mclmc.acceptance,
-                energy=res_mclmc.energy,
-                n=cfg.n_data,
-                beta=beta,
-                L0=L0,
-            )
-            idata_mclmc.attrs.update(
-                {
-                    "n_data": int(cfg.n_data),
-                    "beta": float(beta),
-                    "L0": float(L0),
-                    "sampler": "mclmc",
-                }
-            )
-            az.to_netcdf(idata_mclmc, f"{run_dir}/mclmc.nc")
-
-        # Save all metrics
         save_metrics(run_dir, all_metrics)
-
-        # Save configuration
         save_config(run_dir, cfg)
-
-        # Generate diagnostic plots if enabled
-        print(f"save_plots={cfg.save_plots} diag_mode={cfg.diag_mode}")
-        if cfg.diag_mode != "none" and cfg.save_plots:
-            logger.info("Generating diagnostic plots...")
-
-            # Use generate_diagnostics with existing idata objects
-            if "idata_sgld" in locals():
-                generate_diagnostics(idata_sgld, "sgld", run_dir)
-
-            if "idata_hmc" in locals():
-                generate_diagnostics(idata_hmc, "hmc", run_dir)
-
-            if "idata_mclmc" in locals():
-                generate_diagnostics(idata_mclmc, "mclmc", run_dir)
-
-        # Generate lightweight HTML preview (no manifest)
-        gallery_path = generate_gallery_html(run_dir, cfg, all_metrics)
-        print(f"HTML preview: {gallery_path}")
-        print(f"Artifacts saved to: {run_dir}")
 
     return RunOutputs(
         run_dir=run_dir,
