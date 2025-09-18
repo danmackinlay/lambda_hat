@@ -22,7 +22,7 @@ dependencies = [
 ]
 
 [project.scripts]
-llc = "llc.cli_click:cli"
+llc = "llc.cli:cli"
 
 [project.optional-dependencies]
 # SLURM backend

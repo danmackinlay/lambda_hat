@@ -1,7 +1,6 @@
 # llc/pipeline.py
 """
 Single source of truth for running one complete experiment.
-Replaces duplicated logic between main.py, experiments.py, and tasks.py.
 """
 
 from __future__ import annotations
