@@ -40,6 +40,11 @@ Ultimately, we want to devise and evaluate new sampling algorithms for singular 
     - `ESS/sec` — wall-clock efficiency
     - `ESS/FDE` — gradient-normalized efficiency (data-size-agnostic, where FDE = full-data-equivalent gradients)
     - `time_to_se1`, `fde_to_se1` — projected costs to reach SE(LLC)=1.0
+  - **Post-hoc Analysis** (`llc analyze`) — pure, fast analysis on saved data:
+    - Generates metrics and figures without re-running expensive sampling
+    - Works on unified `.nc` files containing LLC traces, theta samples, acceptance rates, and energy
+    - No JAX dependencies — runs instantly on any machine
+    - Reproducible figure generation with custom themes/options
 
 ## Representative diagnostics
 
@@ -318,8 +323,27 @@ uv run python -m llc run
 
 * Uses the default `Config` (`in_dim=32`, `target_params≈10k`, ReLU MLP).
 * Trains to ERM, centers prior at $w^\*$, runs **SGLD** then **HMC** then **MCLMC**.
-* Prints LLC estimates, ESS/$\hat R$, acceptance stats, WNV.
+* Prints LLC estimates $\hat{\lambda}$, ESS/$\hat R$, acceptance stats, WNV.
 * Shows ArviZ convergence plots (trace, autocorr, ESS, R̂) plus running LLC curves.
+* Saves unified `.nc` files per sampler with all data for post-hoc analysis.
+
+### Post-hoc analysis
+
+```bash
+# Analyze saved run data (no JAX/sampling required)
+uv run python -m llc analyze runs/<run_id>
+
+# Select specific samplers and plots
+uv run python -m llc analyze runs/<run_id> --which=hmc --plots=running_llc,rank,ess_evolution
+
+# Generate figures in custom directory
+uv run python -m llc analyze runs/<run_id> --out=figures/ --overwrite
+```
+
+* Works on `.nc` files saved by `llc run`
+* Pure post-hoc analysis — no expensive re-sampling
+* Generates metrics and figures instantly
+* Perfect for custom themes, formats, or cross-run comparisons
 
 ### Run a sweep
 
