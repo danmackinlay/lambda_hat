@@ -51,10 +51,16 @@ def to_idata(
     beta: float,
     L0: float,
     max_theta_dims: int = 8,
+    theta_as_scalars: bool = True,
 ) -> "az.InferenceData":
     """Build a single ArviZ InferenceData with:
-    posterior: llc (C,T), L (C,T), optional theta (C,T,d')
+    posterior: llc (C,T), L (C,T), optional theta_i (C,T) or theta (C,T,d')
     sample_stats: acceptance_rate (C,T), energy (C,T)
+
+    Args:
+        theta_as_scalars: If True, store theta dims as separate scalar variables
+                         (theta_0, theta_1, ...) for proper ArviZ plot_trace layout.
+                         If False, store as single multi-dimensional theta variable.
     """
     az = _az()
 
@@ -86,7 +92,7 @@ def to_idata(
                 C = min(C, theta.shape[0])
                 T = min(T, theta.shape[1])
                 theta = theta[:C, :T, :d]
-                theta_dims = np.arange(d, dtype=int)
+                theta_dims = list(range(d))
         else:
             S = stack_ragged_2d(list(theta_thin))  # (C,T,D)
             if S is not None:
@@ -96,7 +102,7 @@ def to_idata(
                 C = min(C, theta.shape[0])
                 T = min(T, theta.shape[1])
                 theta = theta[:C, :T, :d]
-                theta_dims = np.arange(d, dtype=int)
+                theta_dims = list(range(d))
 
     # Align L/llc to (C,T) in case theta shortened T
     L = L[:C, :T]
@@ -132,8 +138,17 @@ def to_idata(
         "sample_stats": sstats if sstats else None,
     }
     if theta is not None:
-        data["posterior"]["theta"] = theta
-        data["coords"]["theta_dim"] = theta_dims
-        data["dims"]["theta"] = ["chain", "draw", "theta_dim"]
+        if theta_as_scalars:
+            # Split theta into separate scalar variables: theta_0, theta_1, etc.
+            # This allows ArviZ plot_trace to naturally create one row per variable
+            d = theta.shape[2]  # number of theta dimensions
+            for i in range(d):
+                data["posterior"][f"theta_{i}"] = theta[:, :, i]  # (C, T)
+                data["dims"][f"theta_{i}"] = ["chain", "draw"]
+        else:
+            # Keep original multi-dimensional theta
+            data["posterior"]["theta"] = theta
+            data["coords"]["theta_dim"] = theta_dims
+            data["dims"]["theta"] = ["chain", "draw", "theta_dim"]
 
     return az.from_dict(**data)

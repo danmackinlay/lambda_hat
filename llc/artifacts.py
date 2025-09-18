@@ -79,7 +79,7 @@ def save_idata_theta(
 
     idata = az.from_dict(
         posterior={"theta": S},
-        coords={"theta_dim": np.arange(k)},
+        coords={"theta_dim": list(range(k))},
         dims={"theta": ["theta_dim"]},
     )
 

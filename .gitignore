@@ -14,7 +14,7 @@ wheels/
 # Virtual environments
 .venv
 
-# Artifacts and visualization outputs
+# Visualization outputs
 runs/*
 !runs/.keep
 *.png

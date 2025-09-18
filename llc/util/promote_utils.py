@@ -11,60 +11,23 @@ from typing import List, Tuple
 # We prefer exact filename matches; else substring fallback.
 DEFAULT_SELECTION = [
     ("sgld_running_llc.png", "sgld_llc_running.png"),
-    ("hmc_running_llc.png", "hmc_llc_running.png"),
-    ("mclmc_running_llc.png", "mclmc_llc_running.png"),
-    ("hmc_acceptance.png", "hmc_acceptance.png"),
-    ("hmc_energy.png", "hmc_energy.png"),
-    ("hmc_llc_rank.png", "llc_rank.png"),
-    ("hmc_llc_ess_evolution.png", "llc_ess_evolution.png"),
-    ("hmc_Ln_centered.png", "Ln_centered.png"),
-    ("mclmc_energy_hist.png", "mclmc_energy_hist.png"),
+    ("hmc_running_llc.png",  "hmc_llc_running.png"),
+    ("mclmc_running_llc.png","mclmc_llc_running.png"),
+
+    # rank / ess / acf
+    ("hmc_llc_rank.png",         "llc_rank.png"),
+    ("hmc_llc_ess_evolution.png","llc_ess_evolution.png"),
+    ("hmc_llc_autocorr.png",     "llc_autocorr.png"),
+
+    # energy panels we still generate
+    ("hmc_energy.png",   "hmc_energy.png"),
+    ("mclmc_energy.png", "mclmc_energy.png"),
+
+    # (optional) theta traces for the paper
+    ("hmc_theta_trace.png",   "hmc_theta_trace.png"),
+    ("sgld_theta_trace.png",  "sgld_theta_trace.png"),
+    ("mclmc_theta_trace.png", "mclmc_theta_trace.png"),
 ]
-
-
-def _has_needed_artifacts(p: Path, selection: List[Tuple[str, str]]) -> bool:
-    """Valid if it contains metrics.json OR at least one of the expected PNGs."""
-    if (p / "metrics.json").exists():
-        return True
-    pngs = [q.name for q in p.glob("*.png")]
-    return any(key in name for key, _ in selection for name in pngs)
-
-
-def _latest_from_artifacts(
-    artifacts_dir: Path, selection: List[Tuple[str, str]]
-) -> Path:
-    """Fallback: pick newest run from artifacts/ using old logic."""
-    candidates = []
-    for p in artifacts_dir.iterdir():
-        if not p.is_dir():
-            continue
-        # Follow symlink where possible
-        try:
-            q = p.resolve()
-        except Exception:
-            q = p
-        if not _has_needed_artifacts(q, selection):
-            continue  # skip empty/aborted dirs
-
-        # Prefer parsed timestamp when name is YYYYMMDD-HHMMSS; else use newest file mtime
-        ts = None
-        if re.fullmatch(r"\d{8}-\d{6}", p.name):
-            try:
-                ts = datetime.strptime(p.name, "%Y%m%d-%H%M%S").timestamp()
-            except ValueError:
-                ts = None
-        if ts is None:
-            mtimes = [f.stat().st_mtime for f in q.glob("*.png")]
-            if (q / "metrics.json").exists():
-                mtimes.append((q / "metrics.json").stat().st_mtime)
-            ts = max(mtimes) if mtimes else q.stat().st_mtime
-        candidates.append((ts, p))
-
-    if not candidates:
-        raise RuntimeError("No runs with artifacts found under artifacts/")
-    candidates.sort(key=lambda t: t[0])
-    return candidates[-1][1]
-
 
 def latest_run_dir(root_dir: Path, selection: List[Tuple[str, str]] = None) -> Path:
     """Pick the newest completed run from canonical runs/ directory."""
@@ -120,8 +83,15 @@ def promote_images(
     copied = 0
 
     for key, outname in selection:
-        src = (run_dir.resolve() if run_dir.exists() else run_dir) / key
-        if not src:
+        # Look in analysis/ subfolder first (new location), fallback to run root
+        analysis_src = run_dir / "analysis" / key
+        root_src = run_dir / key
+
+        if analysis_src.exists():
+            src = analysis_src
+        elif root_src.exists():
+            src = root_src
+        else:
             print(f"  [skip] no match for '{key}'")
             continue
 

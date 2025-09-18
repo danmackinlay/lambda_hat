@@ -140,18 +140,32 @@ def efficiency_metrics(
 
 # ---------- Figures (return plt.Figure; caller saves) ----------
 def fig_running_llc(idata, n: int, beta: float, L0: float, title: str) -> plt.Figure:
+    """
+    Running LLC per chain + pooled.
+    Pooled curve is computed as the cumulative mean of the chain-averaged L_n series:
+        pooled[t] = mean_c(L[c,t])_cummean_up_to_t
+    so it is directly comparable to each chain's running mean.
+    """
     az = _az()
     L = idata.posterior.get("L")
     if L is None:
         raise ValueError("posterior['L'] missing; cannot draw running LLC.")
-    L = L.values  # (C,T)
+    L = L.values  # (C, T)
     C, T = L.shape
-    cmean = np.cumsum(L, 1) / np.arange(1, T + 1)[None, :]
-    lam = n * float(beta) * (cmean - L0)
-    pooled = np.mean(L, 0) / np.arange(1, T + 1)
-    lam_pooled = n * float(beta) * (pooled - L0)
 
-    # mean±2SE from full draws
+    # Per-chain running means and LLC
+    cmean = np.cumsum(L, axis=1) / np.arange(1, T + 1)[None, :]
+    lam = n * float(beta) * (cmean - L0)
+
+    # ✅ Correct pooled running mean across chains (fixes the old "double / t" bug)
+    # Old (buggy) code divided by t twice: np.mean(L, 0) / np.arange(1, T+1)
+    # New: average across chains per step, then cumulative mean over time.
+    mean_over_chains = np.mean(L, axis=0)  # (T,)
+    cumsum_pooled = np.cumsum(mean_over_chains)  # (T,)
+    pooled = cumsum_pooled / np.arange(1, T + 1)  # (T,)
+    lam_pooled = n * float(beta) * (pooled - L0)  # (T,)
+
+    # mean ± 2·SE band from ESS
     summ = az.summary(idata, var_names=["llc"])
     mu, se = float(idata.posterior["llc"].values.mean()), np.nan
     if not summ.empty:
@@ -159,6 +173,7 @@ def fig_running_llc(idata, n: int, beta: float, L0: float, title: str) -> plt.Fi
         sd = float(summ["sd"].iloc[0])
         se = sd / np.sqrt(max(1.0, ess))
 
+    # Plot
     fig, ax = plt.subplots(1, 1, figsize=(8, 4))
     for i in range(C):
         ax.plot(lam[i], alpha=0.7, label=f"Chain {i}")
@@ -166,6 +181,7 @@ def fig_running_llc(idata, n: int, beta: float, L0: float, title: str) -> plt.Fi
     if np.isfinite(se):
         ax.axhline(mu, ls="--", lw=1)
         ax.fill_between(np.arange(T), mu - 2 * se, mu + 2 * se, alpha=0.1)
+
     ax.set_xlabel("Evaluation")
     ax.set_ylabel("LLC = n·β·(E[Lₙ] − L₀)")
     ax.set_title(title)
@@ -177,7 +193,9 @@ def fig_running_llc(idata, n: int, beta: float, L0: float, title: str) -> plt.Fi
 def fig_rank_llc(idata) -> plt.Figure:
     az = _az()
     axes = az.plot_rank(idata, var_names=["llc"])
-    return getattr(axes, "figure", axes.flat[0].figure)
+    if isinstance(axes, (list, tuple, np.ndarray)):
+        return axes.flat[0].figure
+    return axes.figure
 
 
 def fig_autocorr_llc(idata) -> plt.Figure:
@@ -208,20 +226,41 @@ def fig_energy(idata) -> plt.Figure:
 
 def fig_theta_trace(idata, dims: int = 4) -> plt.Figure:
     az = _az()
-    # subset dims if present
-    if "theta" not in idata.posterior:
-        raise ValueError("posterior['theta'] missing.")
-    nd = idata.posterior["theta"].shape[-1]
-    sel = {"theta_dim": np.arange(min(dims, nd))}
-    fig, axes = plt.subplots(2, min(dims, nd), figsize=(12, 6), squeeze=False)
-    az.plot_trace(
-        idata,
-        var_names=["theta"],
-        coords=sel,
-        axes=axes,
-        backend_kwargs={"constrained_layout": True},
-    )
-    return fig
+
+    # Check if we have scalar theta variables (new approach)
+    theta_vars = [v for v in idata.posterior.data_vars if v.startswith("theta_")]
+
+    if theta_vars:
+        # Use scalar theta variables - ArviZ will naturally create one row per variable
+        # Sort numerically to ensure proper ordering (theta_0, theta_1, theta_2, ...)
+        theta_vars_sorted = sorted(theta_vars, key=lambda x: int(x.split('_')[1]))
+        n_vars = min(dims, len(theta_vars_sorted))
+        var_names = theta_vars_sorted[:n_vars]
+        axes = az.plot_trace(
+            idata,
+            var_names=var_names,
+            backend_kwargs={"constrained_layout": True}
+        )
+        # Return figure from axes grid
+        if isinstance(axes, (list, tuple, np.ndarray)):
+            return axes.flat[0].figure
+        return axes.figure
+    else:
+        # Fallback to old approach with multi-dimensional theta
+        if "theta" not in idata.posterior:
+            raise ValueError("Neither scalar theta_* nor multi-dim theta found.")
+        nd = idata.posterior["theta"].shape[-1]
+        n_vars = min(dims, nd)
+        sel = {"theta_dim": list(range(n_vars))}
+        fig, axes = plt.subplots(n_vars, 2, figsize=(12, 3*n_vars), squeeze=False)
+        az.plot_trace(
+            idata,
+            var_names=["theta"],
+            coords=sel,
+            axes=axes,
+            backend_kwargs={"constrained_layout": True},
+        )
+        return fig
 
 
 # ---------- Diagnostic Generation ----------
@@ -271,14 +310,15 @@ def generate_diagnostics(
     except Exception:
         pass
     try:
-        theta_dims = min(
-            max_theta_dims,
-            int(
-                idata.posterior.get("theta", {"theta_dim": [0]}).sizes.get(
-                    "theta_dim", 0
-                )
-            ),
-        )
+        # Check for scalar theta variables first
+        theta_scalar = [v for v in idata.posterior.data_vars if v.startswith("theta_")]
+        if theta_scalar:
+            theta_dims = min(max_theta_dims, len(theta_scalar))
+        elif "theta" in idata.posterior:
+            theta_dims = min(max_theta_dims, int(idata.posterior["theta"].sizes.get("theta_dim", 0)))
+        else:
+            theta_dims = 0
+
         if theta_dims > 0:
             figs.append(
                 (

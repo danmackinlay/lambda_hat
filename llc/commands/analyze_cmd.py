@@ -20,7 +20,7 @@ def analyze_entry(
     )
 
     run_dir = Path(run_dir)
-    out_dir = Path(out or run_dir)
+    out_dir = Path(out or (run_dir / "analysis"))
     out_dir.mkdir(parents=True, exist_ok=True)
     which = ["sgld", "hmc", "mclmc"] if which == "all" else [which]
     plots = [p.strip() for p in plots.split(",") if p.strip()]
@@ -49,9 +49,18 @@ def analyze_entry(
             try:
                 if p == "running_llc":
                     # need L0, n, beta; derive from attrs if you stored them, else skip:
-                    n = int(
-                        idata.attrs.get("n_data", 0) or idata.posterior["L"].shape[1]
-                    )
+                    n_attr = idata.attrs.get("n_data", None)
+                    if n_attr is None:
+                        print(f"[{s}] warning: n_data missing in attrs; reading {run_dir/'config.json'}")
+                        try:
+                            import json
+                            with open(run_dir/'config.json') as f:
+                                n = int(json.load(f)["n_data"])
+                        except Exception:
+                            print(f"[{s}] error: cannot determine n_data; skipping running_llc")
+                            continue
+                    else:
+                        n = int(n_attr)
                     beta = float(idata.attrs.get("beta", 1.0))
                     L0 = float(idata.attrs.get("L0", 0.0))
                     fig = fig_running_llc(idata, n, beta, L0, f"{s} Running LLC")
@@ -69,8 +78,13 @@ def analyze_entry(
                     fig = fig_autocorr_llc(idata)
                     path = out_dir / f"{s}_llc_autocorr.png"
                 elif p == "energy":
-                    fig = fig_energy(idata)
-                    path = out_dir / f"{s}_energy.png"
+                    # only if this idata actually has sample_stats.energy
+                    if "energy" in (getattr(idata, "sample_stats", {}) or {}):
+                        fig = fig_energy(idata)
+                        path = out_dir / f"{s}_energy.png"
+                    else:
+                        # silently skip for samplers like SGLD
+                        continue
                 elif p == "theta":
                     fig = fig_theta_trace(idata, dims=4)
                     path = out_dir / f"{s}_theta_trace.png"
