@@ -20,6 +20,18 @@ def run_shared_options():
             default=None,
             help="Apply preset configuration.",
         )(f)
+        # GPU options
+        f = click.option(
+            "--gpu-mode",
+            type=click.Choice(["off", "vectorized", "sequential"]),
+            default="off",
+            help="GPU execution on a single device: 'vectorized' vmaps chains; 'sequential' runs one chain at a time.",
+        )(f)
+        f = click.option(
+            "--cuda-devices",
+            type=str,
+            help="CUDA_VISIBLE_DEVICES string, e.g. '0' or '0,1'. Optional.",
+        )(f)
         # Control flags
         f = click.option(
             "--skip/--no-skip",

@@ -2,6 +2,7 @@
 
 import json
 import os
+from dataclasses import replace
 
 from llc.config import CFG, config_schema_hash
 from llc.util.config_overrides import apply_preset_then_overrides
@@ -16,9 +17,25 @@ def sweep_entry(kwargs: dict) -> None:
     save_artifacts = not kwargs.pop("no_artifacts", False)
     skip_if_exists = kwargs.pop("skip_if_exists", True)
     preset = kwargs.pop("preset", None)
+    gpu_mode = kwargs.pop("gpu_mode", "off")
+    cuda_devices = kwargs.pop("cuda_devices", None)
+
+    # Set JAX platform before any JAX imports
+    if gpu_mode == "off":
+        os.environ["JAX_PLATFORMS"] = "cpu"
+    else:
+        os.environ["JAX_PLATFORMS"] = "cuda"
+    if cuda_devices:
+        os.environ["CUDA_VISIBLE_DEVICES"] = cuda_devices
 
     # Build base config for sweep
     base_cfg = apply_preset_then_overrides(CFG, preset, kwargs)
+
+    # Map GPU mode to batching configuration for base config
+    if gpu_mode == "vectorized":
+        base_cfg = replace(base_cfg, use_batched_chains=True)
+    elif gpu_mode == "sequential":
+        base_cfg = replace(base_cfg, use_batched_chains=False)
 
     # Build worklist - import only when needed
     from llc.experiments import build_sweep_worklist, sweep_space

@@ -1,5 +1,7 @@
 """Run command implementation."""
 
+import os
+from dataclasses import replace
 from llc.config import CFG, config_schema_hash
 from llc.util.config_overrides import apply_preset_then_overrides
 from llc.util.modal_utils import extract_modal_artifacts_locally
@@ -11,9 +13,25 @@ def run_entry(kwargs: dict) -> None:
     skip_if_exists = kwargs.pop("skip_if_exists", True)
     preset = kwargs.pop("preset", None)
     backend = (kwargs.pop("backend") or "local").lower()
+    gpu_mode = kwargs.pop("gpu_mode", "off")
+    cuda_devices = kwargs.pop("cuda_devices", None)
+
+    # Set JAX platform before any JAX imports
+    if gpu_mode == "off":
+        os.environ["JAX_PLATFORMS"] = "cpu"
+    else:
+        os.environ["JAX_PLATFORMS"] = "cuda"
+    if cuda_devices:
+        os.environ["CUDA_VISIBLE_DEVICES"] = cuda_devices
 
     # Build config = preset + overrides
     cfg = apply_preset_then_overrides(CFG, preset, kwargs)
+
+    # Map GPU mode to batching configuration
+    if gpu_mode == "vectorized":
+        cfg = replace(cfg, use_batched_chains=True)
+    elif gpu_mode == "sequential":
+        cfg = replace(cfg, use_batched_chains=False)
 
     if backend == "local":
         # Import heavy JAX-touching modules only when needed
@@ -30,17 +48,23 @@ def run_entry(kwargs: dict) -> None:
     cfg_dict["save_artifacts"] = save_artifacts
     cfg_dict["skip_if_exists"] = skip_if_exists
     cfg_dict["config_schema"] = config_schema_hash()
+    cfg_dict["gpu_mode"] = gpu_mode  # Pass GPU mode to remote executor
 
     # Import execution modules only when needed for remote backends
     from llc.execution import get_executor
     from llc.tasks import run_experiment_task
 
     if backend == "modal":
-        # Ensure the Modal App is running so the function hydrates
-        from llc.modal_app import app, run_experiment_remote
+        # Choose GPU or CPU Modal function based on gpu_mode
+        if gpu_mode == "off":
+            from llc.modal_app import app, run_experiment_remote
+            remote_fn = run_experiment_remote
+        else:
+            from llc.modal_app import app, run_experiment_remote_gpu
+            remote_fn = run_experiment_remote_gpu
 
         with app.run():
-            executor = get_executor(backend="modal", remote_fn=run_experiment_remote)
+            executor = get_executor(backend="modal", remote_fn=remote_fn)
             [result_dict] = executor.map(run_experiment_task, [cfg_dict])
 
         # Download artifacts locally (optional convenience)

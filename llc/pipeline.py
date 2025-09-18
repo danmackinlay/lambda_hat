@@ -9,7 +9,7 @@ import logging
 import os
 
 import jax.numpy as jnp
-from jax import random, jit
+from jax import random, jit, device_put
 import numpy as np
 
 from .config import Config
@@ -114,6 +114,14 @@ def run_one(
     dim = bundle.d
     print(f"Parameter dimension: {dim:,d}")
 
+    # Move data to GPU if CUDA is enabled
+    theta0_f32 = device_put(theta0_f32)
+    theta0_f64 = device_put(theta0_f64)
+    X_f32 = device_put(X_f32)
+    Y_f32 = device_put(Y_f32)
+    X_f64 = device_put(X_f64)
+    Y_f64 = device_put(Y_f64)
+
     beta, gamma = compute_beta_gamma(cfg, dim)
     print(f"beta={beta:.6g} gamma={gamma:.6g}")
 
@@ -152,6 +160,7 @@ def run_one(
         init_thetas_sgld = theta0_f32 + 0.01 * random.normal(
             k_sgld, (cfg.chains, dim)
         ).astype(jnp.float32)
+        init_thetas_sgld = device_put(init_thetas_sgld)
 
         # Choose batched or sequential SGLD execution
         sgld_runner = (
@@ -256,6 +265,7 @@ def run_one(
         logger.info("Running HMC (BlackJAX, online)")
         k_hmc = random.fold_in(key, 123)
         init_thetas_hmc = theta0_f64 + 0.01 * random.normal(k_hmc, (cfg.chains, dim))
+        init_thetas_hmc = device_put(init_thetas_hmc)
 
         # Choose batched or sequential HMC execution
         if cfg.use_batched_chains:
@@ -372,6 +382,7 @@ def run_one(
         init_thetas_mclmc = theta0_f64 + 0.01 * random.normal(
             k_mclmc, (cfg.chains, dim)
         )
+        init_thetas_mclmc = device_put(init_thetas_mclmc)
 
         # Create logdensity for MCLMC
         logdensity_mclmc = make_logdensity_for_mclmc(
