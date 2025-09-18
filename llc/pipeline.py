@@ -35,6 +35,8 @@ from .runners import (
     run_sgld_online_batched,
     run_hmc_online_batched,
 )
+from .convert import to_idata
+import arviz as az
 from .samplers.base import prepare_diag_targets
 from .diagnostics import llc_mean_and_se_from_histories, plot_diagnostics
 from .artifacts import (
@@ -166,7 +168,7 @@ def run_one(
         sgld_runner = (
             run_sgld_online_batched if cfg.use_batched_chains else run_sgld_online
         )
-        sgld_samples_thin, sgld_Es, sgld_Vars, sgld_Ns, Ln_histories_sgld = sgld_runner(
+        res_sgld = sgld_runner(
             k_sgld,
             init_thetas_sgld,
             grad_logpost_minibatch_f32,
@@ -194,7 +196,7 @@ def run_one(
 
         # Compute LLC with ESS-based uncertainty
         llc_sgld_mean, se_sgld, ess_sgld = llc_mean_and_se_from_histories(
-            Ln_histories_sgld, cfg.n_data, beta, L0
+            res_sgld.Ln_histories, cfg.n_data, beta, L0
         )
         print(f"SGLD LLC: {llc_sgld_mean:.4f} ± {se_sgld:.4f} (ESS: {ess_sgld:.1f})")
 
@@ -259,7 +261,7 @@ def run_one(
                 "sgld_n_full_loss": int(stats.n_sgld_full_loss),
             }
         )
-        histories["sgld"] = Ln_histories_sgld
+        histories["sgld"] = res_sgld.Ln_histories
 
     # ===== HMC (Online) =====
     if "hmc" in getattr(cfg, "samplers", ["sgld"]):
@@ -269,15 +271,7 @@ def run_one(
 
         # Choose batched or sequential HMC execution
         if cfg.use_batched_chains:
-            (
-                hmc_samples_thin,
-                hmc_Es,
-                hmc_Vars,
-                hmc_Ns,
-                accs_hmc,
-                Ln_histories_hmc,
-                energies_hmc,
-            ) = run_hmc_online_batched(
+            res_hmc = run_hmc_online_batched(
                 k_hmc,
                 init_thetas_hmc,
                 logpost_and_grad_f64,
@@ -290,15 +284,7 @@ def run_one(
                 **diag_targets,
             )
         else:
-            (
-                hmc_samples_thin,
-                hmc_Es,
-                hmc_Vars,
-                hmc_Ns,
-                accs_hmc,
-                Ln_histories_hmc,
-                energies_hmc,
-            ) = run_hmc_online_with_adaptation(
+            res_hmc = run_hmc_online_with_adaptation(
                 k_hmc,
                 init_thetas_hmc,
                 logpost_and_grad_f64,
@@ -316,9 +302,9 @@ def run_one(
 
         # Compute LLC with ESS-based uncertainty
         llc_hmc_mean, se_hmc, ess_hmc = llc_mean_and_se_from_histories(
-            Ln_histories_hmc, cfg.n_data, beta, L0
+            res_hmc.Ln_histories, cfg.n_data, beta, L0
         )
-        vals = [np.nanmean(a) for a in accs_hmc if a.size]
+        vals = [np.nanmean(a) for a in res_hmc.acceptance if a.size] if res_hmc.acceptance else []
         mean_acc = float(np.nanmean(vals)) if vals else float("nan")
 
         print(f"HMC LLC: {llc_hmc_mean:.4f} ± {se_hmc:.4f} (ESS: {ess_hmc:.1f})")
@@ -379,13 +365,13 @@ def run_one(
                 "hmc_n_leapfrog_grads": int(stats.n_hmc_leapfrog_grads),
                 "hmc_n_full_loss": int(stats.n_hmc_full_loss),
                 "hmc_mean_acceptance": float(
-                    np.nanmean([np.nanmean(a) for a in accs_hmc if a.size])
+                    np.nanmean([np.nanmean(a) for a in res_hmc.acceptance if a.size])
                 )
-                if any(a.size for a in accs_hmc)
+                if res_hmc.acceptance and any(a.size for a in res_hmc.acceptance)
                 else float("nan"),
             }
         )
-        histories["hmc"] = Ln_histories_hmc
+        histories["hmc"] = res_hmc.Ln_histories
 
     # ===== MCLMC (Online) =====
     if "mclmc" in getattr(cfg, "samplers", ["sgld"]):
@@ -403,14 +389,7 @@ def run_one(
         if cfg.use_batched_chains:
             from llc.runners import run_mclmc_online_batched
 
-            (
-                mclmc_samples_thin,
-                mclmc_Es,
-                mclmc_Vars,
-                mclmc_Ns,
-                energy_deltas_mclmc,
-                Ln_histories_mclmc,
-            ) = run_mclmc_online_batched(
+            res_mclmc = run_mclmc_online_batched(
                 k_mclmc,
                 init_thetas_mclmc,
                 logdensity_mclmc,
@@ -428,14 +407,7 @@ def run_one(
                 **diag_targets,
             )
         else:
-            (
-                mclmc_samples_thin,
-                mclmc_Es,
-                mclmc_Vars,
-                mclmc_Ns,
-                energy_deltas_mclmc,
-                Ln_histories_mclmc,
-            ) = run_mclmc_online(
+            res_mclmc = run_mclmc_online(
                 k_mclmc,
                 init_thetas_mclmc,
                 logdensity_mclmc,
@@ -455,7 +427,7 @@ def run_one(
 
         # Compute LLC with ESS-based uncertainty
         llc_mclmc_mean, se_mclmc, ess_mclmc = llc_mean_and_se_from_histories(
-            Ln_histories_mclmc, cfg.n_data, beta, L0
+            res_mclmc.Ln_histories, cfg.n_data, beta, L0
         )
         print(
             f"MCLMC LLC: {llc_mclmc_mean:.4f} ± {se_mclmc:.4f} (ESS: {ess_mclmc:.1f})"
@@ -522,7 +494,7 @@ def run_one(
                 "mclmc_wnv_fde": wnv_fde_mclmc,
             }
         )
-        histories["mclmc"] = Ln_histories_mclmc
+        histories["mclmc"] = res_mclmc.Ln_histories
 
     print(f"\nTotal Runtime: {toc(t0):.2f}s")
 
@@ -533,7 +505,41 @@ def run_one(
         # Save L0 for running LLC reconstruction
         save_L0(run_dir, L0)
 
-        # Save L_n histories as ArviZ InferenceData (NetCDF)
+        # Save unified InferenceData files per sampler (new format)
+        if "sgld" in getattr(cfg, "samplers", []) and 'res_sgld' in locals():
+            idata_sgld = to_idata(
+                Ln_histories=res_sgld.Ln_histories,
+                theta_thin=res_sgld.theta_thin,
+                acceptance=res_sgld.acceptance,
+                energy=res_sgld.energy,
+                n=cfg.n_data, beta=beta, L0=L0,
+            )
+            idata_sgld.attrs.update({"n_data": int(cfg.n_data), "beta": float(beta), "L0": float(L0), "sampler": "sgld"})
+            az.to_netcdf(idata_sgld, f"{run_dir}/sgld.nc")
+
+        if "hmc" in getattr(cfg, "samplers", []) and 'res_hmc' in locals():
+            idata_hmc = to_idata(
+                Ln_histories=res_hmc.Ln_histories,
+                theta_thin=res_hmc.theta_thin,
+                acceptance=res_hmc.acceptance,
+                energy=res_hmc.energy,
+                n=cfg.n_data, beta=beta, L0=L0,
+            )
+            idata_hmc.attrs.update({"n_data": int(cfg.n_data), "beta": float(beta), "L0": float(L0), "sampler": "hmc"})
+            az.to_netcdf(idata_hmc, f"{run_dir}/hmc.nc")
+
+        if "mclmc" in getattr(cfg, "samplers", []) and 'res_mclmc' in locals():
+            idata_mclmc = to_idata(
+                Ln_histories=res_mclmc.Ln_histories,
+                theta_thin=res_mclmc.theta_thin,
+                acceptance=res_mclmc.acceptance,
+                energy=res_mclmc.energy,
+                n=cfg.n_data, beta=beta, L0=L0,
+            )
+            idata_mclmc.attrs.update({"n_data": int(cfg.n_data), "beta": float(beta), "L0": float(L0), "sampler": "mclmc"})
+            az.to_netcdf(idata_mclmc, f"{run_dir}/mclmc.nc")
+
+        # Keep legacy format for compatibility
         if "sgld" in getattr(cfg, "samplers", []):
             save_idata_L(run_dir, "sgld", histories.get("sgld", []))
         if "hmc" in getattr(cfg, "samplers", []):
@@ -541,13 +547,13 @@ def run_one(
         if "mclmc" in getattr(cfg, "samplers", []):
             save_idata_L(run_dir, "mclmc", histories.get("mclmc", []))
 
-        # Save thinned theta samples as ArviZ InferenceData
-        if "sgld" in getattr(cfg, "samplers", []):
-            save_idata_theta(run_dir, "sgld", locals().get("sgld_samples_thin", []))
-        if "hmc" in getattr(cfg, "samplers", []):
-            save_idata_theta(run_dir, "hmc", locals().get("hmc_samples_thin", []))
-        if "mclmc" in getattr(cfg, "samplers", []):
-            save_idata_theta(run_dir, "mclmc", locals().get("mclmc_samples_thin", []))
+        # Save thinned theta samples as ArviZ InferenceData (legacy)
+        if "sgld" in getattr(cfg, "samplers", []) and 'res_sgld' in locals():
+            save_idata_theta(run_dir, "sgld", res_sgld.theta_thin)
+        if "hmc" in getattr(cfg, "samplers", []) and 'res_hmc' in locals():
+            save_idata_theta(run_dir, "hmc", res_hmc.theta_thin)
+        if "mclmc" in getattr(cfg, "samplers", []) and 'res_mclmc' in locals():
+            save_idata_theta(run_dir, "mclmc", res_mclmc.theta_thin)
 
         # Save all metrics
         save_metrics(run_dir, all_metrics)
@@ -561,39 +567,39 @@ def run_one(
             logger.info("Generating diagnostic plots...")
 
             # Call single-sampler plot_diagnostics for each sampler
-            if sgld_samples_thin.size > 0:
+            if 'res_sgld' in locals() and hasattr(res_sgld.theta_thin, 'size') and res_sgld.theta_thin.size > 0:
                 plot_diagnostics(
                     run_dir=run_dir,
                     sampler_name="sgld",
-                    Ln_histories=Ln_histories_sgld,
-                    samples_thin=sgld_samples_thin,
+                    Ln_histories=res_sgld.Ln_histories,
+                    samples_thin=res_sgld.theta_thin,
                     n=cfg.n_data,
                     beta=beta,
                     L0=L0,
                     save_plots=cfg.save_plots,
                 )
 
-            if hmc_samples_thin.size > 0:
+            if 'res_hmc' in locals() and hasattr(res_hmc.theta_thin, 'size') and res_hmc.theta_thin.size > 0:
                 plot_diagnostics(
                     run_dir=run_dir,
                     sampler_name="hmc",
-                    Ln_histories=Ln_histories_hmc,
-                    samples_thin=hmc_samples_thin,
-                    acceptance_rates=accs_hmc,
-                    energies=energies_hmc,
+                    Ln_histories=res_hmc.Ln_histories,
+                    samples_thin=res_hmc.theta_thin,
+                    acceptance_rates=res_hmc.acceptance,
+                    energies=res_hmc.energy,
                     n=cfg.n_data,
                     beta=beta,
                     L0=L0,
                     save_plots=cfg.save_plots,
                 )
 
-            if mclmc_samples_thin.size > 0:
+            if 'res_mclmc' in locals() and hasattr(res_mclmc.theta_thin, 'size') and res_mclmc.theta_thin.size > 0:
                 plot_diagnostics(
                     run_dir=run_dir,
                     sampler_name="mclmc",
-                    Ln_histories=Ln_histories_mclmc,
-                    samples_thin=mclmc_samples_thin,
-                    energy_deltas=energy_deltas_mclmc,
+                    Ln_histories=res_mclmc.Ln_histories,
+                    samples_thin=res_mclmc.theta_thin,
+                    energy_deltas=res_mclmc.energy,
                     n=cfg.n_data,
                     beta=beta,
                     L0=L0,
