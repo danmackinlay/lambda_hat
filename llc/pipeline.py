@@ -141,9 +141,10 @@ def run_one(
         loss_full_f64, loss_minibatch_f64, theta0_f64, cfg.n_data, beta, gamma
     )
 
-    # L0 is provided by the target (at θ0)
+    # L0 at the empirical minimizer (from target bundle)
     L0 = float(bundle.L0)
-    print(f"L0 at reference θ0: {L0:.6f}")
+    print(f"L0 at empirical minimizer: {L0:.6f}")
+    target_se = 1.0  # used for time/fde-to-target across samplers
 
     # JIT compile the loss evaluator for LLC computation
     Ln_full64 = jit(loss_full_f64)
@@ -226,7 +227,6 @@ def run_one(
             if np.isfinite(s_hat_sgld) and ess_sgld > 0
             else np.nan
         )
-        target_se = 1.0  # configurable if you want
         ess_target = (
             (s_hat_sgld / target_se) ** 2
             if np.isfinite(s_hat_sgld) and s_hat_sgld > 0

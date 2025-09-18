@@ -2,9 +2,8 @@
 """Diagnostic and plotting utilities for LLC analysis (lean + robust).
 
 Note on ESS (Effective Sample Size):
-For MCMC samplers like HMC, ESS provides a relatively rigorous estimate of statistical efficiency.
-For SGLD and MCLMC, ESS is a useful heuristic for comparison but not a strict guarantee
-due to their non-reversible dynamics and different theoretical foundations.
+For full-data MCMC samplers like HMC, ESS provides a relatively rigorous estimate of statistical efficiency.
+For stochastic gradient samples SGLD and MCLMC, ESS is even more heuristic.
 """
 
 from __future__ import annotations
@@ -124,8 +123,7 @@ def llc_ci_from_histories(
 
     if len(pooled) > 1 and eff_sample_size > 1:
         se_val = float(np.std(pooled, ddof=1) / np.sqrt(eff_sample_size))
-        # Normal approximation CI
-        z = norm.ppf(1 - alpha / 2)
+        z = float(norm.ppf(1 - alpha / 2))
         ci = (mean_val - z * se_val, mean_val + z * se_val)
     else:
         ci = (mean_val, mean_val)
@@ -550,8 +548,10 @@ def _finalize_figure(
     fig.savefig(path, dpi=dpi, bbox_inches=bbox_inches, facecolor="white")
 
 
-def create_summary_dataframe(results: dict, samplers: List[str]) -> pd.DataFrame:
+def create_summary_dataframe(results: dict, samplers: List[str]) -> Any:
     """Create a summary dataframe from sampling results"""
+    # Lazy import so diagnostics module can import without pandas installed.
+    import pandas as pd  # type: ignore
     summary_data = []
 
     for sampler in samplers:
