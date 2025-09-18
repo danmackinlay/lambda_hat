@@ -462,6 +462,69 @@ The client imports `run_experiment_remote` from `modal_app.py` and calls `.map(.
 * **Scaling studies**: push toward larger ReLU/GELU networks, beyond HMC’s limit, to stress-test SGLD/MCLMC.
 * **Better LLC error estimation**: block bootstrap on $L_n$ traces, multi-chain variance combination.
 
+## Runs and Artifacts
+
+When you execute an experiment (`llc run`, `llc sweep`), the system creates a **run** identified by a deterministic `run_id`. That run produces a directory of **artifacts** — the saved outputs of the experiment.
+
+### Where runs live
+
+* **Local:** `runs/<run_id>/`
+* **Modal backend:** the same folder is written to the shared `/artifacts` volume; you can later `llc pull-artifacts` to copy it back locally.
+
+### What’s inside a run directory
+
+Every run folder contains:
+
+* `config.json` – the full configuration, including dataset, model, and sampler parameters. Inspect this to rediscover exactly how the run was set up.
+* `metrics.json` – all summary statistics (LLC mean/SE, ESS, WNV, timing, gradient counts, acceptance rates, etc.) per sampler.
+* `{sgld,hmc,mclmc}.nc` – ArviZ NetCDF files with full per-chain traces (Lₙ, LLC, thinned parameters, acceptance, energies). These are the canonical inputs for `llc analyze` and plotting.
+* `L0.txt` – baseline loss at the ERM/θ⋆.
+* (Optional) diagnostic PNGs if you ran with `--save-plots`.
+
+That’s all you need for post-hoc analysis.
+
+### Why some commands ask for a *run* and others for *artifacts*
+
+* `llc run` / `llc sweep` **create a run**. You usually just see the run ID in the logs.
+* `llc analyze <run_dir>` and `llc promote-readme-images <run_dir>` expect a **run directory** (the canonical output of a run). If you omit `run_dir` in `promote-readme-images`, it picks the newest run automatically.
+* `llc pull-artifacts [run_id]` is Modal-specific: it looks up a run on the remote volume by ID and downloads the **artifact directory** back under `artifacts/<run_id>/`. From there you can browse or analyze locally.
+
+In other words:
+
+* Use `run_dir` when you want to **point at a specific finished experiment’s folder**.
+* Use `pull-artifacts` when you need to **retrieve that folder from Modal’s volume**.
+
+### Where to look for results
+
+* **Quick numbers:** check `metrics.json` inside a run folder.
+* **Plots/diagnostics:** run `llc analyze <run_dir>` to generate PNGs from the `.nc` files into `<run_dir>/analysis/`.
+* **Parameters/config:** open `config.json`. This records every hyperparameter and is the definitive reference for reproducing the run.
+* **Sweeps:** after `llc sweep`, results across runs are aggregated into `llc_sweep_results.csv` for easy plotting with `llc plot-sweep`.
+
+
+```text
+runs/
+└── abcd1234/                # run_id (deterministic from config + code)
+    ├── config.json          # full configuration (all dataset/model/sampler params)
+    ├── metrics.json         # summary statistics per sampler (LLC mean/SE, ESS, WNV, timings, work counts)
+    ├── L0.txt               # baseline loss at ERM (θ⋆)
+    ├── sgld.nc              # ArviZ traces (Lₙ, LLC, θ, etc.) for SGLD
+    ├── hmc.nc               # traces + acceptance + energies for HMC
+    ├── mclmc.nc             # traces + energy deltas for MCLMC
+    └── analysis/            # created by `llc analyze`
+        ├── sgld_running_llc.png
+        ├── hmc_llc_rank.png
+        ├── mclmc_energy.png
+        └── ...              # whatever plots you requested
+```
+
+* Every run lives under `runs/<run_id>/` locally (or `/artifacts/<run_id>/` on Modal).
+* `config.json` = how the job was configured.
+* `metrics.json` = the numbers you usually quote in the paper.
+* `.nc` files = full traces for reproducible post-hoc analysis.
+* `analysis/` = figures generated afterwards with `llc analyze`.
+
+
 ---
 
 ## Notes on BlackJAX API (v1.2.5)
