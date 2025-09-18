@@ -15,8 +15,6 @@ wheels/
 .venv
 
 # Artifacts and visualization outputs
-artifacts/*
-!artifacts/.keep
 runs/*
 !runs/.keep
 *.png

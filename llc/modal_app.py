@@ -37,7 +37,7 @@ app = modal.App("llc-experiments", image=image)
     timeout=3
     * 60
     * 60,  # generous 3 hours, jobs may terminate early & we're OK with it
-    volumes={"/artifacts": artifacts_volume},
+    volumes={"/runs": runs_volume},
     retries=modal.Retries(
         max_retries=3,
         backoff_coefficient=2.0,
@@ -59,15 +59,15 @@ def run_experiment_remote(cfg_dict: dict) -> dict:
     import shutil
     from llc.tasks import run_experiment_task
 
-    # Make caching effective across calls: write artifacts directly to the volume.
+    # Make caching effective across calls: write runs directly to the volume.
     cfg_dict = dict(cfg_dict)
-    if os.path.isdir("/artifacts"):
-        print("[Modal] Volume /artifacts exists, setting artifacts_dir=/artifacts")
+    if os.path.isdir("/runs"):
+        print("[Modal] Volume /runs exists, setting artifacts_dir=/runs")
         cfg_dict.setdefault("save_artifacts", True)
-        cfg_dict["artifacts_dir"] = "/artifacts"
+        cfg_dict["artifacts_dir"] = "/runs"
     else:
         print(
-            "[Modal] Warning: Volume /artifacts not found, using default artifacts_dir"
+            "[Modal] Warning: Volume /runs not found, using default artifacts_dir"
         )
 
     result = run_experiment_task(cfg_dict)
@@ -89,13 +89,13 @@ def run_experiment_remote(cfg_dict: dict) -> dict:
             result["artifact_tar"] = buf.getvalue()
             result["run_id"] = rid
 
-            # (2) Persist to volume under /artifacts/<rid> for remote browsing
+            # (2) Persist to volume under /runs/<rid> for remote browsing
             try:
-                vol_dir = f"/artifacts/{rid}"
+                vol_dir = f"/runs/{rid}"
                 if os.path.exists(vol_dir):
                     shutil.rmtree(vol_dir)
                 shutil.copytree(run_dir, vol_dir)
-                artifacts_volume.commit()
+                runs_volume.commit()
                 result["run_dir"] = vol_dir
             except Exception as e:
                 # Non-fatal; we still have the tar
@@ -109,7 +109,7 @@ def run_experiment_remote(cfg_dict: dict) -> dict:
     image=gpu_image,
     gpu="L40S",
     timeout=3 * 60 * 60,  # generous 3 hours
-    volumes={"/artifacts": artifacts_volume},
+    volumes={"/runs": runs_volume},
     retries=modal.Retries(
         max_retries=3,
         backoff_coefficient=2.0,
@@ -128,15 +128,15 @@ def run_experiment_remote_gpu(cfg_dict: dict) -> dict:
     import shutil
     from llc.tasks import run_experiment_task
 
-    # Make caching effective across calls: write artifacts directly to the volume.
+    # Make caching effective across calls: write runs directly to the volume.
     cfg_dict = dict(cfg_dict)
-    if os.path.isdir("/artifacts"):
-        print("[Modal GPU] Volume /artifacts exists, setting artifacts_dir=/artifacts")
+    if os.path.isdir("/runs"):
+        print("[Modal GPU] Volume /runs exists, setting artifacts_dir=/runs")
         cfg_dict.setdefault("save_artifacts", True)
-        cfg_dict["artifacts_dir"] = "/artifacts"
+        cfg_dict["artifacts_dir"] = "/runs"
     else:
         print(
-            "[Modal GPU] Warning: Volume /artifacts not found, using default artifacts_dir"
+            "[Modal GPU] Warning: Volume /runs not found, using default artifacts_dir"
         )
 
     result = run_experiment_task(cfg_dict)
@@ -158,13 +158,13 @@ def run_experiment_remote_gpu(cfg_dict: dict) -> dict:
             result["artifact_tar"] = buf.getvalue()
             result["run_id"] = rid
 
-            # (2) Persist to volume under /artifacts/<rid> for remote browsing
+            # (2) Persist to volume under /runs/<rid> for remote browsing
             try:
-                vol_dir = f"/artifacts/{rid}"
+                vol_dir = f"/runs/{rid}"
                 if os.path.exists(vol_dir):
                     shutil.rmtree(vol_dir)
                 shutil.copytree(run_dir, vol_dir)
-                artifacts_volume.commit()
+                runs_volume.commit()
                 result["run_dir"] = vol_dir
             except Exception as e:
                 # Non-fatal; we still have the tar
@@ -177,14 +177,14 @@ def run_experiment_remote_gpu(cfg_dict: dict) -> dict:
 # --- SDK helpers for artifact management ---
 
 
-@app.function(volumes={"/artifacts": artifacts_volume})
-def list_artifacts(prefix: str = "/artifacts") -> list[str]:
-    """List artifact directories on the Modal volume (server-side)."""
+@app.function(volumes={"/runs": runs_volume})
+def list_runs(prefix: str = "/runs") -> list[str]:
+    """List run directories on the Modal volume (server-side)."""
     import os
 
     try:
         entries = sorted(
-            f"/artifacts/{name}"
+            f"/runs/{name}"
             for name in os.listdir(prefix)
             if os.path.isdir(os.path.join(prefix, name))
         )
@@ -193,15 +193,15 @@ def list_artifacts(prefix: str = "/artifacts") -> list[str]:
         return []
 
 
-@app.function(volumes={"/artifacts": artifacts_volume})
-def export_artifacts(run_id: str) -> bytes:
-    """Tar.gz a single run dir under /artifacts and return it as bytes."""
+@app.function(volumes={"/runs": runs_volume})
+def export_run(run_id: str) -> bytes:
+    """Tar.gz a single run dir under /runs and return it as bytes."""
     import io
     import os
     import tarfile
 
     run_path = (
-        f"/artifacts/{run_id}" if not run_id.startswith("/artifacts/") else run_id
+        f"/runs/{run_id}" if not run_id.startswith("/runs/") else run_id
     )
     if not os.path.isdir(run_path):
         raise FileNotFoundError(f"Not found: {run_path}")

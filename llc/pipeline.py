@@ -61,14 +61,20 @@ def run_one(
     """
     # Compute deterministic run ID
     rid = run_id(cfg)
-    # Use canonical runs/ directory, fallback to artifacts_dir for backward compatibility
-    if hasattr(cfg, "artifacts_dir") and cfg.artifacts_dir.endswith("/artifacts"):
+    # Use canonical runs/ directory everywhere (local and Modal)
+    if hasattr(cfg, "artifacts_dir") and cfg.artifacts_dir.endswith("/runs"):
+        # Modal path: cfg.artifacts_dir="/runs" -> run_dir="/runs/rid"
+        run_dir = os.path.join(cfg.artifacts_dir, rid)
+    elif hasattr(cfg, "artifacts_dir") and cfg.artifacts_dir.endswith("/artifacts"):
+        # Legacy: artifacts_dir="/path/artifacts" -> runs/rid under same parent
         base_dir = cfg.artifacts_dir.replace("/artifacts", "")
         run_dir = os.path.join(base_dir, "runs", rid)
     elif cfg.artifacts_dir == "artifacts":
+        # Legacy local: artifacts_dir="artifacts" -> runs/rid
         run_dir = os.path.join("runs", rid)
     else:
-        run_dir = os.path.join(cfg.artifacts_dir, rid)
+        # Default: use runs/ under current directory
+        run_dir = os.path.join("runs", rid)
 
     # Check if we should skip (results already exist)
     if skip_if_exists and os.path.exists(os.path.join(run_dir, "metrics.json")):

@@ -7,10 +7,10 @@ from pathlib import Path
 
 
 def extract_modal_artifacts_locally(result_dict: dict) -> None:
-    """Download and extract artifact tarball to ./artifacts/<run_id> if present."""
+    """Download and extract artifact tarball to ./runs/<run_id> if present."""
     if result_dict.get("artifact_tar") and result_dict.get("run_id"):
         rid = result_dict["run_id"]
-        dest_root = "artifacts"
+        dest_root = "runs"
         os.makedirs(dest_root, exist_ok=True)
         dest = os.path.join(dest_root, rid)
 
@@ -28,13 +28,13 @@ def extract_modal_artifacts_locally(result_dict: dict) -> None:
         result_dict["run_dir"] = dest
 
 
-def pull_and_extract_artifacts(run_id: str = None, target: str = "artifacts") -> str:
-    """Pull artifacts from Modal using SDK and extract locally."""
+def pull_and_extract_artifacts(run_id: str = None, target: str = "runs") -> str:
+    """Pull runs from Modal using SDK and extract locally."""
     import modal
 
     APP = "llc-experiments"
-    FN_LIST = "list_artifacts"
-    FN_EXPORT = "export_artifacts"
+    FN_LIST = "list_runs"
+    FN_EXPORT = "export_run"
 
     list_fn = modal.Function.from_name(APP, FN_LIST)
     export_fn = modal.Function.from_name(APP, FN_EXPORT)
@@ -43,9 +43,9 @@ def pull_and_extract_artifacts(run_id: str = None, target: str = "artifacts") ->
         print(f"[pull-sdk] Pulling specific run: {run_id}")
     else:
         print("[pull-sdk] Discovering latest run on server...")
-        paths = list_fn.remote("/artifacts")
+        paths = list_fn.remote("/runs")
         if not paths:
-            raise RuntimeError("No remote artifacts found.")
+            raise RuntimeError("No remote runs found.")
         run_id = Path(sorted(paths)[-1]).name
         print(f"[pull-sdk] Latest on server: {run_id}")
 
