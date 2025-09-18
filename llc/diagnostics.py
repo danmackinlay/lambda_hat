@@ -11,10 +11,17 @@ from __future__ import annotations
 from typing import List, Optional, Tuple, Any, Sequence
 import numpy as np
 import matplotlib.pyplot as plt
-from scipy.stats import norm
-import pandas as pd
+# Do not import heavy optional deps at module import time (keeps Modal happy)
+# pandas and scipy are imported lazily in the functions that need them.
 
 ESS_METHOD = "bulk"  # ArviZ bulk ESS (rank-normalized)
+
+__all__ = [
+    "llc_mean_and_se_from_histories",
+    "llc_ci_from_histories",
+    "plot_diagnostics",
+    "create_summary_dataframe",
+]
 
 
 def _az():
@@ -103,6 +110,8 @@ def llc_ci_from_histories(
 
     lam = n * beta * (H - L0)
     az = _az()
+    from scipy.stats import norm  # type: ignore
+
     idata = az.from_dict(
         posterior={"llc": lam},
         coords={"chain": np.arange(lam.shape[0]), "draw": np.arange(lam.shape[1])},
