@@ -189,7 +189,7 @@ def run_sgld_online(
         Ln_histories=[np.asarray(h, dtype=float) for h in L_histories],
         theta_thin=samples_thin,
         acceptance=None,  # SGLD doesn't have acceptance rates
-        energy=None,      # SGLD doesn't have energy
+        energy=None,  # SGLD doesn't have energy
         timings=timings,
         work=work,
     )
@@ -401,7 +401,9 @@ def run_mclmc_online(
         Ln_histories=[np.asarray(h, dtype=float) for h in L_histories],
         theta_thin=samples_thin,
         acceptance=None,  # MCLMC doesn't have acceptance rates
-        energy=[np.asarray(e, dtype=float) for e in energy_deltas],  # MCLMC has energy changes
+        energy=[
+            np.asarray(e, dtype=float) for e in energy_deltas
+        ],  # MCLMC has energy changes
         timings=timings,
         work=work,
     )
@@ -495,7 +497,7 @@ def run_sgld_online_batched(
         acceptance=None,
         energy=None,
         timings={},  # Batched version doesn't track timing details
-        work={},     # Batched version doesn't track work details
+        work={},  # Batched version doesn't track work details
     )
 
 
@@ -557,7 +559,7 @@ def run_hmc_online_batched(
         acceptance=acc_list,
         energy=energy_list,
         timings={},  # Batched version doesn't track timing details
-        work={},     # Batched version doesn't track work details
+        work={},  # Batched version doesn't track work details
     )
 
 
@@ -619,7 +621,7 @@ def run_mclmc_online_batched(
         Ln_histories=L_histories,
         theta_thin=kept_stacked,
         acceptance=None,  # MCLMC doesn't have acceptance rates
-        energy=dE_list,   # MCLMC has energy changes
-        timings={},       # Batched version doesn't track timing details
-        work={},          # Batched version doesn't track work details
+        energy=dE_list,  # MCLMC has energy changes
+        timings={},  # Batched version doesn't track timing details
+        work={},  # Batched version doesn't track work details
     )

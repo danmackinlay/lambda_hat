@@ -1,12 +1,38 @@
 # llc/analysis.py
 from __future__ import annotations
-from typing import Dict, Optional
+from typing import Dict, Optional, List
 import numpy as np
 import matplotlib.pyplot as plt
+from pathlib import Path
+
 
 def _az():
     import arviz as az
+
     return az
+
+
+# ---------- Data Conversion ----------
+def idata_from_histories(
+    *, Ln_histories, theta_thin, acceptance, energy, n, beta, L0, max_theta_dims=8
+):
+    """Convert raw sampling histories to ArviZ InferenceData with metadata."""
+    from llc.convert import to_idata
+
+    idata = to_idata(
+        Ln_histories=Ln_histories,
+        theta_thin=theta_thin,
+        acceptance=acceptance,
+        energy=energy,
+        n=n,
+        beta=beta,
+        L0=L0,
+        max_theta_dims=max_theta_dims,
+    )
+    # Mark attrs so figure fns don't need n,beta,L0 again
+    idata.attrs.update({"n_data": int(n), "beta": float(beta), "L0": float(L0)})
+    return idata
+
 
 # ---------- Metrics ----------
 def llc_point_se(idata) -> Dict[str, float]:
@@ -17,34 +43,94 @@ def llc_point_se(idata) -> Dict[str, float]:
     out = {"llc_mean": mu}
     if not summ.empty:
         ess_bulk = float(summ.get("ess_bulk", np.nan).iloc[0])
-        ess_tail = float(summ.get("ess_tail", np.nan).iloc[0]) if "ess_tail" in summ.columns else np.nan
-        rhat     = float(summ.get("r_hat",   np.nan).iloc[0]) if "r_hat"   in summ.columns else np.nan
-        sd       = float(summ.get("sd",      np.nan).iloc[0]) if "sd"      in summ.columns else np.nan
-        se       = float(sd / np.sqrt(ess_bulk)) if np.isfinite(sd) and ess_bulk > 0 else np.nan
-        out.update({"llc_se": se, "ess_bulk": ess_bulk, "ess_tail": ess_tail, "rhat": rhat})
+        ess_tail = (
+            float(summ.get("ess_tail", np.nan).iloc[0])
+            if "ess_tail" in summ.columns
+            else np.nan
+        )
+        rhat = (
+            float(summ.get("r_hat", np.nan).iloc[0])
+            if "r_hat" in summ.columns
+            else np.nan
+        )
+        sd = float(summ.get("sd", np.nan).iloc[0]) if "sd" in summ.columns else np.nan
+        se = (
+            float(sd / np.sqrt(ess_bulk))
+            if np.isfinite(sd) and ess_bulk > 0
+            else np.nan
+        )
+        out.update(
+            {"llc_se": se, "ess_bulk": ess_bulk, "ess_tail": ess_tail, "rhat": rhat}
+        )
     return out
 
-def efficiency_metrics(*, idata, timings: Dict, work: Dict, n_data: int, sgld_batch: Optional[int]) -> Dict[str, float]:
+
+def llc_point_se_from_histories(Ln_histories: List, n: int, beta: float, L0: float):
+    """Convert histories to idata and compute LLC point estimate + SE (replaces diagnostics version)."""
+    from llc.convert import to_idata
+
+    idata = to_idata(
+        Ln_histories=Ln_histories,
+        theta_thin=None,
+        acceptance=None,
+        energy=None,
+        n=n,
+        beta=beta,
+        L0=L0,
+    )
+    metrics = llc_point_se(idata)
+    # Return in the format expected by existing callers: (mean, se, ess)
+    return (
+        metrics.get("llc_mean", float("nan")),
+        metrics.get("llc_se", float("nan")),
+        int(metrics.get("ess_bulk", 0)),
+    )
+
+
+def efficiency_metrics(
+    *, idata, timings: Dict, work: Dict, n_data: int, sgld_batch: Optional[int]
+) -> Dict[str, float]:
     """Compute ESS/sec, ESS/FDE, WNV_time, WNV_FDE (FDE = full-data-equivalent grads)."""
     az = _az()
     summ = az.summary(idata, var_names=["llc"])
     if summ.empty:
-        return {"ess": np.nan, "ess_per_sec": np.nan, "ess_per_fde": np.nan, "wnv_time": np.nan, "wnv_fde": np.nan}
+        return {
+            "ess": np.nan,
+            "ess_per_sec": np.nan,
+            "ess_per_fde": np.nan,
+            "wnv_time": np.nan,
+            "wnv_fde": np.nan,
+        }
     ess = float(summ["ess_bulk"].iloc[0])
-    sd  = float(summ["sd"].iloc[0])
-    se  = sd / np.sqrt(max(1.0, ess))
+    sd = float(summ["sd"].iloc[0])
+    se = sd / np.sqrt(max(1.0, ess))
     t_sampling = float(timings.get("sampling", np.nan))
     # FDE accounting
     full_loss = float(work.get("n_full_loss", 0.0))
-    mb_grads  = float(work.get("n_minibatch_grads", 0.0))
+    mb_grads = float(work.get("n_minibatch_grads", 0.0))
     b = float(sgld_batch or 0.0)
     fde = full_loss + (mb_grads * (b / float(n_data))) if n_data > 0 else np.nan
 
     ess_sec = ess / t_sampling if np.isfinite(t_sampling) and t_sampling > 0 else np.nan
     ess_fde = ess / fde if np.isfinite(fde) and fde > 0 else np.nan
-    wnv_time = (sd*sd / ess) * t_sampling if ess > 0 and np.isfinite(sd) and np.isfinite(t_sampling) else np.nan
-    wnv_fde  = (sd*sd / ess) * fde       if ess > 0 and np.isfinite(sd) and np.isfinite(fde)       else np.nan
-    return {"ess": ess, "ess_per_sec": ess_sec, "ess_per_fde": ess_fde, "wnv_time": wnv_time, "wnv_fde": wnv_fde}
+    wnv_time = (
+        (sd * sd / ess) * t_sampling
+        if ess > 0 and np.isfinite(sd) and np.isfinite(t_sampling)
+        else np.nan
+    )
+    wnv_fde = (
+        (sd * sd / ess) * fde
+        if ess > 0 and np.isfinite(sd) and np.isfinite(fde)
+        else np.nan
+    )
+    return {
+        "ess": ess,
+        "ess_per_sec": ess_sec,
+        "ess_per_fde": ess_fde,
+        "wnv_time": wnv_time,
+        "wnv_fde": wnv_fde,
+    }
+
 
 # ---------- Figures (return plt.Figure; caller saves) ----------
 def fig_running_llc(idata, n: int, beta: float, L0: float, title: str) -> plt.Figure:
@@ -54,53 +140,65 @@ def fig_running_llc(idata, n: int, beta: float, L0: float, title: str) -> plt.Fi
         raise ValueError("posterior['L'] missing; cannot draw running LLC.")
     L = L.values  # (C,T)
     C, T = L.shape
-    cmean = np.cumsum(L, 1) / np.arange(1, T+1)[None, :]
+    cmean = np.cumsum(L, 1) / np.arange(1, T + 1)[None, :]
     lam = n * float(beta) * (cmean - L0)
-    pooled = np.mean(L, 0) / np.arange(1, T+1)
+    pooled = np.mean(L, 0) / np.arange(1, T + 1)
     lam_pooled = n * float(beta) * (pooled - L0)
 
     # mean±2SE from full draws
     summ = az.summary(idata, var_names=["llc"])
     mu, se = float(idata.posterior["llc"].values.mean()), np.nan
     if not summ.empty:
-        ess = float(summ["ess_bulk"].iloc[0]); sd = float(summ["sd"].iloc[0])
+        ess = float(summ["ess_bulk"].iloc[0])
+        sd = float(summ["sd"].iloc[0])
         se = sd / np.sqrt(max(1.0, ess))
 
-    fig, ax = plt.subplots(1,1, figsize=(8,4))
+    fig, ax = plt.subplots(1, 1, figsize=(8, 4))
     for i in range(C):
         ax.plot(lam[i], alpha=0.7, label=f"Chain {i}")
     ax.plot(lam_pooled, "k-", lw=2, label="Pooled")
     if np.isfinite(se):
         ax.axhline(mu, ls="--", lw=1)
-        ax.fill_between(np.arange(T), mu-2*se, mu+2*se, alpha=0.1)
-    ax.set_xlabel("Evaluation"); ax.set_ylabel("LLC = n·β·(E[Lₙ] − L₀)")
-    ax.set_title(title); ax.grid(True, alpha=0.3); ax.legend()
+        ax.fill_between(np.arange(T), mu - 2 * se, mu + 2 * se, alpha=0.1)
+    ax.set_xlabel("Evaluation")
+    ax.set_ylabel("LLC = n·β·(E[Lₙ] − L₀)")
+    ax.set_title(title)
+    ax.grid(True, alpha=0.3)
+    ax.legend()
     return fig
+
 
 def fig_rank_llc(idata) -> plt.Figure:
     az = _az()
     axes = az.plot_rank(idata, var_names=["llc"])
     return getattr(axes, "figure", axes.flat[0].figure)
 
+
 def fig_autocorr_llc(idata) -> plt.Figure:
     az = _az()
     axes = az.plot_autocorr(idata, var_names=["llc"])
-    return axes[0].figure if isinstance(axes, (list, tuple, np.ndarray)) else axes.figure
+    return (
+        axes[0].figure if isinstance(axes, (list, tuple, np.ndarray)) else axes.figure
+    )
+
 
 def fig_ess_evolution(idata) -> plt.Figure:
     az = _az()
     axes = az.plot_ess(idata, var_names=["llc"], kind="evolution")
     return axes.figure
 
+
 def fig_ess_quantile(idata) -> plt.Figure:
     az = _az()
     axes = az.plot_ess(idata, var_names=["llc"], kind="quantile")
     return axes.figure
 
+
 def fig_energy(idata) -> plt.Figure:
     az = _az()
     ax = az.plot_energy(idata)
     return ax.figure
+
 
 def fig_theta_trace(idata, dims: int = 4) -> plt.Figure:
     az = _az()
@@ -109,6 +207,85 @@ def fig_theta_trace(idata, dims: int = 4) -> plt.Figure:
         raise ValueError("posterior['theta'] missing.")
     nd = idata.posterior["theta"].shape[-1]
     sel = {"theta_dim": np.arange(min(dims, nd))}
-    fig, axes = plt.subplots(2, min(dims, nd), figsize=(12,6), squeeze=False)
-    az.plot_trace(idata, var_names=["theta"], coords=sel, axes=axes, backend_kwargs={"constrained_layout": True})
+    fig, axes = plt.subplots(2, min(dims, nd), figsize=(12, 6), squeeze=False)
+    az.plot_trace(
+        idata,
+        var_names=["theta"],
+        coords=sel,
+        axes=axes,
+        backend_kwargs={"constrained_layout": True},
+    )
     return fig
+
+
+# ---------- Diagnostic Generation ----------
+def generate_diagnostics(
+    idata, sampler_name: str, out_dir: str, overwrite=False, max_theta_dims=8
+):
+    """Generate all diagnostic plots for a sampler using ArviZ InferenceData."""
+    import matplotlib.pyplot as plt
+
+    out = Path(out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+
+    # Extract metadata from idata attrs
+    n = int(idata.attrs.get("n_data", 0))
+    beta = float(idata.attrs.get("beta", 1.0))
+    L0 = float(idata.attrs.get("L0", 0.0))
+
+    # Generate figures with error handling
+    figs = []
+    try:
+        figs.append(
+            (
+                f"{sampler_name}_running_llc.png",
+                fig_running_llc(idata, n, beta, L0, f"{sampler_name} Running LLC"),
+            )
+        )
+    except Exception:
+        pass
+    try:
+        figs.append((f"{sampler_name}_llc_rank.png", fig_rank_llc(idata)))
+    except Exception:
+        pass
+    try:
+        figs.append((f"{sampler_name}_llc_ess_evolution.png", fig_ess_evolution(idata)))
+    except Exception:
+        pass
+    try:
+        figs.append((f"{sampler_name}_llc_ess_quantile.png", fig_ess_quantile(idata)))
+    except Exception:
+        pass
+    try:
+        figs.append((f"{sampler_name}_llc_autocorr.png", fig_autocorr_llc(idata)))
+    except Exception:
+        pass
+    try:
+        figs.append((f"{sampler_name}_energy.png", fig_energy(idata)))
+    except Exception:
+        pass
+    try:
+        theta_dims = min(
+            max_theta_dims,
+            int(
+                idata.posterior.get("theta", {"theta_dim": [0]}).sizes.get(
+                    "theta_dim", 0
+                )
+            ),
+        )
+        if theta_dims > 0:
+            figs.append(
+                (
+                    f"{sampler_name}_theta_trace.png",
+                    fig_theta_trace(idata, dims=theta_dims),
+                )
+            )
+    except Exception:
+        pass
+
+    # Save figures
+    for name, fig in figs:
+        p = out / name
+        if (not p.exists()) or overwrite:
+            fig.savefig(p, dpi=150, bbox_inches="tight", facecolor="white")
+        plt.close(fig)

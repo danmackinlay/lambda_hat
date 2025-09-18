@@ -1,15 +1,22 @@
 # llc/convert.py
 from __future__ import annotations
-from typing import List, Optional, Tuple, Any
+from typing import List, Optional
 import numpy as np
+
 
 def _az():
     import arviz as az
+
     return az
+
 
 def _stack_ragged_2d(arrs: List[np.ndarray]) -> Optional[np.ndarray]:
     """Truncate ragged list of (T_i, D) to (C, T, D). Returns None if empty."""
-    arrs = [np.asarray(a) for a in arrs if a is not None and a.ndim == 2 and a.shape[0] >= 2 and a.shape[1] >= 1]
+    arrs = [
+        np.asarray(a)
+        for a in arrs
+        if a is not None and a.ndim == 2 and a.shape[0] >= 2 and a.shape[1] >= 1
+    ]
     if not arrs:
         return None
     t = min(a.shape[0] for a in arrs)
@@ -18,9 +25,14 @@ def _stack_ragged_2d(arrs: List[np.ndarray]) -> Optional[np.ndarray]:
         return None
     return np.stack([a[:t, :d] for a in arrs], axis=0)  # (C, T, D)
 
+
 def _stack_ragged_1d(arrs: List[np.ndarray]) -> Optional[np.ndarray]:
     """Truncate ragged list of (T_i,) to (C, T)."""
-    arrs = [np.asarray(a).reshape(-1) for a in arrs if a is not None and np.asarray(a).size >= 2]
+    arrs = [
+        np.asarray(a).reshape(-1)
+        for a in arrs
+        if a is not None and np.asarray(a).size >= 2
+    ]
     if not arrs:
         return None
     t = min(a.shape[0] for a in arrs)
@@ -28,18 +40,21 @@ def _stack_ragged_1d(arrs: List[np.ndarray]) -> Optional[np.ndarray]:
         return None
     return np.stack([a[:t] for a in arrs], axis=0)  # (C, T)
 
+
 def to_idata(
     *,
     Ln_histories: List[np.ndarray],
     theta_thin: Optional[List[np.ndarray] | np.ndarray],
     acceptance: Optional[List[np.ndarray]],
     energy: Optional[List[np.ndarray]],
-    n: int, beta: float, L0: float,
+    n: int,
+    beta: float,
+    L0: float,
     max_theta_dims: int = 8,
 ) -> "az.InferenceData":
     """Build a single ArviZ InferenceData with:
-       posterior: llc (C,T), L (C,T), optional theta (C,T,d')
-       sample_stats: acceptance_rate (C,T), energy (C,T)
+    posterior: llc (C,T), L (C,T), optional theta (C,T,d')
+    sample_stats: acceptance_rate (C,T), energy (C,T)
     """
     az = _az()
 
@@ -84,7 +99,7 @@ def to_idata(
                 theta_dims = np.arange(d, dtype=int)
 
     # Align L/llc to (C,T) in case theta shortened T
-    L   = L[:C, :T]
+    L = L[:C, :T]
     llc = llc[:C, :T]
 
     # sample_stats: acceptance & energy (C,T)
@@ -92,14 +107,22 @@ def to_idata(
     if acceptance:
         A = _stack_ragged_1d(list(acceptance))
         if A is not None:
-            t = min(T, A.shape[1]); A = A[:C, :t]; L = L[:C, :t]; llc = llc[:C, :t]
-            if theta is not None: theta = theta[:C, :t, :]
+            t = min(T, A.shape[1])
+            A = A[:C, :t]
+            L = L[:C, :t]
+            llc = llc[:C, :t]
+            if theta is not None:
+                theta = theta[:C, :t, :]
             sstats["acceptance_rate"] = A
     if energy:
         E = _stack_ragged_1d(list(energy))
         if E is not None:
-            t = min(T, E.shape[1]); E = E[:C, :t]; L = L[:C, :t]; llc = llc[:C, :t]
-            if theta is not None: theta = theta[:C, :t, :]
+            t = min(T, E.shape[1])
+            E = E[:C, :t]
+            L = L[:C, :t]
+            llc = llc[:C, :t]
+            if theta is not None:
+                theta = theta[:C, :t, :]
             sstats["energy"] = E
 
     data = {

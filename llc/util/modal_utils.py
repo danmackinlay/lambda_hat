@@ -17,6 +17,7 @@ def extract_modal_artifacts_locally(result_dict: dict) -> None:
         # Clean existing
         if os.path.exists(dest):
             import shutil
+
             shutil.rmtree(dest)
 
         with tarfile.open(
@@ -56,6 +57,7 @@ def pull_and_extract_artifacts(run_id: str = None, target: str = "artifacts") ->
     target_dir = dest_root / run_id
     if target_dir.exists():
         import shutil
+
         shutil.rmtree(target_dir)
 
     with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as tf:

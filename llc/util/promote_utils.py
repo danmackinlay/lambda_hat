@@ -30,7 +30,9 @@ def _has_needed_artifacts(p: Path, selection: List[Tuple[str, str]]) -> bool:
     return any(key in name for key, _ in selection for name in pngs)
 
 
-def _latest_from_artifacts(artifacts_dir: Path, selection: List[Tuple[str, str]]) -> Path:
+def _latest_from_artifacts(
+    artifacts_dir: Path, selection: List[Tuple[str, str]]
+) -> Path:
     """Fallback: pick newest run from artifacts/ using old logic."""
     candidates = []
     for p in artifacts_dir.iterdir():
@@ -97,14 +99,11 @@ def latest_run_dir(root_dir: Path, selection: List[Tuple[str, str]] = None) -> P
     return candidates[-1][1]
 
 
-
-
-
 def promote_images(
     run_dir: Path,
     assets_dir: Path,
     selection: List[Tuple[str, str]] = None,
-    root_dir: Path = None
+    root_dir: Path = None,
 ) -> int:
     """
     Promote diagnostic images from run_dir to assets_dir.

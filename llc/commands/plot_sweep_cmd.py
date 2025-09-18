@@ -13,7 +13,7 @@ def plot_sweep_entry(
     samplers: str,
     filters: str,
     logx: bool,
-    overwrite: bool
+    overwrite: bool,
 ) -> None:
     """Entry point for plot-sweep command."""
     out = Path(out_dir)

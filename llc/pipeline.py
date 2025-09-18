@@ -37,11 +37,10 @@ from .runners import (
 from .convert import to_idata
 import arviz as az
 from .samplers.base import prepare_diag_targets
-from .diagnostics import llc_mean_and_se_from_histories, plot_diagnostics
+from llc.analysis import llc_point_se_from_histories as llc_mean_and_se_from_histories
+from llc.analysis import generate_diagnostics
 from .artifacts import (
     save_L0,
-    save_idata_L,
-    save_idata_theta,
     save_config,
     save_metrics,
     create_manifest,
@@ -303,7 +302,11 @@ def run_one(
         llc_hmc_mean, se_hmc, ess_hmc = llc_mean_and_se_from_histories(
             res_hmc.Ln_histories, cfg.n_data, beta, L0
         )
-        vals = [np.nanmean(a) for a in res_hmc.acceptance if a.size] if res_hmc.acceptance else []
+        vals = (
+            [np.nanmean(a) for a in res_hmc.acceptance if a.size]
+            if res_hmc.acceptance
+            else []
+        )
         mean_acc = float(np.nanmean(vals)) if vals else float("nan")
 
         print(f"HMC LLC: {llc_hmc_mean:.4f} ± {se_hmc:.4f} (ESS: {ess_hmc:.1f})")
@@ -505,39 +508,65 @@ def run_one(
         save_L0(run_dir, L0)
 
         # Save unified InferenceData files per sampler (new format)
-        if "sgld" in getattr(cfg, "samplers", []) and 'res_sgld' in locals():
+        if "sgld" in getattr(cfg, "samplers", []) and "res_sgld" in locals():
             idata_sgld = to_idata(
                 Ln_histories=res_sgld.Ln_histories,
                 theta_thin=res_sgld.theta_thin,
                 acceptance=res_sgld.acceptance,
                 energy=res_sgld.energy,
-                n=cfg.n_data, beta=beta, L0=L0,
+                n=cfg.n_data,
+                beta=beta,
+                L0=L0,
             )
-            idata_sgld.attrs.update({"n_data": int(cfg.n_data), "beta": float(beta), "L0": float(L0), "sampler": "sgld"})
+            idata_sgld.attrs.update(
+                {
+                    "n_data": int(cfg.n_data),
+                    "beta": float(beta),
+                    "L0": float(L0),
+                    "sampler": "sgld",
+                }
+            )
             az.to_netcdf(idata_sgld, f"{run_dir}/sgld.nc")
 
-        if "hmc" in getattr(cfg, "samplers", []) and 'res_hmc' in locals():
+        if "hmc" in getattr(cfg, "samplers", []) and "res_hmc" in locals():
             idata_hmc = to_idata(
                 Ln_histories=res_hmc.Ln_histories,
                 theta_thin=res_hmc.theta_thin,
                 acceptance=res_hmc.acceptance,
                 energy=res_hmc.energy,
-                n=cfg.n_data, beta=beta, L0=L0,
+                n=cfg.n_data,
+                beta=beta,
+                L0=L0,
             )
-            idata_hmc.attrs.update({"n_data": int(cfg.n_data), "beta": float(beta), "L0": float(L0), "sampler": "hmc"})
+            idata_hmc.attrs.update(
+                {
+                    "n_data": int(cfg.n_data),
+                    "beta": float(beta),
+                    "L0": float(L0),
+                    "sampler": "hmc",
+                }
+            )
             az.to_netcdf(idata_hmc, f"{run_dir}/hmc.nc")
 
-        if "mclmc" in getattr(cfg, "samplers", []) and 'res_mclmc' in locals():
+        if "mclmc" in getattr(cfg, "samplers", []) and "res_mclmc" in locals():
             idata_mclmc = to_idata(
                 Ln_histories=res_mclmc.Ln_histories,
                 theta_thin=res_mclmc.theta_thin,
                 acceptance=res_mclmc.acceptance,
                 energy=res_mclmc.energy,
-                n=cfg.n_data, beta=beta, L0=L0,
+                n=cfg.n_data,
+                beta=beta,
+                L0=L0,
             )
-            idata_mclmc.attrs.update({"n_data": int(cfg.n_data), "beta": float(beta), "L0": float(L0), "sampler": "mclmc"})
+            idata_mclmc.attrs.update(
+                {
+                    "n_data": int(cfg.n_data),
+                    "beta": float(beta),
+                    "L0": float(L0),
+                    "sampler": "mclmc",
+                }
+            )
             az.to_netcdf(idata_mclmc, f"{run_dir}/mclmc.nc")
-
 
         # Save all metrics
         save_metrics(run_dir, all_metrics)
@@ -550,45 +579,15 @@ def run_one(
         if cfg.diag_mode != "none" and cfg.save_plots:
             logger.info("Generating diagnostic plots...")
 
-            # Call single-sampler plot_diagnostics for each sampler
-            if 'res_sgld' in locals() and hasattr(res_sgld.theta_thin, 'size') and res_sgld.theta_thin.size > 0:
-                plot_diagnostics(
-                    run_dir=run_dir,
-                    sampler_name="sgld",
-                    Ln_histories=res_sgld.Ln_histories,
-                    samples_thin=res_sgld.theta_thin,
-                    n=cfg.n_data,
-                    beta=beta,
-                    L0=L0,
-                    save_plots=cfg.save_plots,
-                )
+            # Use generate_diagnostics with existing idata objects
+            if "idata_sgld" in locals():
+                generate_diagnostics(idata_sgld, "sgld", run_dir)
 
-            if 'res_hmc' in locals() and hasattr(res_hmc.theta_thin, 'size') and res_hmc.theta_thin.size > 0:
-                plot_diagnostics(
-                    run_dir=run_dir,
-                    sampler_name="hmc",
-                    Ln_histories=res_hmc.Ln_histories,
-                    samples_thin=res_hmc.theta_thin,
-                    acceptance_rates=res_hmc.acceptance,
-                    energies=res_hmc.energy,
-                    n=cfg.n_data,
-                    beta=beta,
-                    L0=L0,
-                    save_plots=cfg.save_plots,
-                )
+            if "idata_hmc" in locals():
+                generate_diagnostics(idata_hmc, "hmc", run_dir)
 
-            if 'res_mclmc' in locals() and hasattr(res_mclmc.theta_thin, 'size') and res_mclmc.theta_thin.size > 0:
-                plot_diagnostics(
-                    run_dir=run_dir,
-                    sampler_name="mclmc",
-                    Ln_histories=res_mclmc.Ln_histories,
-                    samples_thin=res_mclmc.theta_thin,
-                    energy_deltas=res_mclmc.energy,
-                    n=cfg.n_data,
-                    beta=beta,
-                    L0=L0,
-                    save_plots=cfg.save_plots,
-                )
+            if "idata_mclmc" in locals():
+                generate_diagnostics(idata_mclmc, "mclmc", run_dir)
 
         # Create manifest
         from pathlib import Path
