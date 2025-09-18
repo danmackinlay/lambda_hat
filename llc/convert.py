@@ -10,7 +10,7 @@ def _az():
     return az
 
 
-def _stack_ragged_2d(arrs: List[np.ndarray]) -> Optional[np.ndarray]:
+def stack_ragged_2d(arrs: List[np.ndarray]) -> Optional[np.ndarray]:
     """Truncate ragged list of (T_i, D) to (C, T, D). Returns None if empty."""
     arrs = [
         np.asarray(a)
@@ -26,7 +26,7 @@ def _stack_ragged_2d(arrs: List[np.ndarray]) -> Optional[np.ndarray]:
     return np.stack([a[:t, :d] for a in arrs], axis=0)  # (C, T, D)
 
 
-def _stack_ragged_1d(arrs: List[np.ndarray]) -> Optional[np.ndarray]:
+def stack_ragged_1d(arrs: List[np.ndarray]) -> Optional[np.ndarray]:
     """Truncate ragged list of (T_i,) to (C, T)."""
     arrs = [
         np.asarray(a).reshape(-1)
@@ -61,7 +61,7 @@ def to_idata(
     # L traces (C,T)
     if not Ln_histories or all(len(h) == 0 for h in Ln_histories):
         raise ValueError("Ln_histories is empty; cannot create InferenceData.")
-    H = _stack_ragged_1d([np.asarray(h) for h in Ln_histories])
+    H = stack_ragged_1d([np.asarray(h) for h in Ln_histories])
     if H is None:
         raise ValueError("Ln_histories too short or invalid.")
 
@@ -88,7 +88,7 @@ def to_idata(
                 theta = theta[:C, :T, :d]
                 theta_dims = np.arange(d, dtype=int)
         else:
-            S = _stack_ragged_2d(list(theta_thin))  # (C,T,D)
+            S = stack_ragged_2d(list(theta_thin))  # (C,T,D)
             if S is not None:
                 d = min(S.shape[2], max_theta_dims)
                 t = min(S.shape[1], T)
@@ -105,7 +105,7 @@ def to_idata(
     # sample_stats: acceptance & energy (C,T)
     sstats = {}
     if acceptance:
-        A = _stack_ragged_1d(list(acceptance))
+        A = stack_ragged_1d(list(acceptance))
         if A is not None:
             t = min(T, A.shape[1])
             A = A[:C, :t]
@@ -115,7 +115,7 @@ def to_idata(
                 theta = theta[:C, :t, :]
             sstats["acceptance_rate"] = A
     if energy:
-        E = _stack_ragged_1d(list(energy))
+        E = stack_ragged_1d(list(energy))
         if E is not None:
             t = min(T, E.shape[1])
             E = E[:C, :t]

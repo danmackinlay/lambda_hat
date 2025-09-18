@@ -9,6 +9,7 @@ import numpy as np
 from jax import numpy as jnp
 
 from .samplers.base import default_tiny_store
+from .convert import stack_ragged_2d
 from .samplers.adapters import (
     run_sgld_chain,
     run_hmc_chain,
@@ -72,13 +73,6 @@ def llc_from_running_mean(E_L, L0, n, beta):
     """Compute LLC from running mean of loss values"""
     return float(n * beta * (E_L - L0))
 
-
-def stack_thinned(kept_list):  # list of (draws, dim)
-    """Stack thinned samples, truncating to common length to avoid NaN padding"""
-    m = min(k.shape[0] for k in kept_list)
-    if m == 0:
-        return np.empty((len(kept_list), 0, kept_list[0].shape[1]))
-    return np.stack([k[:m] for k in kept_list], axis=0)
 
 
 def run_sgld_online(
@@ -171,7 +165,8 @@ def run_sgld_online(
         if stats:
             stats.n_sgld_full_loss += int(res.n_L)
 
-    samples_thin = stack_thinned(kept_all)
+    S = stack_ragged_2d(kept_all)
+    samples_thin = S if S is not None else None
 
     # Build timings dict
     timings = {}
@@ -277,7 +272,8 @@ def run_hmc_online_with_adaptation(
             if "warmup_grads" in res.extras:
                 stats.n_hmc_warmup_leapfrog_grads += int(res.extras["warmup_grads"][0])
 
-    samples_thin = stack_thinned(kept_all)
+    S = stack_ragged_2d(kept_all)
+    samples_thin = S if S is not None else None
 
     # Build timings dict
     timings = {}
@@ -383,7 +379,8 @@ def run_mclmc_online(
         if stats:
             stats.n_mclmc_full_loss += int(res.n_L)
 
-    samples_thin = stack_thinned(kept_all)
+    S = stack_ragged_2d(kept_all)
+    samples_thin = S if S is not None else None
 
     # Build timings dict
     timings = {}

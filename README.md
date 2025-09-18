@@ -338,6 +338,12 @@ uv run python -m llc analyze runs/<run_id> --which=hmc --plots=running_llc,rank,
 
 # Generate figures in custom directory
 uv run python -m llc analyze runs/<run_id> --out=figures/ --overwrite
+
+uv run python -m llc analyze artifacts/<RUN_ID> \
+  --which all \
+  --plots running_llc,rank,ess_evolution,ess_quantile,autocorr,energy,theta \
+  --out artifacts/<RUN_ID> \
+  --overwrite
 ```
 
 * Works on `.nc` files saved by `llc run`
