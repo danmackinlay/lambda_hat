@@ -33,7 +33,7 @@ def sweep_entry(kwargs: dict) -> None:
     # Modal handle (if needed)
     remote_fn = None
     if backend == "modal":
-        from modal_app import app, run_experiment_remote
+        from llc.modal_app import app, run_experiment_remote
 
         remote_fn = run_experiment_remote
         modal_opts = {"max_containers": 1, "min_containers": 0, "buffer_containers": 0}

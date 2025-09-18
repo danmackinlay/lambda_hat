@@ -91,25 +91,6 @@ def build_sweep_worklist(sweep_config, n_seeds=3):
     return work
 
 
-def run_experiment(cfg: Config, verbose=True):
-    """
-    Thin wrapper around pipeline that returns only SGLD and HMC LLCs.
-    Maintained for backwards compatibility with existing code.
-    """
-    from .pipeline import run_one
-
-    # Run the full pipeline but don't save artifacts
-    outputs = run_one(cfg, save_artifacts=False, skip_if_exists=False)
-
-    # Extract SGLD and HMC results
-    llc_sgld = outputs.metrics.get("sgld_llc_mean", 0.0)
-    llc_hmc = outputs.metrics.get("hmc_llc_mean", 0.0)
-
-    if verbose:
-        print(f"LLC: SGLD={llc_sgld:.4f}, HMC={llc_hmc:.4f}")
-
-    return llc_sgld, llc_hmc
-
 
 def run_sweep(sweep_config, n_seeds=3):
     """Run experiment sweep"""

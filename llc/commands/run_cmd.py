@@ -34,7 +34,7 @@ def run_entry(kwargs: dict) -> None:
 
     if backend == "modal":
         # Ensure the Modal App is running so the function hydrates
-        from modal_app import app, run_experiment_remote
+        from llc.modal_app import app, run_experiment_remote
 
         with app.run():
             executor = get_executor(backend="modal", remote_fn=run_experiment_remote)

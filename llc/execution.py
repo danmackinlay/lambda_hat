@@ -91,7 +91,6 @@ class SubmititExecutor(BaseExecutor):
         cpus_per_task: int = 4,
         mem_gb: int = 16,
         name: str = "llc",
-        # NEW: allow arbitrary slurm args (account/qos/constraint/etc.)
         slurm_additional_parameters: Optional[dict] = None,
         # (kept for backward-compat) still accept generic extras:
         additional_params: Optional[dict] = None,

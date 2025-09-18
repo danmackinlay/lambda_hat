@@ -71,13 +71,6 @@ def latest_run_dir(root_dir: Path, selection: List[Tuple[str, str]] = None) -> P
 
     runs_dir = root_dir / "runs"
 
-    if not runs_dir.exists():
-        # Fallback to old artifacts/ scanning for backward compatibility
-        artifacts_dir = root_dir / "artifacts"
-        if not artifacts_dir.exists():
-            raise RuntimeError("Neither runs/ nor artifacts/ directory found")
-        return _latest_from_artifacts(artifacts_dir, selection)
-
     # Import here to avoid circular dependencies
     from llc.manifest import is_run_completed, get_run_start_time
 
@@ -104,17 +97,7 @@ def latest_run_dir(root_dir: Path, selection: List[Tuple[str, str]] = None) -> P
     return candidates[-1][1]
 
 
-def find_first_match(run_dir: Path, key: str) -> Path | None:
-    """Prefer exact filename match; fall back to substring."""
-    base = run_dir.resolve() if run_dir.exists() else run_dir
-    exact = base / key
-    if exact.exists():
-        return exact
-    # substring fallback for backward compatibility
-    for p in sorted(base.glob("*.png")):
-        if key in p.name:
-            return p
-    return None
+
 
 
 def promote_images(
@@ -141,7 +124,7 @@ def promote_images(
     copied = 0
 
     for key, outname in selection:
-        src = find_first_match(run_dir, key)
+        src = (run_dir.resolve() if run_dir.exists() else run_dir) / key
         if not src:
             print(f"  [skip] no match for '{key}'")
             continue

@@ -14,7 +14,7 @@ def run_experiment_task(cfg_dict: Dict[str, Any]) -> Dict[str, Any]:
     """
     from dataclasses import fields
     from llc.config import Config, config_schema_hash
-    from llc.experiments import run_experiment
+    from llc.pipeline import run_one
 
     cfg_dict_clean = dict(cfg_dict)
     # control flags (not part of Config)
@@ -63,7 +63,10 @@ def run_experiment_task(cfg_dict: Dict[str, Any]) -> Dict[str, Any]:
     else:
         # Original lightweight mode - just run experiment function
         try:
-            llc_sgld, llc_hmc = run_experiment(cfg, verbose=False)
+            result = run_one(cfg, save_artifacts=False, skip_if_exists=skip_if_exists)
+            # Extract LLC values from metrics
+            llc_sgld = result.metrics.get("sgld_llc_mean", float("nan"))
+            llc_hmc = result.metrics.get("hmc_llc_mean", float("nan"))
             return {
                 "cfg": cfg_dict,
                 "llc_sgld": float(llc_sgld),
