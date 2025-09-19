@@ -14,7 +14,7 @@ from jax import random, jit, device_put
 import numpy as np
 
 from .config import Config
-from .cache import run_id, load_cached_outputs
+from .cache import run_id, run_family_id, load_cached_outputs
 from .types import RunOutputs
 
 # Set up logger
@@ -58,8 +58,9 @@ def run_one(
     Returns:
         RunOutputs with metrics, histories, run_dir, and L0
     """
-    # Compute deterministic run ID
+    # Compute deterministic run ID and family ID
     rid = run_id(cfg)
+    fid = run_family_id(cfg)
     # Use canonical runs/ directory everywhere (local and Modal)
     if hasattr(cfg, "runs_dir") and cfg.runs_dir.endswith("/runs"):
         # Modal path: cfg.runs_dir="/runs" -> run_dir="/runs/rid"
@@ -307,13 +308,17 @@ def run_one(
             )
             az.to_netcdf(idata, f"{run_dir}/{name}.nc")
             # Save metrics after each sampler completes
-            save_metrics(run_dir, all_metrics)
+            all_metrics_out = dict(all_metrics)
+            all_metrics_out["family_id"] = fid
+            save_metrics(run_dir, all_metrics_out)
 
     # Save final artifacts if requested
     if save_artifacts and run_dir:
         logger.info("Saving final run outputs")
         save_L0(run_dir, L0)
-        save_metrics(run_dir, all_metrics)  # Final save with all samplers
+        all_metrics_out = dict(all_metrics)
+        all_metrics_out["family_id"] = fid
+        save_metrics(run_dir, all_metrics_out)  # Final save with all samplers
 
     return RunOutputs(
         run_dir=run_dir,

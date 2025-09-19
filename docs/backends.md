@@ -17,8 +17,11 @@ uv run modal volume create llc-runs      # optional; code can create it on first
 # Single run
 uv run python -m llc run --backend=modal --preset=quick
 
-# Sweep
+# Sweep (traditional: one job per config)
 uv run python -m llc sweep --backend=modal
+
+# Sweep (split samplers: one job per sampler for better concurrency)
+uv run python -m llc sweep --backend=modal --split-samplers
 ```
 
 ### How it Works
@@ -38,6 +41,18 @@ app = modal.App("llc-experiments", image=image)
 def run_experiment_remote(cfg_dict: dict) -> dict:
     ...
 ```
+
+### Split Samplers (Recommended)
+
+Use `--split-samplers` to run each sampler (SGLD, HMC, MCLMC) as a separate Modal job:
+
+**Benefits:**
+- **Shorter jobs** → fewer timeout issues
+- **Independent retries** → one sampler failure doesn't block others
+- **Max concurrency** → better autoscaler utilization
+- **Cleaner failure attribution** → know exactly which sampler failed
+
+**How it works:** Each configuration is expanded into one job per sampler. All jobs in a "family" use the same dataset/ERM (same `cfg.seed`) but run different samplers. Results include a `family_id` column for grouping.
 
 ### Artifact Management
 

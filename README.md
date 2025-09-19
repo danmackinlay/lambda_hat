@@ -66,7 +66,7 @@ runs/<run_id>/
 |------|---------|
 | Local quick run | `uv run llc run --preset=quick` |
 | Local sweep (8 workers) | `uv run llc sweep --workers=8` |
-| Modal run | `uv run llc run --backend=modal` |
+| Modal sweep (split by sampler) | `uv run llc sweep --backend=modal --split-samplers` |
 | SLURM run | `uv run llc run --backend=submitit` |
 | Analyze saved run | `uv run llc analyze runs/<run_id>` |
 | Plot sweep results | `uv run llc plot-sweep` |
@@ -77,6 +77,8 @@ For backend-specific setup and configuration, see [docs/backends.md](docs/backen
 ## Sweeps = Many Runs + One CSV
 
 `uv run llc sweep` launches a grid of runs and writes `llc_sweep_results.csv` summarizing each run (with a `run_dir` back-pointer to analyze individual runs).
+
+Use `--split-samplers` to run each sampler as a separate job for better concurrency and failure isolation. Results include a `family_id` column to group related per-sampler runs.
 
 Plot medians via `uv run llc plot-sweep --size-col target_params` and filter via `--filters "activation=relu,x_dist=gauss_iso"`.
 

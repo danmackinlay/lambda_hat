@@ -19,6 +19,7 @@ def sweep_entry(kwargs: dict) -> None:
     preset = kwargs.pop("preset", None)
     gpu_mode = kwargs.pop("gpu_mode", "off")
     cuda_devices = kwargs.pop("cuda_devices", None)
+    split_samplers = kwargs.pop("split_samplers", False)
 
     # Set JAX platform before any JAX imports
     if gpu_mode == "off":
@@ -43,7 +44,18 @@ def sweep_entry(kwargs: dict) -> None:
     sw = sweep_space()
     sw["base"] = base_cfg
     items = build_sweep_worklist(sw, n_seeds=n_seeds)
+
+    # Expand into one job per sampler if requested
+    if split_samplers:
+        expanded = []
+        for name, param, val, seed, cfg in items:
+            for s in cfg.samplers:
+                expanded.append((name, param, val, seed, replace(cfg, samplers=[s])))
+        items = expanded
+
     print(f"Running sweep with {len(items)} configurations on {backend} backend")
+    if split_samplers:
+        print(f"Split samplers enabled - each job runs one sampler")
     if backend == "local" and workers > 1:
         print(f"Using {workers} parallel workers")
 
@@ -160,12 +172,21 @@ def _save_sweep_results(results):
         except Exception:
             continue
 
+        # Fallback if metrics didn't carry family_id (older runs):
+        if "family_id" in M:
+            family_id = M["family_id"]
+        else:
+            from llc.config import Config
+            from llc.cache import run_family_id
+            family_id = run_family_id(Config(**C))
+
         for s in ("sgld", "hmc", "mclmc"):
             if f"{s}_llc_mean" not in M:
                 continue
             rows.append(
                 {
                     "sweep": "dim",
+                    "family_id": family_id,
                     "target_params": C.get("target_params"),
                     "depth": C.get("depth"),
                     "activation": C.get("activation"),

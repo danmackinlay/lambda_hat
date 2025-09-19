@@ -150,6 +150,11 @@ def sweep_shared_options():
             default=2,
             help="Number of random seeds per configuration",
         )(f)
+        f = click.option(
+            "--split-samplers/--no-split-samplers",
+            default=False,
+            help="Expand every config into one job per sampler.",
+        )(f)
         # Reuse run-shared too (includes backend)
         return run_shared_options()(f)
 

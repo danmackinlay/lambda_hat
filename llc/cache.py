@@ -79,6 +79,29 @@ def run_id(cfg) -> str:
     return hashlib.sha1(payload.encode()).hexdigest()[:12]
 
 
+def run_family_id(cfg) -> str:
+    """
+    Hash like run_id, but with samplers removed so multiple per-sampler runs
+    are recognized as the same underlying experiment (same data/ERM).
+
+    Args:
+        cfg: Configuration object (Config dataclass or dict)
+
+    Returns:
+        12-character hex string identifying the family of runs
+    """
+    d = _normalize_cfg(cfg)
+    d["samplers"] = []  # Ignore sampler choice for family grouping
+
+    payload = json.dumps(
+        {"cfg": d, "code": _code_version()},
+        sort_keys=True,
+        default=str,
+    )
+
+    return hashlib.sha1(payload.encode()).hexdigest()[:12]
+
+
 def load_cached_outputs(run_dir: str) -> Optional[Dict[str, Any]]:
     """
     Load cached outputs from a run directory.
