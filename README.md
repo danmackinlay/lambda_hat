@@ -1,52 +1,9 @@
 # Local Learning Coefficient Sampler Benchmarks
 
-This repo contains code to*estimate _Local Learning Coefficients (LLCs)_ for small neural networks using _stochastic gradient Langevin dynamics (SGLD)_, _Hamiltonian Monte Carlo (HMC)_, and _Microcanonical Langevin Monte Carlo (MCLMC)_, all implemented via [BlackJAX](https://github.com/blackjax-devs/blackjax/tree/1.2.5).
+This repo contains code to estimate _Local Learning Coefficients (LLCs)_ for small neural networks using _stochastic gradient Langevin dynamics (SGLD)_, _Hamiltonian Monte Carlo (HMC)_, and _Microcanonical Langevin Monte Carlo (MCLMC)_.
+There is little novel theory here; the goal is to provide implementations using standard industrial tooling such as  [BlackJAX](https://github.com/blackjax-devs/blackjax/tree/1.2.5) (sampling) and [ArviZ](https://python.arviz.org/) (diagnostics).
 
----
-
-## Motivation
-
-In [Singular Learning Theory (SLT)](https://singularlearningtheory.com), the _Local Learning Coefficient (LLC)_ quantifies the *effective local dimensionality* of a model around a trained optimum. The LLC is crucial for understanding the geometry of singular loss surfaces, which differ fundamentally from the quadratic approximations that standard Bayesian Laplace methods assume.
-The recent [*From Global to Local: A Scalable Benchmark for Local Posterior Sampling* (Hitchcock & Hoogland, 2024)](file-9pNmXEB8xGTwKS1evcvu5F) uses _deep linear networks (DLNs)_ as ground truth, because those admit analytic LLC values.
-
-We might fail to be persuaded by those;
-linear nets are a very special case.
-Our research agenda is to see how well SGLD (and alternative SGMCMC methods) track local geometry in *nonlinear* models (ReLU, GeLU, etc.) where analytic LLCs aren’t available.
-To do that responsibly, we first need to ground-truth against a sampler we trust (HMC) on small models with ~10k parameters — large enough to show interesting degeneracies, but still small enough that HMC is (barely) feasible.
-
-Ultimately, we want to devise and evaluate new sampling algorithms for singular neural nets. This repo is the foundation: it gives us side-by-side SGLD, HMC, and MCLMC runs with consistent LLC estimation and diagnostics.
-
-## What’s inside
-
-- **Unified CLI** (`uv run python -m llc`) — end-to-end pipeline:
-
-  - Small but non-trivial MLP model with configurable depth, widths, activation (ReLU, tanh, GeLU, identity for deep-linear).
-  - Teacher–student data generator with parametric input distributions (isotropic Gaussian, anisotropic, mixture of Gaussians, low-dim manifolds, heavy-tailed).
-  - Noise models: Gaussian, heteroscedastic, Student-t, outliers.
-  - ERM training (i.e. SGD) to locate the empirical minimizer \(w^\*\); the local Gaussian prior is centered at \(w^\*\).
-  - Tempered local posterior (\(\beta = \beta_0/\log n\) by default) + Gaussian localization (\(\gamma = d / r^2\) if `prior_radius` given), which is the standard way of “doing LLC”.
-  - **Online LLC estimator** computed during sampling, using occasional full-batch loss evaluations.
-  - **Samplers**:
-    - **SGLD** (unadjusted stochastic gradient Langevin dynamics, with minibatching, online LLC evaluation, optional RMSProp/Adam preconditioning).
-    - **HMC** (full-batch, with BlackJAX `window_adaptation` to tune step size + diagonal mass).
-    - **MCLMC** (microcanonical Langevin Monte Carlo, unadjusted, with automatic tuning of step size and momentum decoherence length `L` using [the official BlackJAX tuner](https://blackjax-devs.github.io/sampling-book/algorithms/mclmc.html)).
-  - **Diagnostics via [ArviZ](https://python.arviz.org/):**
-    - Running \(\hat\lambda_t\) (per-chain + pooled).
-    - Trace, autocorrelation, ESS, and \(\hat R\) for \(L_n(w)\).
-    - Optional trace/rank plots for a tiny subset or random projection of θ (memory-safe).
-    - HMC acceptance-rate histogram; MCLMC energy-change histogram.
-  - **Work-normalized variance (WNV)** metrics: variance of LLC estimate × (wall-clock time or gradient-equivalent count). Automatically computed for all samplers to enable efficiency comparisons across parameter dimensions.
-  - **Efficiency metrics** (per sampler):
-    - `ESS/sec` — wall-clock efficiency
-    - `ESS/FDE` — gradient-normalized efficiency (data-size-agnostic, where FDE = full-data-equivalent gradients)
-    - `time_to_se1`, `fde_to_se1` — projected costs to reach SE(LLC)=1.0
-  - **Post-hoc Analysis** (`llc analyze`) — pure, fast analysis on saved data:
-    - Generates metrics and figures without re-running expensive sampling
-    - Works on unified `.nc` files containing LLC traces, theta samples, acceptance rates, and energy
-    - No JAX dependencies — runs instantly on any machine
-    - Reproducible figure generation with custom themes/options
-
----
+Let’s let some diagrams speak for themselves.
 
 ## Representative diagnostics
 
@@ -93,14 +50,56 @@ These examples come from a quick run with 4 chains (`--preset=quick`), using Arv
 ![SGLD theta trace](assets/readme/sgld_theta_trace.png)
 ![MCLMC theta trace](assets/readme/mclmc_theta_trace.png)
 
+We run **4 chains** by default for reliable $\hat{R}$ and ESS diagnostics.
+
+## Motivation
+
+What just happened?
+In [Singular Learning Theory (SLT)](https://singularlearningtheory.com), the _Local Learning Coefficient (LLC)_ quantifies the *effective local dimensionality* of a model around a trained optimum.
+The LLC is crucial for understanding the geometry of singular loss surfaces, which differ fundamentally from the quadratic approximations that standard Bayesian Laplace methods assume.
+
+We expect this to be a tricky thing to estimate in practice -- the LLC depends on the local geometry of the posterior, which can be complex and ill-behaved, and is very high dimensional.
+
+The recent [*From Global to Local: A Scalable Benchmark for Local Posterior Sampling* (Hitchcock & Hoogland, 2024)](file-9pNmXEB8xGTwKS1evcvu5F) uses _deep linear networks (DLNs)_ as ground truth, because those admit analytic LLC values.
+We might fail to be persuaded by those;
+linear nets are a very special case.
+Our research agenda is to see how well SGLD (and alternative SGMCMC methods) track local geometry in *nonlinear* models (ReLU, GeLU, etc.) where analytic LLCs aren’t available.
+To do that responsibly, we first need to ground-truth against a sampler we trust (HMC) on small models with ~10k parameters — large enough to show interesting degeneracies, but still small enough that HMC is (barely) feasible.
+
+Ultimately, we want to devise and evaluate new sampling algorithms for singular neural nets. This repo is the foundation: it gives us side-by-side SGLD, HMC, and MCLMC runs with consistent LLC estimation and diagnostics.
+
+## What’s inside
+
+- **Unified CLI** (`uv run python -m llc`) — end-to-end pipeline:
+
+  - Small but non-trivial MLP model with configurable depth, widths, activation (ReLU, tanh, GeLU, identity for deep-linear).
+  - Teacher–student data generator with parametric input distributions (isotropic Gaussian, anisotropic, mixture of Gaussians, low-dim manifolds, heavy-tailed).
+  - Noise models: Gaussian, heteroscedastic, Student-t, outliers.
+  - ERM training (i.e. SGD) to locate the empirical minimizer \(w^\*\); the local Gaussian prior is centered at \(w^\*\).
+  - Tempered local posterior (\(\beta = \beta_0/\log n\) by default) + Gaussian localization (\(\gamma = d / r^2\) if `prior_radius` given), which is the standard way of “doing LLC”.
+  - **Online LLC estimator** computed during sampling, using occasional full-batch loss evaluations.
+  - **Samplers**:
+    - **SGLD** (unadjusted stochastic gradient Langevin dynamics, with minibatching, online LLC evaluation, optional RMSProp/Adam preconditioning).
+    - **HMC** (full-batch, with BlackJAX `window_adaptation` to tune step size + diagonal mass).
+    - **MCLMC** (microcanonical Langevin Monte Carlo, unadjusted, with automatic tuning of step size and momentum decoherence length `L` using [the official BlackJAX tuner](https://blackjax-devs.github.io/sampling-book/algorithms/mclmc.html)).
+  - **Diagnostics via [ArviZ](https://python.arviz.org/):**
+    - Running \(\hat\lambda_t\) (per-chain + pooled).
+    - Trace, autocorrelation, ESS, and \(\hat R\) for \(L_n(w)\).
+    - Optional trace/rank plots for a tiny subset or random projection of θ (memory-safe).
+    - HMC acceptance-rate histogram; MCLMC energy-change histogram.
+  - **Work-normalized variance (WNV)** metrics: variance of LLC estimate × (wall-clock time or gradient-equivalent count). Automatically computed for all samplers to enable efficiency comparisons across parameter dimensions.
+  - **Efficiency metrics** (per sampler):
+    - `ESS/sec` — wall-clock efficiency
+    - `ESS/FDE` — gradient-normalized efficiency (data-size-agnostic, where FDE = full-data-equivalent gradients)
+    - `time_to_se1`, `fde_to_se1` — projected costs to reach SE(LLC)=1.0
+  - **Post-hoc Analysis** (`llc analyze`) — pure, fast analysis on saved data:
+    - Generates metrics and figures without re-running expensive sampling
+    - Works on unified `.nc` files containing LLC traces, theta samples, acceptance rates, and energy
+    - No JAX dependencies — runs instantly on any machine
+    - Reproducible figure generation with custom themes/options
+
 ---
 
-**Notes.**
-
-* We run **4 chains** by default for reliable R-hat and ESS diagnostics.
-* If rank plots look non-uniform, autocorrelation tails are long, or R-hat ≥ 1.01, increase draws, reduce thinning, or adjust adaptation settings.
-
----
 
 ## Installation
 
