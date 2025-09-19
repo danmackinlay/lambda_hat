@@ -3,575 +3,104 @@
 This repo contains code to estimate _Local Learning Coefficients (LLCs)_ for small neural networks using _stochastic gradient Langevin dynamics (SGLD)_, _Hamiltonian Monte Carlo (HMC)_, and _Microcanonical Langevin Monte Carlo (MCLMC)_.
 There is little novel theory here; the goal is to provide implementations using standard industrial tooling such as  [BlackJAX](https://github.com/blackjax-devs/blackjax/tree/1.2.5) (sampling) and [ArviZ](https://python.arviz.org/) (diagnostics).
 
-Let’s let some diagrams speak for themselves.
 
-## Representative diagnostics
+## Representative Diagnostics
 
-These examples come from a quick run with 4 chains (`--preset=quick`), using ArviZ for convergence diagnostics.
-
-* **Running LLC (SGLD / HMC / MCLMC)** — per-chain and pooled running estimates of
-  \$\mathrm{LLC} = n,\beta,(E\[L\_n] - L\_0)\$.
-  The shaded band shows the final mean ± 2·SE (based on effective sample size).
-  *Why it matters:* curves should stabilize and different chains should agree; instability or divergence signals insufficient draws or poor mixing.
+**Running LLC estimates** — per-chain and pooled running estimates of LLC = n·β·(E[Lₙ] − L₀). The shaded band shows final mean ± 2·SE (based on effective sample size).
 
 ![SGLD running LLC](assets/readme/sgld_llc_running.png)
 ![HMC running LLC](assets/readme/hmc_llc_running.png)
 ![MCLMC running LLC](assets/readme/mclmc_llc_running.png)
 
-* **Rank plot (LLC)** — chain-wise rank histograms.
-  *Why it matters:* under convergence, draws from each chain should be roughly uniformly distributed; strong deviations indicate mixing problems or multimodality.
+**Key diagnostic indicators:**
+- **Rank plots:** Uniform ranks indicate good mixing; deviations signal multimodality or poor convergence
+- **ESS evolution:** Should grow steadily and plateau; slow growth indicates high autocorrelation
+- **Energy diagnostics:** HMC shows tight Hamiltonian distributions; MCLMC shows centered energy changes
+- **Theta traces:** Should look like stationary noise; trends or drifts indicate non-convergence
 
-![LLC rank](assets/readme/llc_rank.png)
+<small>More diagnostic plots available via `llc analyze` (autocorrelation, theta traces, energy histograms, etc.)</small>
 
-* **ESS evolution (LLC)** — effective sample size (ESS) as a function of draws.
-  *Why it matters:* ESS should grow steadily and plateau at a high value; slow growth indicates high autocorrelation and low statistical efficiency.
-
-![LLC ESS evolution](assets/readme/llc_ess_evolution.png)
-
-* **Autocorrelation (LLC)** — lag-k autocorrelation of the LLC series.
-  *Why it matters:* autocorrelations should drop quickly toward zero. Long tails suggest highly correlated chains and reduced effective sample size.
-
-![LLC autocorr](assets/readme/llc_autocorr.png)
-
-* **Energy diagnostics**
-
-  * **HMC:** Hamiltonian energy distribution.
-    *Why it matters:* well-behaved HMC shows a tight, regular distribution; heavy tails or multimodality can indicate poor adaptation or pathologies.
-  * **MCLMC:** distribution of per-step energy changes.
-    *Why it matters:* should be centered and not too wide; large or skewed changes can indicate unstable integration.
-
-![HMC energy](assets/readme/hmc_energy.png)
-![MCLMC energy](assets/readme/mclmc_energy.png)
-
-* **Theta traces** — a subset of parameter dimensions for each sampler.
-  *Why it matters:* traces should look like stationary noise around a stable mean. Trends, drifts, or stuck chains suggest non-convergence.
-
-![HMC theta trace](assets/readme/hmc_theta_trace.png)
-![SGLD theta trace](assets/readme/sgld_theta_trace.png)
-![MCLMC theta trace](assets/readme/mclmc_theta_trace.png)
-
-We run **4 chains** by default for reliable $\hat{R}$ and ESS diagnostics.
-
-## Motivation
-
-What just happened?
-In [Singular Learning Theory (SLT)](https://singularlearningtheory.com), the _Local Learning Coefficient (LLC)_ quantifies the *effective local dimensionality* of a model around a trained optimum.
-The LLC is crucial for understanding the geometry of singular loss surfaces, which differ fundamentally from the quadratic approximations that standard Bayesian Laplace methods assume.
-
-We expect this to be a tricky thing to estimate in practice -- the LLC depends on the local geometry of the posterior, which can be complex and ill-behaved, and is very high dimensional.
-
-The recent [*From Global to Local: A Scalable Benchmark for Local Posterior Sampling* (Hitchcock & Hoogland, 2024)](file-9pNmXEB8xGTwKS1evcvu5F) uses _deep linear networks (DLNs)_ as ground truth, because those admit analytic LLC values.
-We might fail to be persuaded by those;
-linear nets are a very special case.
-Our research agenda is to see how well SGLD (and alternative SGMCMC methods) track local geometry in *nonlinear* models (ReLU, GeLU, etc.) where analytic LLCs aren’t available.
-To do that responsibly, we first need to ground-truth against a sampler we trust (HMC) on small models with ~10k parameters — large enough to show interesting degeneracies, but still small enough that HMC is (barely) feasible.
-
-Ultimately, we want to devise and evaluate new sampling algorithms for singular neural nets. This repo is the foundation: it gives us side-by-side SGLD, HMC, and MCLMC runs with consistent LLC estimation and diagnostics.
-
-## What’s inside
-
-- **Unified CLI** (`uv run python -m llc`) — end-to-end pipeline:
-
-  - Small but non-trivial MLP model with configurable depth, widths, activation (ReLU, tanh, GeLU, identity for deep-linear).
-  - Teacher–student data generator with parametric input distributions (isotropic Gaussian, anisotropic, mixture of Gaussians, low-dim manifolds, heavy-tailed).
-  - Noise models: Gaussian, heteroscedastic, Student-t, outliers.
-  - ERM training (i.e. SGD) to locate the empirical minimizer \(w^\*\); the local Gaussian prior is centered at \(w^\*\).
-  - Tempered local posterior (\(\beta = \beta_0/\log n\) by default) + Gaussian localization (\(\gamma = d / r^2\) if `prior_radius` given), which is the standard way of “doing LLC”.
-  - **Online LLC estimator** computed during sampling, using occasional full-batch loss evaluations.
-  - **Samplers**:
-    - **SGLD** (unadjusted stochastic gradient Langevin dynamics, with minibatching, online LLC evaluation, optional RMSProp/Adam preconditioning).
-    - **HMC** (full-batch, with BlackJAX `window_adaptation` to tune step size + diagonal mass).
-    - **MCLMC** (microcanonical Langevin Monte Carlo, unadjusted, with automatic tuning of step size and momentum decoherence length `L` using [the official BlackJAX tuner](https://blackjax-devs.github.io/sampling-book/algorithms/mclmc.html)).
-  - **Diagnostics via [ArviZ](https://python.arviz.org/):**
-    - Running \(\hat\lambda_t\) (per-chain + pooled).
-    - Trace, autocorrelation, ESS, and \(\hat R\) for \(L_n(w)\).
-    - Optional trace/rank plots for a tiny subset or random projection of θ (memory-safe).
-    - HMC acceptance-rate histogram; MCLMC energy-change histogram.
-  - **Work-normalized variance (WNV)** metrics: variance of LLC estimate × (wall-clock time or gradient-equivalent count). Automatically computed for all samplers to enable efficiency comparisons across parameter dimensions.
-  - **Efficiency metrics** (per sampler):
-    - `ESS/sec` — wall-clock efficiency
-    - `ESS/FDE` — gradient-normalized efficiency (data-size-agnostic, where FDE = full-data-equivalent gradients)
-    - `time_to_se1`, `fde_to_se1` — projected costs to reach SE(LLC)=1.0
-  - **Post-hoc Analysis** (`llc analyze`) — pure, fast analysis on saved data:
-    - Generates metrics and figures without re-running expensive sampling
-    - Works on unified `.nc` files containing LLC traces, theta samples, acceptance rates, and energy
-    - No JAX dependencies — runs instantly on any machine
-    - Reproducible figure generation with custom themes/options
-
----
-
-
-## Installation
-
-We use [uv](https://docs.astral.sh/uv/) for dependency management:
+## Quickstart
 
 ```bash
 uv sync
+uv run python -m llc run --preset=quick
+uv run python -m llc analyze runs/<run_id> --which all --plots running_llc,rank,ess_evolution,autocorr,energy,theta
 ```
 
+Outputs saved to `runs/<run_id>/` containing `config.json`, `metrics.json`, `{sgld,hmc,mclmc}.nc`, and `analysis/` PNGs.
 
-For distributed computing, install the appropriate backend:
+## What's in a Run
+
+```text
+runs/<run_id>/
+├── config.json          # full configuration (all parameters)
+├── metrics.json         # summary statistics (LLC mean/SE, ESS, WNV, timings)
+├── L0.txt               # baseline loss at ERM
+├── sgld.nc              # ArviZ traces for SGLD
+├── hmc.nc               # traces + acceptance + energies for HMC
+├── mclmc.nc             # traces + energy deltas for MCLMC
+└── analysis/            # generated by `llc analyze`
+    ├── *_running_llc.png
+    ├── *_rank.png
+    └── ...
+```
+
+## Common Tasks
+
+| Task | Command |
+|------|---------|
+| Local quick run | `uv run python -m llc run --preset=quick` |
+| Local sweep (8 workers) | `uv run python -m llc sweep --workers=8` |
+| Modal run | `uv run python -m llc run --backend=modal` |
+| SLURM run | `uv run python -m llc run --backend=submitit` |
+| Analyze saved run | `uv run python -m llc analyze runs/<run_id>` |
+| Plot sweep results | `uv run llc plot-sweep` |
+| Refresh README images | `uv run llc promote-readme-images` |
+
+For backend-specific setup and configuration, see [docs/backends.md](docs/backends.md).
+
+## Efficiency Metrics
+
+We automatically compute efficiency metrics for all samplers:
+- **ESS/sec** — wall-clock efficiency
+- **ESS/FDE** — gradient-normalized efficiency (data-size-agnostic)
+- **WNV** — work-normalized variance for fair comparisons
+
+Results saved to `metrics.json` per run and `llc_sweep_results.csv` for sweeps. Visualize with `uv run llc plot-sweep`.
+
+## Installation
 
 ```bash
-uv sync --extra slurm      # SLURM/submitit support
+uv sync
+
+# Optional backends
 uv sync --extra modal      # Modal serverless support
+uv sync --extra slurm      # SLURM/submitit support
 uv sync --all-extras       # Both backends
 ```
 
-Or with pip:
-```bash
-pip install llc[slurm]     # SLURM support
-pip install llc[modal]     # Modal support
-```
-
----
-
-## Caching & Skipping
-
-Each run is keyed by a hash of (normalized config, code fingerprint).
-
-**Code fingerprint:**
-- If `LLC_CODE_VERSION` is set in environment → use it
-- Otherwise → hash of all source files (`llc/**/*.py` + `pyproject.toml`)
-
-**Default behavior:** Skip if a run with the same key already exists.
-
-**Force recompute:** Add `--no-skip`
-
-```bash
-# Normal run (uses cache if available)
-uv run python -m llc run --preset=quick
-
-# Force re-run even if cached
-uv run python -m llc run --preset=quick --no-skip
-
-# Override code version (for CI/Modal deployments)
-uv run llc_CODE_VERSION=deploy-123 uv run python -m llc run
-```
-
-**Tips:**
-- Editing any `llc/*.py` file changes the fingerprint automatically
-- On Modal/CI, set `LLC_CODE_VERSION` to a build ID if you want explicit control
-- The cache works everywhere (local, Modal, SLURM) with the same logic
-
----
-
-## Preconditioned SGLD (Optional)
-
-You can optionally enable diagonal preconditioning for SGLD to improve practical efficiency:
-
-```bash
-# RMSProp/pSGLD-style
-uv run python -m llc run --sgld-precond=rmsprop --sgld-beta2=0.999 --sgld-eps=1e-8
-
-# Adam-preconditioned SGLD
-uv run python -m llc run --sgld-precond=adam --sgld-beta1=0.9 --sgld-beta2=0.999 \
-  --sgld-eps=1e-8 --sgld-bias-correction
-```
-
-These adaptive SGMCMC variants are heuristics: the per-parameter scale changes during sampling,
-so the chain is not strictly stationary for the target at all times.
-They are widely used in practice and often yield better mixing than non-adaptive versions.
-Set `--sgld-precond=none`if you prefer the plain kernel.
-
-**Configuration options:**
-
-- `--sgld-precond`: Choose `none` (default), `rmsprop`, or `adam`
-- `--sgld-beta1`: Adam first-moment decay (default: 0.9)
-- `--sgld-beta2`: RMSProp/Adam second-moment decay (default: 0.999)
-- `--sgld-eps`: Numerical stabilizer (default: 1e-8)
-- `--sgld-bias-correction` / `--no-sgld-bias-correction`: Adam bias correction (default: on)
-
----
-
-## Visualization and Artifact Management
-
-The system includes comprehensive visualization saving capabilities for systematic analysis and documentation:
-
-### Automatic Run Organization
-
-- **Deterministic Directories**: Each run creates `runs/<run_id>/` directories with hash-based IDs
-- **Consistent Naming**: Plots use consistent `<sampler>_<plotname>.png` format
-- **Complete Metadata**: `config.json` and `metrics.json` contain configuration and statistics
-
-### Saved Diagnostic Plots
-
-For each sampler (SGLD, HMC, MCLMC), the system saves:
-
-- `*_llc_running.png` - Running LLC estimates over time
-- `*_L_trace.png` - Trace plots of loss function values
-- `*_L_acf.png` - Autocorrelation function plots
-- `*_L_ess.png` - Effective sample size plots
-- `*_L_rhat.png` - R-hat convergence diagnostics
-- `*_theta_trace.png` - Parameter trace plots (subset)
-- `*_theta_rank.png` - Rank plots for parameters
-
-Additional sampler-specific plots:
-- `hmc_acceptance.png` - HMC acceptance rate histogram
-- `mclmc_energy_hist.png` - MCLMC energy change distribution
-
-### Configuration Options
-
-Control visualization and artifact saving via CLI flags:
-
-```bash
-# Save runs with plots (default behavior)
-uv run python -m llc run --preset=quick
-
-# Run without saving plots (faster)
-uv run python -m llc run --preset=quick --no-save-plots
-
-# Force re-run even if cached results exist
-uv run python -m llc run --preset=quick --no-skip
-```
-
-### Common Tasks
-
-Below are copy-paste commands for typical workflows:
-
-#### Local quick runs
-```bash
-# Fastest smoke test (no plots)
-uv run python -m llc run --preset=quick --no-save-plots
-
-# Quick with full run data (plots and NetCDF files)
-uv run python -m llc run --preset=quick
-```
-
-#### Remote single runs
-```bash
-# Run one job on Modal
-uv run python -m llc run --backend=modal --preset=quick
-
-# Run one job on SLURM
-uv run python -m llc run --backend=submitit --preset=quick
-```
-
-#### Full run
-```bash
-uv run python -m llc run --preset=full
-```
-
-#### Parameter sweep (local CPU)
-```bash
-# Serial execution
-uv run python -m llc sweep
-
-# Parallel on N local workers
-uv run python -m llc sweep --backend=local --workers=8
-```
-
-#### Modal (serverless) — deploy once, then sweep
-```bash
-# 1) Deploy the app (optional for object-based usage)
-uv run modal deploy modal_app.py
-
-# 2) Sweep on Modal (use small n-seeds while testing)
-uv run python -m llc sweep --backend=modal --n-seeds=1 --preset=quick
-```
-
-#### SLURM (Submitit)
-```bash
-uv run python -m llc sweep --backend=submitit  # add your submitit params if needed
-```
-
-#### Development utilities
-```bash
-# Clean generated runs
-rm -rf runs/* llc_sweep_results.csv __pycache__ *.pyc
-
-# Promote plots for README
-uv run llc promote-readme-images
-```
-
-## Refreshing README figures
-
-We keep a few diagnostic plots in `assets/readme/` for illustration.
-
-### Local run (fastest on your machine)
-
-```bash
-uv run python -m llc run --preset=quick
-uv run llc promote-readme-images
-git add assets/readme
-git commit -m "refresh README examples"
-```
-
-### Remote run on Modal
-
-```bash
-uv run python -m llc run --backend=modal --preset=quick
-uv run llc promote-readme-images
-git add assets/readme
-git commit -m "refresh README examples"
-```
-
-Notes:
-
-* The Modal volume name is `llc-runs`.
-* The pipeline writes runs under `runs/<run_id>` locally, and `/runs/<run_id>` on Modal; the README promoter selects the **latest** local run automatically.
-* Use `--no-skip` if you need to force recompute; by default identical config+code uses the cached run (see the caching logic driven by `run_id(cfg)` in `llc/cache.py`).
-
-
-## Usage
-
-### Swappable Targets
-
-The system supports different target functions:
-
-**Neural network targets (default):**
-```bash
-uv run python -m llc run --preset=quick
-```
-
-**Analytical quadratic target** (for factor-of-2 bug detection):
-```bash
-uv run python -m llc run --target=quadratic --quad-dim=4
-```
-
-The quadratic target uses L_n(θ) = 0.5||θ||² for testing sampler correctness.
-
-### Run a single experiment
-
-```bash
-uv run python -m llc run
-```
-
-* Uses the default `Config` (`in_dim=32`, `target_params≈10k`, ReLU MLP).
-* Trains to ERM, centers prior at $w^\*$, runs **SGLD** then **HMC** then **MCLMC**.
-* Prints LLC estimates $\hat{\lambda}$, ESS/$\hat R$, acceptance stats, WNV.
-* Shows ArviZ convergence plots (trace, autocorr, ESS, R̂) plus running LLC curves.
-* Saves unified `.nc` files per sampler with all data for post-hoc analysis.
-
-### Post-hoc analysis
-
-```bash
-# Analyze saved run data (no JAX/sampling required)
-uv run python -m llc analyze runs/<run_id>
-
-# Select specific samplers and plots
-uv run python -m llc analyze runs/<run_id> --which=hmc --plots=running_llc,rank,ess_evolution
-
-# Generate figures in custom directory
-uv run python -m llc analyze runs/<run_id> --out=figures/ --overwrite
-
-uv run python -m llc analyze runs/<RUN_ID> \
-  --which all \
-  --plots running_llc,rank,ess_evolution,ess_quantile,autocorr,energy,theta \
-  --out runs/<RUN_ID> \
-  --overwrite
-```
-
-* Works on `.nc` files saved by `llc run`
-* Pure post-hoc analysis — no expensive re-sampling
-* Generates metrics and figures instantly
-* Perfect for custom themes, formats, or cross-run comparisons
-
-### Run a sweep
-
-```bash
-uv run python -m llc sweep
-```
-
-* Iterates over parameter dimensions (500-10k), depth/width/activation/data/noise settings (see `sweep_space()`),
-* logs per-run LLC results with WNV metrics and saves to `llc_sweep_results.csv`.
-
-Plot the sweep
-
-```bash
-# vanilla
-uv run llc plot-sweep
-
-# filter to a fixed data/model family
-uv run llc plot-sweep --filters "activation=relu,x_dist=gauss_iso"
-
-# different size axis
-uv run llc plot-sweep --size-col n_data
-
-# focus on HMC/MCLMC only
-uv run llc plot-sweep --samplers hmc,mclmc
-```
-
-## Parallelism
-
-**Local (default):**
-
-```bash
-uv run python -m llc sweep --backend=local --workers=4
-```
-
-**SLURM cluster:**
-
-```bash
-uv run python -m llc sweep --backend=submitit \
-  --partition=gpu --gpus=1 --timeout-min=60
-```
-
-**Modal serverless:**
-
-```bash
-uv run python -m llc sweep --backend=modal
-```
-
-Runs are saved by default and automatically downloaded to `./runs/<run_id>/` as each job completes.
-Use `--no-artifacts` to disable saving.
-
-### Modal workflow
-
-We use **object-based Modal function imports** for execution.
-The local client imports `run_experiment_remote` from `modal_app.py`, which auto-deploys current code.
-
-**Note:** We install Modal via `uv`. Run Modal CLI commands as `uv run modal ...`
-(e.g., `uv run modal volume ls llc-runs`).
-
-**One-time setup**
-```bash
-uv run modal token new                   # authenticate
-uv run modal volume create llc-runs      # optional; code can create it on first run
-```
-
-`modal_app.py` defines resources/timeouts/volumes on the decorator:
-
-```python
-app = modal.App("llc-experiments", image=image)
-
-@app.function(
-    timeout=3*60*60,  # generous 3 hours
-    volumes={"/runs": runs_volume},
-    retries=modal.Retries(max_retries=3, backoff_coefficient=2.0, initial_delay=10.0)
-)
-def run_experiment_remote(cfg_dict: dict) -> dict:
-    ...
-```
-
-**Run a sweep**
-
-```bash
-uv run python -m llc sweep --backend=modal
-```
-
-The client imports `run_experiment_remote` from `modal_app.py` and calls `.map(...)`. Modal auto-deploys the current code. Runs are saved to the **Modal volume** mounted at `/runs` in the app.
-
-**Tear down / clean up**
-
-* Remove old run folders from the volume (optional housekeeping):
-  `uv run modal volume rm llc-runs /runs/<run-id>`
-* Stop the app (rare): `uv run modal app stop llc-experiments`
-
-#### Modal runs
-
-**Automatic download**: When you run `llc run/sweep --backend=modal`, runs are automatically downloaded to `./runs/<run_id>/` as each job completes. No separate pull step needed!
-
-**Manual retrieval** (if needed): For browsing or recovering old runs from the Modal volume use `llc pull-artifacts`.
-
-#### Modal troubleshooting
-
-* **Timeouts not taking effect:** Remember timeouts are set in the decorator in `modal_app.py` (we use generous defaults), not per-call flags.
-* **Runs missing locally:** Fetch from the volume with `llc pull-artifacts <run_id>`.
-
----
-
-## Roadmap
-
-* **Preconditioned SGLD**: RMSProp-SGLD / Adam-SGLD.
-* **Adjusted MCLMC**: MH-corrected variant with adaptive step-size (target accept ≈0.9).
-* **Trans-dimensional moves**: exploring SLT’s *blow-ups* and richer sampler designs.
-* **Scaling studies**: push toward larger ReLU/GELU networks, beyond HMC’s limit, to stress-test SGLD/MCLMC.
-* **Better LLC error estimation**: block bootstrap on $L_n$ traces, multi-chain variance combination.
-
-## Runs and Results
-
-When you execute an experiment (`llc run`, `llc sweep`), the system creates a **run** identified by a deterministic `run_id`. That run produces a directory of **results** — the saved outputs of the experiment.
-
-### Where runs live
-
-* **Local:** `runs/<run_id>/`
-* **Modal backend:** the same folder is written to the shared `/runs` volume; you can later `llc pull-artifacts` to copy it back locally.
-
-### What’s inside a run directory
-
-Every run folder contains:
-
-* `config.json` – the full configuration, including dataset, model, and sampler parameters. Inspect this to rediscover exactly how the run was set up.
-* `metrics.json` – all summary statistics (LLC mean/SE, ESS, WNV, timing, gradient counts, acceptance rates, etc.) per sampler.
-* `{sgld,hmc,mclmc}.nc` – ArviZ NetCDF files with full per-chain traces (Lₙ, LLC, thinned parameters, acceptance, energies). These are the canonical inputs for `llc analyze` and plotting.
-* `L0.txt` – baseline loss at the ERM/θ⋆.
-* (Optional) diagnostic PNGs if you ran with `--save-plots`.
-
-That’s all you need for post-hoc analysis.
-
-### Why some commands ask for a *run* and others for *run_id*
-
-* `llc run` / `llc sweep` **create a run**. You usually just see the run ID in the logs.
-* `llc analyze <run_dir>` and `llc promote-readme-images <run_dir>` expect a **run directory** (the canonical output of a run). If you omit `run_dir` in `promote-readme-images`, it picks the newest run automatically.
-* `llc pull-artifacts [run_id]` is Modal-specific: it looks up a run on the remote volume by ID and downloads the **run directory** back under `runs/<run_id>/`. From there you can browse or analyze locally.
-
-In other words:
-
-* Use `run_dir` when you want to **point at a specific finished experiment’s folder**.
-* Use `pull-artifacts` when you need to **retrieve that folder from Modal’s volume**.
-
-### Where to look for results
-
-* **Quick numbers:** check `metrics.json` inside a run folder.
-* **Plots/diagnostics:** run `llc analyze <run_dir>` to generate PNGs from the `.nc` files into `<run_dir>/analysis/`.
-* **Parameters/config:** open `config.json`. This records every hyperparameter and is the definitive reference for reproducing the run.
-* **Sweeps:** after `llc sweep`, results across runs are aggregated into `llc_sweep_results.csv` for easy plotting with `llc plot-sweep`.
-
-
-```text
-runs/
-└── abcd1234/                # run_id (deterministic from config + code)
-    ├── config.json          # full configuration (all dataset/model/sampler params)
-    ├── metrics.json         # summary statistics per sampler (LLC mean/SE, ESS, WNV, timings, work counts)
-    ├── L0.txt               # baseline loss at ERM (θ⋆)
-    ├── sgld.nc              # ArviZ traces (Lₙ, LLC, θ, etc.) for SGLD
-    ├── hmc.nc               # traces + acceptance + energies for HMC
-    ├── mclmc.nc             # traces + energy deltas for MCLMC
-    └── analysis/            # created by `llc analyze`
-        ├── sgld_running_llc.png
-        ├── hmc_llc_rank.png
-        ├── mclmc_energy.png
-        └── ...              # whatever plots you requested
-```
-
-* Every run lives under `runs/<run_id>/` locally (or `/runs/<run_id>/` on Modal).
-* `config.json` = how the job was configured.
-* `metrics.json` = the numbers you usually quote in the paper.
-* `.nc` files = full traces for reproducible post-hoc analysis.
-* `analysis/` = figures generated afterwards with `llc analyze`.
-
-
----
-
-## Notes on BlackJAX API (v1.2.5)
-
-To prevent confusion across docs vs release:
-
-* **SGLD**
-
-  * Public API: `sgld = blackjax.sgld(grad_fn)`
-  * Step signature: `new_position = sgld.step(rng_key, position, minibatch, step_size)`
-  * Source: [sgld.py (1.2.5)](https://github.com/blackjax-devs/blackjax/blob/1.2.5/blackjax/sgmcmc/sgld.py#L38-L47)
-    (see `step_fn` → returns `kernel(...)` → returns `new_position`).
-
-* **HMC**
-
-  * Use `blackjax.hmc` with `blackjax.window_adaptation`.
-  * `HMCInfo` fields include `acceptance_rate` (flat attribute).
-  * Source: [hmc.py (1.2.5)](https://github.com/blackjax-devs/blackjax/blob/1.2.5/blackjax/mcmc/hmc.py#L330-L334).
-
-* **MCLMC**
-
-  * See [Sampling Book MCLMC example](https://blackjax-devs.github.io/sampling-book/algorithms/mclmc.html).
-  * Tune `(L, step_size)` with `blackjax.mclmc_find_L_and_step_size`, then build `blackjax.mclmc(logdensity_fn, L, step_size)`.
-  * Integrators available in [integrators module (1.2.5)](https://github.com/blackjax-devs/blackjax/tree/1.2.5/blackjax/mcmc/integrators) (e.g. `isokinetic_mclachlan`).
-  * `MCLMCInfo` has `energy_change` field (see [mclmc.py (1.2.5)](https://github.com/blackjax-devs/blackjax/blob/1.2.5/blackjax/mcmc/mclmc.py)).
-
-⚠️ **Docs drift warning**: the online blackjax docs default to `main`.
-They may show `acceptance_probability` for HMC or a different SGLD step signature. Always cross-check the [1.2.5 tag source](https://github.com/blackjax-devs/blackjax/tree/1.2.5) when in doubt.
-
----
+## Features
+
+- **Unified CLI** for end-to-end LLC estimation pipeline
+- **Three samplers:** SGLD (with optional preconditioning), HMC, MCLMC
+- **Configurable targets:** ReLU/tanh/GeLU MLPs, analytical quadratic (for testing)
+- **Rich data generation:** Gaussian, anisotropic, mixture distributions with various noise models
+- **ArviZ integration:** Full convergence diagnostics (ESS, R̂, autocorrelation, rank plots)
+- **Work-normalized metrics:** Fair efficiency comparisons across parameter dimensions
+- **Caching system:** Deterministic run IDs prevent duplicate computation
+
+## Documentation
+
+- [Backends (Modal/SLURM setup)](docs/backends.md)
+- [Caching behavior](docs/caching.md)
+- [Preconditioned SGLD options](docs/sgld-precond.md)
+- [Target functions and data generators](docs/targets.md)
+- [BlackJAX API notes](docs/blackjax.md)
+
+## Motivation
+
+In [Singular Learning Theory (SLT)](https://singularlearningtheory.com), the Local Learning Coefficient (LLC) quantifies the effective local dimensionality of a model around a trained optimum. This repo provides implementations using standard industrial tooling (BlackJAX for sampling, ArviZ for diagnostics) to benchmark LLC estimation methods on small but non-trivial neural networks.
 
 ## License
 
