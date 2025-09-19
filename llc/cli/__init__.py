@@ -88,23 +88,23 @@ def promote_readme_images_cmd(run_dir, root):
     return promote_readme_images_entry(run_dir, root)
 
 
-@cli.command("pull-artifacts")
+@cli.command("pull-runs")
 @click.argument("run_id", required=False)
 @click.option(
     "--target",
-    default="artifacts",
+    default="runs",
     show_default=True,
     type=click.Path(file_okay=False),
     help="Local target root",
 )
 def pull_artifacts_cmd(run_id, target):
     """
-    Pull artifacts from Modal using the deployed SDK functions.
+    Pull runs from Modal using the deployed SDK functions.
     If RUN_ID is omitted, discover the latest on the server.
     """
-    from llc.commands.pull_cmd import pull_artifacts_entry
+    from llc.commands.pull_cmd import pull_runs_entry
 
-    return pull_artifacts_entry(run_id, target)
+    return pull_runs_entry(run_id, target)
 
 
 @cli.command("plot-sweep")

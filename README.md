@@ -76,9 +76,9 @@ For backend-specific setup and configuration, see [docs/backends.md](docs/backen
 
 ## Sweeps = Many Runs + One CSV
 
-`llc sweep` launches a grid of runs and writes `llc_sweep_results.csv` summarizing each run (with a `run_dir` back-pointer to analyze individual runs).
+`uv run llc sweep` launches a grid of runs and writes `llc_sweep_results.csv` summarizing each run (with a `run_dir` back-pointer to analyze individual runs).
 
-Plot medians via `llc plot-sweep --size-col target_params` and filter via `--filters "activation=relu,x_dist=gauss_iso"`.
+Plot medians via `uv run llc plot-sweep --size-col target_params` and filter via `--filters "activation=relu,x_dist=gauss_iso"`.
 
 ## Efficiency Metrics
 

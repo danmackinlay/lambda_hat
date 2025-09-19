@@ -61,9 +61,9 @@ def run_one(
     # Compute deterministic run ID
     rid = run_id(cfg)
     # Use canonical runs/ directory everywhere (local and Modal)
-    if hasattr(cfg, "artifacts_dir") and cfg.artifacts_dir.endswith("/runs"):
-        # Modal path: cfg.artifacts_dir="/runs" -> run_dir="/runs/rid"
-        run_dir = os.path.join(cfg.artifacts_dir, rid)
+    if hasattr(cfg, "runs_dir") and cfg.runs_dir.endswith("/runs"):
+        # Modal path: cfg.runs_dir="/runs" -> run_dir="/runs/rid"
+        run_dir = os.path.join(cfg.runs_dir, rid)
     else:
         # Default: use runs/ under current directory
         run_dir = os.path.join("runs", rid)
@@ -84,7 +84,7 @@ def run_one(
     if save_artifacts:
         os.makedirs(run_dir, exist_ok=True)
         print(f"Run ID: {rid}")
-        print(f"Artifacts will be saved to: {run_dir}")
+        print(f"Run will be saved to: {run_dir}")
     else:
         run_dir = ""  # Don't save if not requested
 
@@ -285,7 +285,7 @@ def run_one(
 
     # Save other artifacts if requested
     if save_artifacts and run_dir:
-        logger.info("Saving artifacts")
+        logger.info("Saving run outputs")
         save_L0(run_dir, L0)
         save_metrics(run_dir, all_metrics)
         save_config(run_dir, cfg)

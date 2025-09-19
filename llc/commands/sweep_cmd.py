@@ -87,14 +87,14 @@ def sweep_entry(kwargs: dict) -> None:
     else:
         results = _run_map()
 
-    # For Modal, optionally pull artifacts locally (convenience)
+    # For Modal, optionally pull runs locally (convenience)
     if backend == "modal":
-        os.makedirs("artifacts", exist_ok=True)
+        os.makedirs("runs", exist_ok=True)
         for r in results:
             try:
                 extract_modal_runs_locally(r)
             except Exception as e:
-                print(f"Warning: failed to extract artifacts for a job: {e}")
+                print(f"Warning: failed to extract runs for a job: {e}")
 
     # Save long-form CSV with WNV fields (same as argparse version)
     _save_sweep_results(results)

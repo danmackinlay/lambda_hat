@@ -143,7 +143,7 @@ class Config:
     save_plots_prefix: Optional[str] = None  # e.g., "diag" to save PNGs
 
     # Artifacts and visualization saving
-    artifacts_dir: str = "artifacts"  # base directory for saving artifacts
+    runs_dir: str = "runs"  # base directory for saving run outputs
     save_plots: bool = False  # whether to save all diagnostic plots
     show_plots: bool = False  # whether to display plots (default: headless)
     auto_create_run_dir: bool = True  # create timestamped run directories

@@ -28,7 +28,7 @@ def _normalize_cfg(cfg) -> Dict[str, Any]:
         "save_plots",
         "save_manifest",
         "save_readme_snippet",
-        "artifacts_dir",  # Location doesn't affect results
+        "runs_dir",  # Location doesn't affect results
         "diag_mode",  # Diagnostics don't affect LLC computation
         "progress_update_every",
     ]
@@ -120,20 +120,20 @@ def load_cached_outputs(run_dir: str) -> Optional[Dict[str, Any]]:
 
 
 def should_skip(
-    cfg, artifacts_dir: str = "artifacts"
+    cfg, runs_dir: str = "runs"
 ) -> tuple[bool, str, Optional[Dict]]:
     """
     Check if a run should be skipped based on existing cache.
 
     Args:
         cfg: Configuration object
-        artifacts_dir: Base directory for artifacts
+        runs_dir: Base directory for run outputs
 
     Returns:
         Tuple of (should_skip, run_dir, cached_outputs)
     """
     rid = run_id(cfg)
-    run_dir = os.path.join(artifacts_dir, rid)
+    run_dir = os.path.join(runs_dir, rid)
 
     # Check if results already exist
     if os.path.exists(os.path.join(run_dir, "metrics.json")):

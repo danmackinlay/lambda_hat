@@ -43,7 +43,7 @@ def run_shared_options():
             "--no-artifacts",
             is_flag=True,
             default=False,
-            help="Don't save artifacts (plots, data files, gallery).",
+            help="Don't save run outputs (plots, data files).",
         )(f)
         # Plotting
         f = click.option(

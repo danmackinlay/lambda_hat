@@ -116,4 +116,4 @@ def _print_summary_like_argparse(result):
             se_value = (result.metrics or {}).get(se_key, 0)
             print(f"{sampler} LLC: {value:.4f} ± {float(se_value):.4f}")
     if getattr(result, "run_dir", ""):
-        print(f"\nArtifacts saved to: {result.run_dir}")
+        print(f"\nRun saved to: {result.run_dir}")

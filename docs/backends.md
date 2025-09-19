@@ -43,12 +43,12 @@ def run_experiment_remote(cfg_dict: dict) -> dict:
 
 **Automatic download**: When you run `llc run/sweep --backend=modal`, runs are automatically downloaded to `./runs/<run_id>/` as each job completes.
 
-**Manual retrieval**: For browsing or recovering old runs from the Modal volume use `llc pull-artifacts`.
+**Manual retrieval**: For browsing or recovering old runs from the Modal volume use `llc pull-runs`.
 
 ### Troubleshooting
 
 * **Timeouts not taking effect:** Remember timeouts are set in the decorator in `modal_app.py` (we use generous defaults), not per-call flags.
-* **Runs missing locally:** Fetch from the volume with `llc pull-artifacts <run_id>`.
+* **Runs missing locally:** Fetch from the volume with `llc pull-runs <run_id>`.
 
 ### Cleanup
 

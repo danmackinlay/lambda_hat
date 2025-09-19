@@ -61,11 +61,11 @@ def run_experiment_remote(cfg_dict: dict) -> dict:
     # Make caching effective across calls: write runs directly to the volume.
     cfg_dict = dict(cfg_dict)
     if os.path.isdir("/runs"):
-        print("[Modal] Volume /runs exists, setting artifacts_dir=/runs")
+        print("[Modal] Volume /runs exists, setting runs_dir=/runs")
         cfg_dict.setdefault("save_artifacts", True)
-        cfg_dict["artifacts_dir"] = "/runs"
+        cfg_dict["runs_dir"] = "/runs"
     else:
-        print("[Modal] Warning: Volume /runs not found, using default artifacts_dir")
+        print("[Modal] Warning: Volume /runs not found, using default runs_dir")
 
     result = run_experiment_task(cfg_dict)
 
@@ -128,12 +128,12 @@ def run_experiment_remote_gpu(cfg_dict: dict) -> dict:
     # Make caching effective across calls: write runs directly to the volume.
     cfg_dict = dict(cfg_dict)
     if os.path.isdir("/runs"):
-        print("[Modal GPU] Volume /runs exists, setting artifacts_dir=/runs")
+        print("[Modal GPU] Volume /runs exists, setting runs_dir=/runs")
         cfg_dict.setdefault("save_artifacts", True)
-        cfg_dict["artifacts_dir"] = "/runs"
+        cfg_dict["runs_dir"] = "/runs"
     else:
         print(
-            "[Modal GPU] Warning: Volume /runs not found, using default artifacts_dir"
+            "[Modal GPU] Warning: Volume /runs not found, using default runs_dir"
         )
 
     result = run_experiment_task(cfg_dict)

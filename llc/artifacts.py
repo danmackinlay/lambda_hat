@@ -13,7 +13,7 @@ from pathlib import Path
 
 
 def create_run_directory(cfg) -> str:
-    """Create a timestamped run directory for artifacts"""
+    """Create a timestamped run directory"""
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     run_dir = f"artifacts/{timestamp}"
     os.makedirs(run_dir, exist_ok=True)
@@ -301,11 +301,11 @@ def generate_gallery_html(run_dir: str, cfg, metrics: Dict[str, Any]) -> str:
     html_content += """
             </tbody>
         </table>
-        
+
         <div class="note">
             <strong>Note:</strong> WNV = Work-Normalized Variance. ESS = Effective Sample Size using bulk method.
         </div>
-        
+
         <h2>Diagnostic Plots</h2>
     """
 
@@ -338,7 +338,7 @@ def generate_gallery_html(run_dir: str, cfg, metrics: Dict[str, Any]) -> str:
             """
 
     html_content += f"""
-        
+
         <h2>Configuration</h2>
         <ul>
             <li><strong>Data points:</strong> {cfg.n_data}</li>
@@ -347,7 +347,7 @@ def generate_gallery_html(run_dir: str, cfg, metrics: Dict[str, Any]) -> str:
             <li><strong>Model depth:</strong> {cfg.depth}</li>
             <li><strong>Parameter count:</strong> {getattr(cfg, "target_params", "N/A")}</li>
         </ul>
-        
+
         <div class="note">
             <strong>Files:</strong> All artifacts including NetCDF data files, configuration, and metrics are saved in this directory.
         </div>
