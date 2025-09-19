@@ -50,10 +50,21 @@ def sweep_entry(kwargs: dict) -> None:
     # Modal handle (if needed)
     remote_fn = None
     if backend == "modal":
-        from llc.modal_app import app, run_experiment_remote
+        # Choose CPU or GPU function based on --gpu-mode (like llc run)
+        if gpu_mode == "off":
+            from llc.modal_app import app, run_experiment_remote
+            remote_fn = run_experiment_remote
+        else:
+            from llc.modal_app import app, run_experiment_remote_gpu
+            remote_fn = run_experiment_remote_gpu
 
-        remote_fn = run_experiment_remote
-        modal_opts = {"max_containers": 1, "min_containers": 0, "buffer_containers": 0}
+        # Scale concurrency automatically
+        maxc = min(8, len(items))  # Cap at 8 containers for reasonable concurrency
+        modal_opts = {
+            "max_containers": maxc,
+            "min_containers": 0,
+            "buffer_containers": max(1, maxc // 2),
+        }
     else:
         modal_opts = None
 
@@ -82,8 +93,21 @@ def sweep_entry(kwargs: dict) -> None:
 
     if backend == "modal":
         # Hydrate functions by running inside the app context
+        # Chunk the work to avoid multi-hour heartbeats
         with app.run():
-            results = _run_map()
+            results = []
+            chunk_size = 16  # Process in batches to avoid long heartbeats
+
+            for i in range(0, len(cfg_dicts), chunk_size):
+                batch = cfg_dicts[i:i+chunk_size]
+                ex = get_executor(
+                    backend=backend,
+                    remote_fn=remote_fn,
+                    options=modal_opts,
+                )
+                batch_results = ex.map(run_experiment_task, batch)
+                results.extend(batch_results)
+                print(f"[sweep] Completed batch {i//chunk_size + 1}/{(len(cfg_dicts) + chunk_size - 1)//chunk_size}")
     else:
         results = _run_map()
 
@@ -91,6 +115,10 @@ def sweep_entry(kwargs: dict) -> None:
     if backend == "modal":
         os.makedirs("runs", exist_ok=True)
         for r in results:
+            # Check if run had an error
+            if r.get("status") == "error":
+                print(f"[sweep] Run {r.get('run_id', 'unknown')} failed: {r.get('error_type', 'Unknown')} at stage {r.get('stage', 'unknown')}")
+                continue
             try:
                 extract_modal_runs_locally(r)
             except Exception as e:
@@ -101,9 +129,23 @@ def sweep_entry(kwargs: dict) -> None:
 
 
 def _save_sweep_results(results):
-    """Save sweep results to CSV."""
+    """Save sweep results to CSV, including error ledger."""
     rows = []
+    error_rows = []
+
     for r in results:
+        # Handle errors separately
+        if r.get("status") == "error":
+            error_rows.append({
+                "run_id": r.get("run_id", "unknown"),
+                "status": "error",
+                "stage": r.get("stage", "unknown"),
+                "error_type": r.get("error_type", "Unknown"),
+                "duration_s": r.get("duration_s", 0),
+                "error": r.get("error", "")[:200],  # First 200 chars of error
+            })
+            continue
+
         run_dir = r.get("run_dir")
         if not run_dir:
             continue
@@ -143,6 +185,7 @@ def _save_sweep_results(results):
                 }
             )
 
+    # Save main results CSV
     if rows:
         import pandas as pd
 
@@ -152,7 +195,15 @@ def _save_sweep_results(results):
             "\nSweep complete! Results saved to llc_sweep_results.csv with WNV fields."
         )
         print(
-            f"Successful runs: {len(rows)}/{len(results)} (rows include per-sampler results)"
+            f"Successful runs: {len(rows)} rows from {len(results)} jobs"
         )
     else:
         print("\nNo successful runs to save.")
+
+    # Save error ledger if any errors occurred
+    if error_rows:
+        import pandas as pd
+
+        error_df = pd.DataFrame(error_rows)
+        error_df.to_csv("llc_sweep_errors.csv", index=False)
+        print(f"\nErrors logged to llc_sweep_errors.csv: {len(error_rows)} failed jobs")

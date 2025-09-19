@@ -1,5 +1,12 @@
 # modal_app.py
+import os
 import modal
+
+# Tunable timeouts and retry settings via environment variables
+TIMEOUT_S = int(os.environ.get("LLC_MODAL_TIMEOUT_S", 3 * 60 * 60))  # Default 3 hours
+MAX_RETRIES = int(os.environ.get("LLC_MODAL_MAX_RETRIES", 3))
+BACKOFF_COEFF = float(os.environ.get("LLC_MODAL_BACKOFF", 2.0))
+INITIAL_DELAY_S = int(os.environ.get("LLC_MODAL_INITIAL_DELAY_S", 10))
 
 # --- Base image: all build steps before adding local code ---
 base = (
@@ -33,142 +40,200 @@ app = modal.App("llc-experiments", image=image)
 
 @app.function(
     gpu=None,
-    timeout=3
-    * 60
-    * 60,  # generous 3 hours, jobs may terminate early & we're OK with it
+    timeout=TIMEOUT_S,
     volumes={"/runs": runs_volume},
     retries=modal.Retries(
-        max_retries=3,
-        backoff_coefficient=2.0,
-        initial_delay=10.0,
+        max_retries=MAX_RETRIES,
+        backoff_coefficient=BACKOFF_COEFF,
+        initial_delay=INITIAL_DELAY_S,
     ),
 )
 def run_experiment_remote(cfg_dict: dict) -> dict:
     """
     Remote entrypoint: identical signature to local task but with artifact support.
     """
-    # Intentional local imports:
-    # - Keep JAX out of module import time (faster cold start)
-    # - Avoid importing SDKs globally in the image hydrate phase
-    # Ensure x64 at runtime too (belt & suspenders; do this before heavy JAX use)
-    import jax
+    import time
+    import traceback
 
-    jax.config.update("jax_enable_x64", True)
-    import os
-    import shutil
-    from llc.tasks import run_experiment_task
+    started = time.time()
+    stage = "start"
 
-    # Make caching effective across calls: write runs directly to the volume.
-    cfg_dict = dict(cfg_dict)
-    if os.path.isdir("/runs"):
-        print("[Modal] Volume /runs exists, setting runs_dir=/runs")
-        cfg_dict.setdefault("save_artifacts", True)
-        cfg_dict["runs_dir"] = "/runs"
-    else:
-        print("[Modal] Warning: Volume /runs not found, using default runs_dir")
+    try:
+        # Intentional local imports:
+        # - Keep JAX out of module import time (faster cold start)
+        # - Avoid importing SDKs globally in the image hydrate phase
+        # Ensure x64 at runtime too (belt & suspenders; do this before heavy JAX use)
+        import jax
 
-    result = run_experiment_task(cfg_dict)
+        jax.config.update("jax_enable_x64", True)
+        import os
+        import shutil
+        from llc.tasks import run_experiment_task
 
-    # If a run_dir exists, package it and return the bytes too
-    if result.get("run_dir"):
-        import io
-        import tarfile
+        # Make caching effective across calls: write runs directly to the volume.
+        stage = "setup"
+        cfg_dict = dict(cfg_dict)
+        if os.path.isdir("/runs"):
+            print("[Modal] Volume /runs exists, setting runs_dir=/runs")
+            cfg_dict.setdefault("save_artifacts", True)
+            cfg_dict["runs_dir"] = "/runs"
+        else:
+            print("[Modal] Warning: Volume /runs not found, using default runs_dir")
 
-        run_dir = result["run_dir"]
-        # Normalize to get run ID
-        rid = os.path.basename(run_dir.rstrip("/"))
+        stage = "run_experiment_task"
+        result = run_experiment_task(cfg_dict)
+        result["status"] = "ok"
+        result["duration_s"] = time.time() - started
 
-        if os.path.isdir(run_dir):
-            # (1) Create a tar.gz first while the directory definitely exists
-            buf = io.BytesIO()
-            with tarfile.open(fileobj=buf, mode="w:gz") as tf:
-                tf.add(run_dir, arcname=rid)
-            result["artifact_tar"] = buf.getvalue()
-            result["run_id"] = rid
+        # If a run_dir exists, package it and return the bytes too
+        if result.get("run_dir"):
+            import io
+            import tarfile
 
-            # (2) Persist to volume under /runs/<rid> for remote browsing
-            try:
-                vol_dir = f"/runs/{rid}"
-                if os.path.exists(vol_dir):
-                    shutil.rmtree(vol_dir)
-                shutil.copytree(run_dir, vol_dir)
-                runs_volume.commit()
-                result["run_dir"] = vol_dir
-            except Exception as e:
-                # Non-fatal; we still have the tar
-                print(f"[Modal] Warning: failed to persist to volume: {e}")
-                pass
+            run_dir = result["run_dir"]
+            # Normalize to get run ID
+            rid = os.path.basename(run_dir.rstrip("/"))
 
-    return result
+            if os.path.isdir(run_dir):
+                # (1) Create a tar.gz first while the directory definitely exists
+                buf = io.BytesIO()
+                with tarfile.open(fileobj=buf, mode="w:gz") as tf:
+                    tf.add(run_dir, arcname=rid)
+                result["artifact_tar"] = buf.getvalue()
+                result["run_id"] = rid
+
+                # (2) Persist to volume under /runs/<rid> for remote browsing
+                try:
+                    vol_dir = f"/runs/{rid}"
+                    if os.path.exists(vol_dir):
+                        shutil.rmtree(vol_dir)
+                    shutil.copytree(run_dir, vol_dir)
+                    runs_volume.commit()
+                    result["run_dir"] = vol_dir
+                except Exception as e:
+                    # Non-fatal; we still have the tar
+                    print(f"[Modal] Warning: failed to persist to volume: {e}")
+                    pass
+
+        return result
+
+    except Exception as e:
+        # Provide deterministic run_id for later pull-runs even on failure
+        from llc.cache import run_id as rid_from_cfg
+        from llc.config import Config
+
+        # Convert dict to Config for run_id calculation
+        cfg = Config(**cfg_dict)
+        rid = rid_from_cfg(cfg)
+
+        return {
+            "status": "error",
+            "run_id": rid,
+            "stage": stage,
+            "error_type": e.__class__.__name__,
+            "error": str(e)[:2000],
+            "traceback": "".join(traceback.format_exc())[-4000:],
+            "duration_s": time.time() - started,
+        }
 
 
 @app.function(
     image=gpu_image,
     gpu="L40S",
-    timeout=3 * 60 * 60,  # generous 3 hours
+    timeout=TIMEOUT_S,
     volumes={"/runs": runs_volume},
     retries=modal.Retries(
-        max_retries=3,
-        backoff_coefficient=2.0,
-        initial_delay=10.0,
+        max_retries=MAX_RETRIES,
+        backoff_coefficient=BACKOFF_COEFF,
+        initial_delay=INITIAL_DELAY_S,
     ),
 )
 def run_experiment_remote_gpu(cfg_dict: dict) -> dict:
     """
     GPU-enabled remote entrypoint: identical to CPU version but with GPU acceleration.
     """
-    # Intentional local imports and JAX setup - same as CPU version
-    import jax
+    import time
+    import traceback
 
-    jax.config.update("jax_enable_x64", True)
-    import os
-    import shutil
-    from llc.tasks import run_experiment_task
+    started = time.time()
+    stage = "start"
 
-    # Make caching effective across calls: write runs directly to the volume.
-    cfg_dict = dict(cfg_dict)
-    if os.path.isdir("/runs"):
-        print("[Modal GPU] Volume /runs exists, setting runs_dir=/runs")
-        cfg_dict.setdefault("save_artifacts", True)
-        cfg_dict["runs_dir"] = "/runs"
-    else:
-        print(
-            "[Modal GPU] Warning: Volume /runs not found, using default runs_dir"
-        )
+    try:
+        # Intentional local imports and JAX setup - same as CPU version
+        import jax
 
-    result = run_experiment_task(cfg_dict)
+        jax.config.update("jax_enable_x64", True)
+        import os
+        import shutil
+        from llc.tasks import run_experiment_task
 
-    # If a run_dir exists, package it and return the bytes too
-    if result.get("run_dir"):
-        import io
-        import tarfile
+        # Make caching effective across calls: write runs directly to the volume.
+        stage = "setup"
+        cfg_dict = dict(cfg_dict)
+        if os.path.isdir("/runs"):
+            print("[Modal GPU] Volume /runs exists, setting runs_dir=/runs")
+            cfg_dict.setdefault("save_artifacts", True)
+            cfg_dict["runs_dir"] = "/runs"
+        else:
+            print(
+                "[Modal GPU] Warning: Volume /runs not found, using default runs_dir"
+            )
 
-        run_dir = result["run_dir"]
-        # Normalize to get run ID
-        rid = os.path.basename(run_dir.rstrip("/"))
+        stage = "run_experiment_task"
+        result = run_experiment_task(cfg_dict)
+        result["status"] = "ok"
+        result["duration_s"] = time.time() - started
 
-        if os.path.isdir(run_dir):
-            # (1) Create a tar.gz first while the directory definitely exists
-            buf = io.BytesIO()
-            with tarfile.open(fileobj=buf, mode="w:gz") as tf:
-                tf.add(run_dir, arcname=rid)
-            result["artifact_tar"] = buf.getvalue()
-            result["run_id"] = rid
+        # If a run_dir exists, package it and return the bytes too
+        if result.get("run_dir"):
+            import io
+            import tarfile
 
-            # (2) Persist to volume under /runs/<rid> for remote browsing
-            try:
-                vol_dir = f"/runs/{rid}"
-                if os.path.exists(vol_dir):
-                    shutil.rmtree(vol_dir)
-                shutil.copytree(run_dir, vol_dir)
-                runs_volume.commit()
-                result["run_dir"] = vol_dir
-            except Exception as e:
-                # Non-fatal; we still have the tar
-                print(f"[Modal GPU] Warning: failed to persist to volume: {e}")
-                pass
+            run_dir = result["run_dir"]
+            # Normalize to get run ID
+            rid = os.path.basename(run_dir.rstrip("/"))
 
-    return result
+            if os.path.isdir(run_dir):
+                # (1) Create a tar.gz first while the directory definitely exists
+                buf = io.BytesIO()
+                with tarfile.open(fileobj=buf, mode="w:gz") as tf:
+                    tf.add(run_dir, arcname=rid)
+                result["artifact_tar"] = buf.getvalue()
+                result["run_id"] = rid
+
+                # (2) Persist to volume under /runs/<rid> for remote browsing
+                try:
+                    vol_dir = f"/runs/{rid}"
+                    if os.path.exists(vol_dir):
+                        shutil.rmtree(vol_dir)
+                    shutil.copytree(run_dir, vol_dir)
+                    runs_volume.commit()
+                    result["run_dir"] = vol_dir
+                except Exception as e:
+                    # Non-fatal; we still have the tar
+                    print(f"[Modal GPU] Warning: failed to persist to volume: {e}")
+                    pass
+
+        return result
+
+    except Exception as e:
+        # Provide deterministic run_id for later pull-runs even on failure
+        from llc.cache import run_id as rid_from_cfg
+        from llc.config import Config
+
+        # Convert dict to Config for run_id calculation
+        cfg = Config(**cfg_dict)
+        rid = rid_from_cfg(cfg)
+
+        return {
+            "status": "error",
+            "run_id": rid,
+            "stage": stage,
+            "error_type": e.__class__.__name__,
+            "error": str(e)[:2000],
+            "traceback": "".join(traceback.format_exc())[-4000:],
+            "duration_s": time.time() - started,
+        }
 
 
 # --- SDK helpers for artifact management ---

@@ -248,7 +248,7 @@ def generate_gallery_html(run_dir: str, cfg, metrics: Dict[str, Any]) -> str:
         <h1>Local Learning Coefficient Analysis</h1>
         <p class="timestamp">Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}</p>
         <p><strong>Run ID:</strong> {os.path.basename(run_dir)}</p>
-        
+
         <h2>Summary Results</h2>
         <table class="metrics-table">
             <thead>

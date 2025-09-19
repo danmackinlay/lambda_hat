@@ -80,11 +80,13 @@ def run_one(
                 L0=cached["L0"],
             )
 
-    # Create run directory
+    # Create run directory and save config immediately
     if save_artifacts:
         os.makedirs(run_dir, exist_ok=True)
         print(f"Run ID: {rid}")
         print(f"Run will be saved to: {run_dir}")
+        # Save config up-front so it's available even if we crash
+        save_config(run_dir, cfg)
     else:
         run_dir = ""  # Don't save if not requested
 
@@ -222,6 +224,28 @@ def run_one(
         if name not in SAMPLERS:
             continue
 
+        # Optional: Skip if already completed (micro-resume for partial runs)
+        nc_path = f"{run_dir}/{name}.nc" if run_dir else None
+        if save_artifacts and nc_path and os.path.exists(nc_path):
+            try:
+                logger.info(f"Found existing {name}.nc, loading results...")
+                idata = az.from_netcdf(nc_path)
+                # Compute metrics from loaded data
+                m_core = llc_point_se(idata)
+                m_eff = efficiency_metrics(
+                    idata=idata,
+                    timings={"sampling": np.nan, "warmup": np.nan},  # Unknown on reload
+                    work={"n_full_loss": np.nan},  # Optional on reload
+                    n_data=cfg.n_data,
+                    sgld_batch=cfg.sgld_batch_size if name == "sgld" else None,
+                )
+                # Merge metrics and continue to next sampler
+                for k2, v in {**m_core, **m_eff}.items():
+                    all_metrics[f"{name}_{k2}"] = v
+                continue
+            except Exception as e:
+                logger.info(f"Failed to load {name}.nc: {e}, re-running sampler")
+
         logger.info(f"Running {name.upper()} (BlackJAX, online)")
         k = random.fold_in(key, hash(name) & 0xFFFF)
         init = SAMPLERS[name]["init"](
@@ -271,7 +295,7 @@ def run_one(
             all_metrics[f"{name}_{k2}"] = v
         histories[name] = res.Ln_histories
 
-        # Save idata when saving artifacts
+        # Save idata and metrics incrementally (allows partial recovery)
         if save_artifacts and run_dir:
             idata.attrs.update(
                 {
@@ -282,13 +306,14 @@ def run_one(
                 }
             )
             az.to_netcdf(idata, f"{run_dir}/{name}.nc")
+            # Save metrics after each sampler completes
+            save_metrics(run_dir, all_metrics)
 
-    # Save other artifacts if requested
+    # Save final artifacts if requested
     if save_artifacts and run_dir:
-        logger.info("Saving run outputs")
+        logger.info("Saving final run outputs")
         save_L0(run_dir, L0)
-        save_metrics(run_dir, all_metrics)
-        save_config(run_dir, cfg)
+        save_metrics(run_dir, all_metrics)  # Final save with all samplers
 
     return RunOutputs(
         run_dir=run_dir,
