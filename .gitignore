@@ -29,3 +29,5 @@ todo*.md
 # OS Cruft
 .DS_Store
 Thumbs.db
+
+*.csv
