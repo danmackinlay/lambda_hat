@@ -1,34 +1,35 @@
 # Local Learning Coefficient Sampler Benchmarks
 
-This repo contains code to estimate _Local Learning Coefficients (LLCs)_ for small neural networks using _stochastic gradient Langevin dynamics (SGLD)_, _Hamiltonian Monte Carlo (HMC)_, and _Microcanonical Langevin Monte Carlo (MCLMC)_.
-There is little novel theory here; the goal is to provide implementations using standard industrial tooling such as  [BlackJAX](https://github.com/blackjax-devs/blackjax/tree/1.2.5) (sampling) and [ArviZ](https://python.arviz.org/) (diagnostics).
+In [Singular Learning Theory (SLT)](https://singularlearningtheory.com), the Local Learning Coefficient (LLC) quantifies the effective local dimensionality of a model around a trained optimum.
 
+This repo provides benchmark estimators of LLC on small but non-trivial neural networks, using standard industrial tooling: [BlackJAX](https://github.com/blackjax-devs/blackjax/tree/1.2.5) (sampling) and [ArviZ](https://python.arviz.org/) (diagnostics).
 
-## Representative Diagnostics
+## Quick Start
 
-**Running LLC estimates** — per-chain and pooled running estimates of LLC = n·β·(E[Lₙ] − L₀). The shaded band shows final mean ± 2·SE (based on effective sample size).
+1. **Run** an experiment → writes `runs/<run_id>/{sgld,hmc,mclmc}.nc`, `metrics.json`, `config.json`, `L0.txt`
+2. **Analyze** saved runs → generates PNGs in `runs/<run_id>/analysis/` (default) with `llc analyze`
+3. **Promote** (optional) → copy select PNGs to `assets/readme/` for the README gallery
+
 
 ![SGLD running LLC](assets/readme/sgld_llc_running.png)
 ![HMC running LLC](assets/readme/hmc_llc_running.png)
 ![MCLMC running LLC](assets/readme/mclmc_llc_running.png)
 
-**Key diagnostic indicators:**
-- **Rank plots:** Uniform ranks indicate good mixing; deviations signal multimodality or poor convergence
-- **ESS evolution:** Should grow steadily and plateau; slow growth indicates high autocorrelation
-- **Energy diagnostics:** HMC shows tight Hamiltonian distributions; MCLMC shows centered energy changes
-- **Theta traces:** Should look like stationary noise; trends or drifts indicate non-convergence
 
-<small>More diagnostic plots available via `llc analyze` (autocorrelation, theta traces, energy histograms, etc.)</small>
+**What to look for in the plots:**
 
-## Quickstart
+- **Running LLC:** Curves should stabilize and agree across chains; divergence suggests poor mixing
+- **Rank plots:** Near-uniform → good; spikes → multimodality or non-convergence
+- **ESS evolution:** Should grow and plateau; flat/slow growth → high autocorrelation
+- **Energy:** HMC energy density should be regular/tight; MCLMC energy changes centered with reasonable spread (not produced for SGLD)
+
+More plots available via `llc analyze` (rank, ESS evolution, autocorrelation, theta traces, energy histograms).
 
 ```bash
 uv sync
-uv run python -m llc run --preset=quick
-uv run python -m llc analyze runs/<run_id> --which all --plots running_llc,rank,ess_evolution,autocorr,energy,theta
+uv run llc run --preset=quick
+uv run llc analyze runs/<run_id> --which all --plots running_llc,rank,ess_evolution,autocorr,energy,theta
 ```
-
-Outputs saved to `runs/<run_id>/` containing `config.json`, `metrics.json`, `{sgld,hmc,mclmc}.nc`, and `analysis/` PNGs.
 
 ## What's in a Run
 
@@ -46,28 +47,48 @@ runs/<run_id>/
     └── ...
 ```
 
+**Sample `metrics.json`:**
+```json
+{
+  "hmc_llc_mean": 367.1,
+  "hmc_llc_se": 9.27,
+  "hmc_ess": 28.0,
+  "hmc_wnv_time": 0.042,
+  "hmc_timing_sampling": 12.83,
+  "mclmc_llc_mean": 131.7,
+  "sgld_llc_mean": 145.7
+}
+```
+
 ## Common Tasks
 
 | Task | Command |
 |------|---------|
-| Local quick run | `uv run python -m llc run --preset=quick` |
-| Local sweep (8 workers) | `uv run python -m llc sweep --workers=8` |
-| Modal run | `uv run python -m llc run --backend=modal` |
-| SLURM run | `uv run python -m llc run --backend=submitit` |
-| Analyze saved run | `uv run python -m llc analyze runs/<run_id>` |
+| Local quick run | `uv run llc run --preset=quick` |
+| Local sweep (8 workers) | `uv run llc sweep --workers=8` |
+| Modal run | `uv run llc run --backend=modal` |
+| SLURM run | `uv run llc run --backend=submitit` |
+| Analyze saved run | `uv run llc analyze runs/<run_id>` |
 | Plot sweep results | `uv run llc plot-sweep` |
 | Refresh README images | `uv run llc promote-readme-images` |
 
 For backend-specific setup and configuration, see [docs/backends.md](docs/backends.md).
 
+## Sweeps = Many Runs + One CSV
+
+`llc sweep` launches a grid of runs and writes `llc_sweep_results.csv` summarizing each run (with a `run_dir` back-pointer to analyze individual runs).
+
+Plot medians via `llc plot-sweep --size-col target_params` and filter via `--filters "activation=relu,x_dist=gauss_iso"`.
+
 ## Efficiency Metrics
 
-We automatically compute efficiency metrics for all samplers:
-- **ESS/sec** — wall-clock efficiency
-- **ESS/FDE** — gradient-normalized efficiency (data-size-agnostic)
-- **WNV** — work-normalized variance for fair comparisons
+We compute efficiency and work-normalized variance from the saved traces:
 
-Results saved to `metrics.json` per run and `llc_sweep_results.csv` for sweeps. Visualize with `uv run llc plot-sweep`.
+- **ESS/sec** — statistical efficiency per wall-clock second: `ESS / seconds`
+- **ESS/FDE** — statistical efficiency per full-data-equivalent gradient: `ESS / FDE`, where `FDE = (# full-loss evals) + (# minibatch grads) × (b/n)`
+- **WNV (time/FDE)** — variance × cost for fair comparisons: `WNV_time = (sd² / ESS) × seconds`, `WNV_FDE = (sd² / ESS) × FDE`
+
+Here `sd` is the Monte Carlo standard deviation of LLC; ESS is ArviZ bulk ESS. Results saved to `metrics.json` per run and `llc_sweep_results.csv` for sweeps.
 
 ## Installation
 
@@ -77,7 +98,6 @@ uv sync
 # Optional backends
 uv sync --extra modal      # Modal serverless support
 uv sync --extra slurm      # SLURM/submitit support
-uv sync --all-extras       # Both backends
 ```
 
 ## Features
@@ -85,9 +105,7 @@ uv sync --all-extras       # Both backends
 - **Unified CLI** for end-to-end LLC estimation pipeline
 - **Three samplers:** SGLD (with optional preconditioning), HMC, MCLMC
 - **Configurable targets:** ReLU/tanh/GeLU MLPs, analytical quadratic (for testing)
-- **Rich data generation:** Gaussian, anisotropic, mixture distributions with various noise models
 - **ArviZ integration:** Full convergence diagnostics (ESS, R̂, autocorrelation, rank plots)
-- **Work-normalized metrics:** Fair efficiency comparisons across parameter dimensions
 - **Caching system:** Deterministic run IDs prevent duplicate computation
 
 ## Documentation
@@ -97,10 +115,6 @@ uv sync --all-extras       # Both backends
 - [Preconditioned SGLD options](docs/sgld-precond.md)
 - [Target functions and data generators](docs/targets.md)
 - [BlackJAX API notes](docs/blackjax.md)
-
-## Motivation
-
-In [Singular Learning Theory (SLT)](https://singularlearningtheory.com), the Local Learning Coefficient (LLC) quantifies the effective local dimensionality of a model around a trained optimum. This repo provides implementations using standard industrial tooling (BlackJAX for sampling, ArviZ for diagnostics) to benchmark LLC estimation methods on small but non-trivial neural networks.
 
 ## License
 
