@@ -16,6 +16,8 @@ from .base import (
     drive_chains_batched,
     BatchedResult,
     SamplerSpec,
+    DiagPrecondState,
+    precond_update,
 )
 
 Array = jnp.ndarray
@@ -73,31 +75,24 @@ def run_sgld_chains_batched(
             return s
 
     else:
-        # Preconditioned SGLD: batched states (theta, m, v, t)
+        # Preconditioned SGLD: batched states (theta, DiagPrecondState)
         @jax.jit
         def precond_step_single(key, state):
-            theta, m, v, t = state
+            theta, precond_state = state
             k_noise, k_batch = jax.random.split(key)
             idx = jax.random.randint(k_batch, (batch_size,), 0, n_data)
             g = grad_logpost_minibatch(theta, (X[idx], Y[idx]))
 
-            if precond == "rmsprop":
-                m_new = m  # unused
-                v_new = beta2 * v + (1.0 - beta2) * (g * g)
-                v_hat = v_new
-                inv_sqrt = jax.lax.rsqrt(v_hat + eps)
+            # Use generic preconditioning update
+            inv_sqrt, new_precond_state = precond_update(
+                g, precond_state, precond, beta1, beta2, eps, bias_correction
+            )
+
+            # For Adam, use the first moment for drift; for RMSProp, use raw gradient
+            if precond == "adam":
+                drift = 0.5 * step_size * (new_precond_state.m * inv_sqrt)
+            else:  # rmsprop or fallback
                 drift = 0.5 * step_size * (g * inv_sqrt)
-            else:  # "adam"
-                m_new = beta1 * m + (1.0 - beta1) * g
-                v_new = beta2 * v + (1.0 - beta2) * (g * g)
-                if bias_correction:
-                    t1 = t + 1.0
-                    m_hat = m_new / (1.0 - beta1**t1)
-                    v_hat = v_new / (1.0 - beta2**t1)
-                else:
-                    m_hat, v_hat = m_new, v_new
-                inv_sqrt = jax.lax.rsqrt(v_hat + eps)
-                drift = 0.5 * step_size * (m_hat * inv_sqrt)
 
             noise = (
                 jax.random.normal(k_noise, theta.shape) * jnp.sqrt(step_size) * inv_sqrt
@@ -105,21 +100,20 @@ def run_sgld_chains_batched(
             theta_new = theta + drift + noise
             return (
                 theta_new.astype(theta.dtype),
-                m_new,
-                v_new,
-                t + jnp.asarray(1, dtype=t.dtype),
+                new_precond_state,
             ), None
 
         # vmap the preconditioned step across chains
         step_vmapped = jax.jit(jax.vmap(precond_step_single, in_axes=(0, 0)))
 
-        # Initialize batched state
+        # Initialize batched state with DiagPrecondState
         zeros = jnp.zeros_like(init_thetas)
         time_init = jnp.zeros((init_thetas.shape[0],), dtype=init_thetas.dtype)
-        init_state = (init_thetas, zeros, zeros, time_init)
+        precond_states = DiagPrecondState(m=zeros, v=zeros, t=time_init)
+        init_state = (init_thetas, precond_states)
 
         def position_fn(s):
-            return s[0]  # extract theta from (theta, m, v, t)
+            return s[0]  # extract theta from (theta, DiagPrecondState)
 
     # Prepare RNG table (T, C) - for all steps
     n_chains = init_thetas.shape[0]
@@ -183,31 +177,24 @@ def sgld_spec(
         position_fn = lambda s: s
 
     else:
-        # Preconditioned SGLD
+        # Preconditioned SGLD using generic precond_update
         @jax.jit
         def precond_step_single(key, state):
-            theta, m, v, t = state
+            theta, precond_state = state
             k_noise, k_batch = jax.random.split(key)
             idx = jax.random.randint(k_batch, (batch_size,), 0, n_data)
             g = grad_logpost_minibatch(theta, (X[idx], Y[idx]))
 
-            if precond == "rmsprop":
-                m_new = m  # unused
-                v_new = beta2 * v + (1.0 - beta2) * (g * g)
-                v_hat = v_new
-                inv_sqrt = jax.lax.rsqrt(v_hat + eps)
+            # Use generic preconditioning update
+            inv_sqrt, new_precond_state = precond_update(
+                g, precond_state, precond, beta1, beta2, eps, bias_correction
+            )
+
+            # For Adam, use the first moment for drift; for RMSProp, use raw gradient
+            if precond == "adam":
+                drift = 0.5 * step_size * (new_precond_state.m * inv_sqrt)
+            else:  # rmsprop or fallback
                 drift = 0.5 * step_size * (g * inv_sqrt)
-            else:  # "adam"
-                m_new = beta1 * m + (1.0 - beta1) * g
-                v_new = beta2 * v + (1.0 - beta2) * (g * g)
-                if bias_correction:
-                    t1 = t + 1.0
-                    m_hat = m_new / (1.0 - beta1**t1)
-                    v_hat = v_new / (1.0 - beta2**t1)
-                else:
-                    m_hat, v_hat = m_new, v_new
-                inv_sqrt = jax.lax.rsqrt(v_hat + eps)
-                drift = 0.5 * step_size * (m_hat * inv_sqrt)
 
             noise = (
                 jax.random.normal(k_noise, theta.shape) * jnp.sqrt(step_size) * inv_sqrt
@@ -215,13 +202,11 @@ def sgld_spec(
             theta_new = theta + drift + noise
             return (
                 theta_new.astype(theta.dtype),
-                m_new,
-                v_new,
-                t + jnp.asarray(1, dtype=t.dtype),
+                new_precond_state,
             ), None
 
         step_vmapped = jax.jit(jax.vmap(precond_step_single, in_axes=(0, 0)))
-        position_fn = lambda s: s[0]  # extract theta from (theta, m, v, t)
+        position_fn = lambda s: s[0]  # extract theta from (theta, DiagPrecondState)
 
     return SamplerSpec(
         name="sgld",
