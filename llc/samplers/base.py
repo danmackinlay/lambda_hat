@@ -60,7 +60,7 @@ def precond_update(
     beta2: float = 0.999,
     eps: float = 1e-8,
     bias_correction: bool = True,
-) -> tuple[Array, DiagPrecondState]:
+) -> tuple[Array, DiagPrecondState, Array]:
     """
     Unified diagonal preconditioning update for all samplers.
 
@@ -76,14 +76,15 @@ def precond_update(
     Returns:
         inv_sqrt: Inverse square root of diagonal metric
         new_state: Updated preconditioning state
+        drift_moment: Moment vector to use for drift calculation
     """
     if mode == "none":
-        return jnp.ones_like(g), st
+        return jnp.ones_like(g), st, g
 
     if mode == "rmsprop":
         v_new = beta2 * st.v + (1.0 - beta2) * (g * g)
         inv_sqrt = jax.lax.rsqrt(v_new + eps)
-        return inv_sqrt, DiagPrecondState(st.m, v_new, st.t)
+        return inv_sqrt, DiagPrecondState(st.m, v_new, st.t), g  # drift uses raw g
 
     # adam
     m_new = beta1 * st.m + (1.0 - beta1) * g
@@ -98,7 +99,7 @@ def precond_update(
         m_hat, v_hat = m_new, v_new
 
     inv_sqrt = jax.lax.rsqrt(v_hat + eps)
-    return inv_sqrt, DiagPrecondState(m_new, v_new, t_new)
+    return inv_sqrt, DiagPrecondState(m_new, v_new, t_new), m_hat
 
 
 def select_diag_dims(dim, k, seed):
@@ -220,16 +221,16 @@ def drive_chains_batched(
             # Write into L_hist[:, idx_eval]
             L_hist = L_hist.at[:, idx_eval].set(Ln)
 
-            # Write extras at eval index
+            # Write extras at eval index - functional update
+            extras_new = {}
             for name, fn in info_extractors.items():
                 v = fn(info)  # (C,) or (C, p)
                 # If shape is (C,), write column; if (C,p), you might want a separate array per p.
                 # For simplicity, assume (C,) scalar.
                 E = extras[name]
-                E = E.at[:, idx_eval].set(v)
-                extras[name] = E
+                extras_new[name] = E.at[:, idx_eval].set(v)
 
-            return (st, L_hist, mean_new, M2_new, n_new, idx_eval + 1, extras)
+            return (st, L_hist, mean_new, M2_new, n_new, idx_eval + 1, extras_new)
 
         def skip_eval(args):
             st, L_hist, mean, M2, n, idx_eval, extras = args

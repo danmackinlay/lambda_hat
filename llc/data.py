@@ -23,15 +23,15 @@ def sample_X(key, cfg: Config, n: int, in_dim: int):
         Z = random.normal(key, (n, in_dim))
         return Z @ A.T
     elif cfg.x_dist == "mixture":
-        keys = random.split(key, 2)
-        centers = random.normal(keys[0], (cfg.mixture_k, in_dim))
+        k1, k2, k3 = random.split(key, 3)
+        centers = random.normal(k1, (cfg.mixture_k, in_dim))
         centers = (
             cfg.mixture_spread
             * centers
             / (1e-6 + jnp.linalg.norm(centers, axis=1, keepdims=True))
         )
-        comp = random.randint(keys[1], (n,), 0, cfg.mixture_k)
-        eps = random.normal(key, (n, in_dim))
+        comp = random.randint(k2, (n,), 0, cfg.mixture_k)
+        eps = random.normal(k3, (n, in_dim))
         return centers[comp] + eps
     elif cfg.x_dist == "lowdim_manifold":
         kz, ka = random.split(key)

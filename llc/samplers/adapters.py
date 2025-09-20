@@ -84,15 +84,10 @@ def run_sgld_chains_batched(
             g = grad_logpost_minibatch(theta, (X[idx], Y[idx]))
 
             # Use generic preconditioning update
-            inv_sqrt, new_precond_state = precond_update(
+            inv_sqrt, new_precond_state, drift_m = precond_update(
                 g, precond_state, precond, beta1, beta2, eps, bias_correction
             )
-
-            # For Adam, use the first moment for drift; for RMSProp, use raw gradient
-            if precond == "adam":
-                drift = 0.5 * step_size * (new_precond_state.m * inv_sqrt)
-            else:  # rmsprop or fallback
-                drift = 0.5 * step_size * (g * inv_sqrt)
+            drift = 0.5 * step_size * (drift_m * inv_sqrt)
 
             noise = (
                 jax.random.normal(k_noise, theta.shape) * jnp.sqrt(step_size) * inv_sqrt
@@ -186,15 +181,10 @@ def sgld_spec(
             g = grad_logpost_minibatch(theta, (X[idx], Y[idx]))
 
             # Use generic preconditioning update
-            inv_sqrt, new_precond_state = precond_update(
+            inv_sqrt, new_precond_state, drift_m = precond_update(
                 g, precond_state, precond, beta1, beta2, eps, bias_correction
             )
-
-            # For Adam, use the first moment for drift; for RMSProp, use raw gradient
-            if precond == "adam":
-                drift = 0.5 * step_size * (new_precond_state.m * inv_sqrt)
-            else:  # rmsprop or fallback
-                drift = 0.5 * step_size * (g * inv_sqrt)
+            drift = 0.5 * step_size * (drift_m * inv_sqrt)
 
             noise = (
                 jax.random.normal(k_noise, theta.shape) * jnp.sqrt(step_size) * inv_sqrt

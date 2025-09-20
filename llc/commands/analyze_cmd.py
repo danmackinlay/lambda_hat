@@ -68,14 +68,17 @@ def analyze_entry(
             return fig, path
 
         def _plot_energy(idata, sampler):
-            # only if this idata actually has sample_stats.energy
-            if "energy" in (getattr(idata, "sample_stats", {}) or {}):
-                fig = fig_energy(idata)
-                path = out_dir / f"{sampler}_energy.png"
-                return fig, path
-            else:
-                # silently skip for samplers like SGLD
-                return None, None
+            # Only plot energy if sample_stats exists and has energy variable
+            try:
+                if hasattr(idata, 'sample_stats') and hasattr(idata.sample_stats, 'data_vars'):
+                    if 'energy' in idata.sample_stats.data_vars:
+                        fig = fig_energy(idata)
+                        path = out_dir / f"{sampler}_energy.png"
+                        return fig, path
+            except Exception:
+                pass  # silently skip
+            # No energy data available (e.g., SGLD, SGHMC)
+            return None, None
 
         registry = {
             "running_llc": _plot_running_llc,

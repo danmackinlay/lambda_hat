@@ -5,6 +5,9 @@ import tarfile
 import traceback
 import time
 import modal
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 def _gpu_list_from_env():
@@ -78,8 +81,6 @@ def _remote_impl(cfg_dict: dict, *, gpu_label: str) -> dict:
         stage = "setup"
         cfg_dict = dict(cfg_dict)  # copy
         if os.path.isdir("/runs"):
-            import logging
-            logger = logging.getLogger(__name__)
             logger.info(f"[Modal {gpu_label}] Volume /runs exists, setting runs_dir=/runs")
             cfg_dict.setdefault("save_artifacts", True)
             cfg_dict["runs_dir"] = "/runs"
