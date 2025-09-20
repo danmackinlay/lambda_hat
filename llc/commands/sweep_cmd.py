@@ -86,8 +86,8 @@ def sweep_entry(kwargs: dict) -> None:
             if sampler_grid_json:
                 samplers = [SamplerVariant(**obj) for obj in json.loads(sampler_grid_json)]
             else:
-                # default: current trio
-                samplers = [SamplerVariant(name, {}) for name in ("sgld", "hmc", "mclmc")]
+                # default: all four samplers
+                samplers = [SamplerVariant(name, {}) for name in ("sgld", "sghmc", "hmc", "mclmc")]
 
         items = list(expand_matrix(base_cfg, problems, samplers, seeds))
     else:
