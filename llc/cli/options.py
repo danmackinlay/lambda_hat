@@ -185,8 +185,26 @@ def sweep_shared_options():
         )(f)
         f = click.option(
             "--split-samplers/--no-split-samplers",
-            default=False,
-            help="Expand every config into one job per sampler.",
+            default=True,
+            help="Expand every config into one job per sampler (default: on).",
+        )(f)
+        # Study inputs
+        f = click.option(
+            "--study",
+            type=click.Path(exists=True, dir_okay=False),
+            help="YAML file describing base/problem/sampler/seeds (overrides defaults).",
+        )(f)
+        f = click.option(
+            "--sampler-grid",
+            type=str,
+            default=None,
+            help='JSON list of sampler variants, e.g. \'[{"name":"sgld","overrides":{"sgld_precond":"adam"}}]\'',
+        )(f)
+        f = click.option(
+            "--problem-grid",
+            type=str,
+            default=None,
+            help='JSON list of problems, e.g. \'[{"name":"dim_10k","overrides":{"target_params":10000}}]\'',
         )(f)
         # Reuse run-shared too (includes backend)
         return run_shared_options()(f)
@@ -221,3 +239,17 @@ def analyze_shared_options():
         return f
 
     return decorator
+
+
+def _sampler_choice():
+    # Kept separate so we can reuse later if needed
+    return click.Choice(["sgld", "sghmc", "hmc", "mclmc"])
+
+def add_run_sampler_choice(f):
+    """Opt-in sampler selector for `llc run` (single-sampler intent)."""
+    import click
+    return click.option(
+        "--sampler",
+        type=_sampler_choice(),
+        help="Sampler to run (enforces single-sampler runs).",
+    )(f)

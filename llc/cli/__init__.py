@@ -12,7 +12,7 @@ import os
 import click
 
 from llc.cli.options import (
-    run_shared_options,
+    run_shared_options, add_run_sampler_choice,
     sweep_shared_options,
     analyze_shared_options,
 )
@@ -41,6 +41,7 @@ def cli(verbose: bool):
 
 
 @cli.command()
+@add_run_sampler_choice
 @run_shared_options()
 def run(**kwargs):
     """Run a single experiment (local / submitit / modal)."""

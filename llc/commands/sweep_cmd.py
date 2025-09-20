@@ -27,7 +27,10 @@ def sweep_entry(kwargs: dict) -> None:
     preset = kwargs.pop("preset", None)
     gpu_mode = kwargs.pop("gpu_mode", "off")
     gpu_types = kwargs.pop("gpu_types", "")
-    split_samplers = kwargs.pop("split_samplers", False)
+    split_samplers = kwargs.pop("split_samplers", True)
+    study_path = kwargs.pop("study", None)
+    sampler_grid_json = kwargs.pop("sampler_grid", None)
+    problem_grid_json = kwargs.pop("problem_grid", None)
 
     # Submitit-specific parameters
     slurm_partition = kwargs.pop("slurm_partition", None)
@@ -52,24 +55,60 @@ def sweep_entry(kwargs: dict) -> None:
     elif gpu_mode == "sequential":
         base_cfg = replace(base_cfg, use_batched_chains=False)
 
-    # Build worklist - import only when needed
-    from llc.experiments import build_sweep_worklist, sweep_space
+    # --- Build worklist: prefer study YAML / JSON grids; fallback to legacy sweep_space ---
+    items = []
+    if study_path or sampler_grid_json or problem_grid_json:
+        from llc.experiments_matrix import ProblemVariant, SamplerVariant, expand_matrix
+        import json
+        problems = []
+        samplers = []
+        seeds = list(range(n_seeds))
 
-    sw = sweep_space()
-    sw["base"] = base_cfg
-    items = build_sweep_worklist(sw, n_seeds=n_seeds)
+        if study_path:
+            try:
+                import yaml  # requires PyYAML
+            except Exception as e:
+                raise SystemExit("`--study` requires PyYAML. Install: `uv add pyyaml` or `pip install pyyaml`.") from e
+            with open(study_path) as f:
+                study = yaml.safe_load(f)
+            # base overrides (preset already applied)
+            base_cfg = apply_preset_then_overrides(base_cfg, study.get("base", {}).get("preset"), study.get("base", {}))
+            problems = [ProblemVariant(**p) for p in (study.get("problems") or [])]
+            samplers = [SamplerVariant(**s) for s in (study.get("samplers") or [])]
+            if "seeds" in study:
+                seeds = list(study["seeds"])
+        else:
+            # JSON grids via CLI
+            if problem_grid_json:
+                problems = [ProblemVariant(**obj) for obj in json.loads(problem_grid_json)]
+            else:
+                problems = [ProblemVariant("default", {})]
+            if sampler_grid_json:
+                samplers = [SamplerVariant(**obj) for obj in json.loads(sampler_grid_json)]
+            else:
+                # default: current trio
+                samplers = [SamplerVariant(name, {}) for name in ("sgld", "hmc", "mclmc")]
 
-    # Expand into one job per sampler if requested
-    if split_samplers:
-        expanded = []
-        for name, param, val, seed, cfg in items:
-            for s in cfg.samplers:
-                expanded.append((name, param, val, seed, replace(cfg, samplers=[s])))
-        items = expanded
+        items = list(expand_matrix(base_cfg, problems, samplers, seeds))
+    else:
+        # Legacy fallback (kept for convenience)
+        from llc.experiments import build_sweep_worklist, sweep_space
+        sw = sweep_space()
+        sw["base"] = base_cfg
+        # Emits tuples: (name, param, val, seed, cfg) — convert to matrix shape
+        legacy = build_sweep_worklist(sw, n_seeds=n_seeds)
+        for name, param, val, seed, cfg in legacy:
+            if split_samplers:
+                for s in cfg.samplers:
+                    items.append((name, s, seed, replace(cfg, samplers=[s])))
+            else:
+                # Keep single job that still lists multiple samplers (legacy)
+                # but prefer matrix style: submit one per sampler anyway
+                for s in cfg.samplers:
+                    items.append((name, s, seed, replace(cfg, samplers=[s])))
 
-    logger.info(f"Running sweep with {len(items)} configurations on {backend} backend")
-    if split_samplers:
-        logger.info(f"Split samplers enabled - each job runs one sampler")
+    logger.info(f"Running sweep with {len(items)} jobs on {backend} backend")
+    logger.info("Each job = (problem, sampler, seed).")
     if backend == "local" and workers > 1:
         logger.info(f"Using {workers} parallel workers")
 
@@ -117,10 +156,11 @@ def sweep_entry(kwargs: dict) -> None:
             )
         return ex.map(run_experiment_task, cfg_dicts)
 
-    # Build cfg dicts with schema hash
+    # Build cfg dicts with schema hash (one per job)
     cfg_dicts = []
-    for _name, _param, _val, _seed, cfg in items:
+    for _problem, _sampler, _seed, cfg in items:
         d = schema_stamp(cfg, save_artifacts, skip_if_exists, gpu_mode)
+        d["problem_name"] = _problem  # Include problem name for CSV
         cfg_dicts.append(d)
 
     if backend == "modal":
@@ -229,7 +269,8 @@ def _save_sweep_results(results):
                 continue
             rows.append(
                 {
-                    "sweep": "dim",
+                    "sweep": "matrix",
+                    "problem": C.get("problem_name", ""),
                     "family_id": family_id,
                     "target_params": C.get("target_params"),
                     "depth": C.get("depth"),

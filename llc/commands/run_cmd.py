@@ -18,6 +18,7 @@ def run_entry(kwargs: dict) -> None:
     save_artifacts = not kwargs.pop("no_artifacts", False)
     skip_if_exists = kwargs.pop("skip_if_exists", True)
     preset = kwargs.pop("preset", None)
+    sampler_choice = kwargs.pop("sampler", None)
     backend = (kwargs.pop("backend") or "local").lower()
     gpu_mode = kwargs.pop("gpu_mode", "off")
     gpu_types = kwargs.pop("gpu_types", "")
@@ -38,6 +39,15 @@ def run_entry(kwargs: dict) -> None:
 
     # Build config = preset + overrides
     cfg = apply_preset_then_overrides(CFG, preset, kwargs)
+
+    # Enforce single-sampler intent for `run`
+    if sampler_choice:
+        cfg = replace(cfg, samplers=[sampler_choice])
+    if not cfg.samplers or len(cfg.samplers) != 1:
+        raise SystemExit(
+            "llc run: exactly one sampler must be specified. "
+            "Pass --sampler {sgld|sghmc|hmc|mclmc} or use `llc sweep` for multi-sampler jobs."
+        )
 
     # Map GPU mode to batching configuration
     if gpu_mode == "vectorized":
