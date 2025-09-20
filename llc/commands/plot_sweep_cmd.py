@@ -1,9 +1,12 @@
 """Plot sweep command implementation."""
 
+import logging
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 
 def plot_sweep_entry(
@@ -46,7 +49,7 @@ def plot_sweep_entry(
             df = df[df[k].astype(str) == v]
 
     if df.empty:
-        print("[plot-sweep] No rows after filtering.")
+        logger.info("[plot-sweep] No rows after filtering.")
         return
 
     # Normalize/clean
@@ -63,17 +66,17 @@ def plot_sweep_entry(
     )
 
     if agg.empty:
-        print("[plot-sweep] No rows for selected samplers/filters.")
+        logger.info("[plot-sweep] No rows for selected samplers/filters.")
         return
 
     # Helper to save-or-skip
     def save_fig(fig, path):
         path = Path(path)
         if path.exists() and not overwrite:
-            print(f"[plot-sweep] exists: {path.name} (use --overwrite)")
+            logger.info(f"[plot-sweep] exists: {path.name} (use --overwrite)")
         else:
             fig.savefig(path, dpi=150, bbox_inches="tight", facecolor="white")
-            print(f"[plot-sweep] saved: {path.name}")
+            logger.info(f"[plot-sweep] saved: {path.name}")
         plt.close(fig)
 
     # 1) ESS/sec vs size

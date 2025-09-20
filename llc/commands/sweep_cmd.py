@@ -1,6 +1,7 @@
 """Sweep command implementation."""
 
 import json
+import logging
 import os
 from dataclasses import replace
 
@@ -17,6 +18,7 @@ from llc.util.backend_bootstrap import (
 
 def sweep_entry(kwargs: dict) -> None:
     """Entry point for sweep command."""
+    logger = logging.getLogger(__name__)
     backend = (kwargs.pop("backend") or "local").lower()
     workers = kwargs.pop("workers", 0)
     n_seeds = kwargs.pop("n_seeds", 2)
@@ -65,11 +67,11 @@ def sweep_entry(kwargs: dict) -> None:
                 expanded.append((name, param, val, seed, replace(cfg, samplers=[s])))
         items = expanded
 
-    print(f"Running sweep with {len(items)} configurations on {backend} backend")
+    logger.info(f"Running sweep with {len(items)} configurations on {backend} backend")
     if split_samplers:
-        print(f"Split samplers enabled - each job runs one sampler")
+        logger.info(f"Split samplers enabled - each job runs one sampler")
     if backend == "local" and workers > 1:
-        print(f"Using {workers} parallel workers")
+        logger.info(f"Using {workers} parallel workers")
 
     # Modal handle (if needed)
     remote_fn = None
@@ -160,8 +162,8 @@ def sweep_entry(kwargs: dict) -> None:
                         "error": str(e)[:2000],
                         "duration_s": 0,
                     })
-                    print(f"[sweep] Scheduling failed for batch: {e}")
-                print(f"[sweep] Completed batch {i//chunk_size + 1}/{(len(cfg_dicts) + chunk_size - 1)//chunk_size}")
+                    logger.error(f"[sweep] Scheduling failed for batch: {e}")
+                logger.info(f"[sweep] Completed batch {i//chunk_size + 1}/{(len(cfg_dicts) + chunk_size - 1)//chunk_size}")
     else:
         results = _run_map()
 
@@ -171,12 +173,12 @@ def sweep_entry(kwargs: dict) -> None:
         for r in results:
             # Check if run had an error
             if r.get("status") == "error":
-                print(f"[sweep] Run {r.get('run_id', 'unknown')} failed: {r.get('error_type', 'Unknown')} at stage {r.get('stage', 'unknown')}")
+                logger.warning(f"[sweep] Run {r.get('run_id', 'unknown')} failed: {r.get('error_type', 'Unknown')} at stage {r.get('stage', 'unknown')}")
                 continue
             try:
                 extract_modal_runs_locally(r)
             except Exception as e:
-                print(f"Warning: failed to extract runs for a job: {e}")
+                logger.warning(f"failed to extract runs for a job: {e}")
 
     # Save long-form CSV with WNV fields (same as argparse version)
     _save_sweep_results(results)
@@ -254,14 +256,14 @@ def _save_sweep_results(results):
 
         df = pd.DataFrame(rows)
         df.to_csv("llc_sweep_results.csv", index=False)
-        print(
-            "\nSweep complete! Results saved to llc_sweep_results.csv with WNV fields."
+        logger.info(
+            "Sweep complete! Results saved to llc_sweep_results.csv with WNV fields."
         )
-        print(
+        logger.info(
             f"Successful runs: {len(rows)} rows from {len(results)} jobs"
         )
     else:
-        print("\nNo successful runs to save.")
+        logger.info("No successful runs to save.")
 
     # Save error ledger if any errors occurred
     if error_rows:
@@ -269,4 +271,4 @@ def _save_sweep_results(results):
 
         error_df = pd.DataFrame(error_rows)
         error_df.to_csv("llc_sweep_errors.csv", index=False)
-        print(f"\nErrors logged to llc_sweep_errors.csv: {len(error_rows)} failed jobs")
+        logger.info(f"Errors logged to llc_sweep_errors.csv: {len(error_rows)} failed jobs")

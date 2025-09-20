@@ -4,10 +4,13 @@ Centralized backend bootstrap utilities to reduce boilerplate in run_cmd/sweep_c
 Handles JAX platform selection, GPU validation, schema stamping, and Modal function selection.
 """
 
+import logging
 import os
 from typing import Any, Dict
 
 from llc.config import Config, config_schema_hash
+
+logger = logging.getLogger(__name__)
 
 
 def select_jax_platform(gpu_mode: str) -> None:
@@ -25,7 +28,7 @@ def validate_modal_gpu_types(gpu_types_str: str) -> None:
     bad = [g for g in requested if g not in allowed]
 
     if bad:
-        print(f"[warn] unknown GPU types {bad}; falling back to L40S")
+        logger.warning(f"unknown GPU types {bad}; falling back to L40S")
         os.environ["LLC_MODAL_GPU_LIST"] = "L40S"
     else:
         os.environ["LLC_MODAL_GPU_LIST"] = ",".join(requested)

@@ -134,12 +134,15 @@ def run_entry(kwargs: dict) -> None:
 
 def _print_summary_like_argparse(result):
     """Print summary in argparse-compatible format."""
-    print("\n=== Final Results ===")
+    import logging
+    logger = logging.getLogger(__name__)
+
+    logger.info("=== Final Results ===")
     for key, value in (result.metrics or {}).items():
         if "llc_mean" in key:
             sampler = key.replace("_llc_mean", "").upper()
             se_key = key.replace("_mean", "_se")
             se_value = (result.metrics or {}).get(se_key, 0)
-            print(f"{sampler} LLC: {value:.4f} ± {float(se_value):.4f}")
+            logger.info(f"{sampler} LLC: {value:.4f} ± {float(se_value):.4f}")
     if getattr(result, "run_dir", ""):
-        print(f"\nRun saved to: {result.run_dir}")
+        logger.info(f"Run saved to: {result.run_dir}")
