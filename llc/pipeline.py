@@ -59,6 +59,8 @@ def run_one(
     Returns:
         RunOutputs with metrics, histories, run_dir, and L0
     """
+    logger = logging.getLogger(__name__)
+
     # Compute deterministic run ID and family ID
     rid = run_id(cfg)
     fid = run_family_id(cfg)
@@ -74,7 +76,7 @@ def run_one(
     if skip_if_exists and os.path.exists(os.path.join(run_dir, "metrics.json")):
         cached = load_cached_outputs(run_dir)
         if cached:
-            print(f"Skipping run {rid} - results already exist in {run_dir}")
+            logger.info(f"Skipping run {rid} - results already exist in {run_dir}")
             return RunOutputs(
                 run_dir=run_dir,
                 metrics=cached["metrics"],
@@ -85,8 +87,8 @@ def run_one(
     # Create run directory and save config immediately
     if save_artifacts:
         os.makedirs(run_dir, exist_ok=True)
-        print(f"Run ID: {rid}")
-        print(f"Run will be saved to: {run_dir}")
+        logger.info(f"Run ID: {rid}")
+        logger.info(f"Run will be saved to: {run_dir}")
         # Save config up-front so it's available even if we crash
         save_config(run_dir, cfg)
     else:
@@ -102,7 +104,7 @@ def run_one(
     theta0_f64 = bundle.theta0_f64
     X_f32, Y_f32, X_f64, Y_f64 = bundle.X_f32, bundle.Y_f32, bundle.X_f64, bundle.Y_f64
     dim = bundle.d
-    print(f"Parameter dimension: {dim:,d}")
+    logger.info(f"Parameter dimension: {dim:,d}")
 
     # Move data to GPU if CUDA is enabled
     theta0_f32 = device_put(theta0_f32)
@@ -113,7 +115,7 @@ def run_one(
     Y_f64 = device_put(Y_f64)
 
     beta, gamma = compute_beta_gamma(cfg, dim)
-    print(f"beta={beta:.6g} gamma={gamma:.6g}")
+    logger.info(f"beta={beta:.6g} gamma={gamma:.6g}")
 
     # Loss functions supplied by the target
     loss_full_f32, loss_minibatch_f32 = bundle.loss_full_f32, bundle.loss_minibatch_f32
@@ -129,7 +131,7 @@ def run_one(
 
     # L0 at the empirical minimizer (from target bundle)
     L0 = float(bundle.L0)
-    print(f"L0 at empirical minimizer: {L0:.6f}")
+    logger.info(f"L0 at empirical minimizer: {L0:.6f}")
 
     # JIT compile the loss evaluator for LLC computation
     Ln_full64 = jit(loss_full_f64)
@@ -299,7 +301,7 @@ def run_one(
             sgld_batch=(cfg.sgld_batch_size if name == "sgld" else (cfg.sghmc_batch_size if name == "sghmc" else None)),
         )
 
-        print(
+        logger.info(
             f"{name.upper()} LLC: {m_core['llc_mean']:.4f} ± {m_core['llc_se']:.4f} (ESS: {int(m_core['ess_bulk']):.1f})"
         )
 
@@ -310,7 +312,7 @@ def run_one(
                     np.nanmean([a.mean() for a in res.acceptance if a.size])
                 )
                 m_eff["mean_acceptance"] = acc_scalar
-                print(f"HMC acceptance rate (mean over chains/draws): {acc_scalar:.3f}")
+                logger.info(f"HMC acceptance rate (mean over chains/draws): {acc_scalar:.3f}")
             except Exception:
                 pass
 
