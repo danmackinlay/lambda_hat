@@ -1,5 +1,6 @@
 """Analyze command implementation."""
 
+import logging
 from pathlib import Path
 
 
@@ -19,27 +20,28 @@ def analyze_entry(
         fig_theta_trace,
     )
 
+    logger = logging.getLogger(__name__)
     run_dir = Path(run_dir)
     out_dir = Path(out or (run_dir / "analysis"))
     out_dir.mkdir(parents=True, exist_ok=True)
-    which = ["sgld", "hmc", "mclmc"] if which == "all" else [which]
+    which = ["sgld", "sghmc", "hmc", "mclmc"] if which == "all" else [which]
     plots = [p.strip() for p in plots.split(",") if p.strip()]
 
     for s in which:
         nc = run_dir / f"{s}.nc"
         if not nc.exists():
-            print(f"[analyze] skip {s}: {nc.name} not found")
+            logger.info(f"[analyze] skip {s}: {nc.name} not found")
             continue
 
         try:
             idata = from_netcdf(nc)
         except Exception as e:
-            print(f"[analyze] failed to load {s}: {e}")
+            logger.warning(f"[analyze] failed to load {s}: {e}")
             continue
 
         # metrics
         m = llc_point_se(idata)
-        print(
+        logger.info(
             f"[{s}] mean={m.get('llc_mean', float('nan')):.4g} se={m.get('llc_se', float('nan')):.3g} "
             f"ESS={m.get('ess_bulk', float('nan')):.1f} Rhat={m.get('rhat', float('nan')):.3f}"
         )
@@ -51,13 +53,13 @@ def analyze_entry(
                     # need L0, n, beta; derive from attrs if you stored them, else skip:
                     n_attr = idata.attrs.get("n_data", None)
                     if n_attr is None:
-                        print(f"[{s}] warning: n_data missing in attrs; reading {run_dir/'config.json'}")
+                        logger.warning(f"[{s}] n_data missing in attrs; reading {run_dir/'config.json'}")
                         try:
                             import json
                             with open(run_dir/'config.json') as f:
                                 n = int(json.load(f)["n_data"])
                         except Exception:
-                            print(f"[{s}] error: cannot determine n_data; skipping running_llc")
+                            logger.error(f"[{s}] cannot determine n_data; skipping running_llc")
                             continue
                     else:
                         n = int(n_attr)
@@ -92,13 +94,13 @@ def analyze_entry(
                     continue
 
                 if path.exists() and not overwrite:
-                    print(f"[analyze] exists: {path.name} (use --overwrite)")
+                    logger.info(f"[analyze] exists: {path.name} (use --overwrite)")
                 else:
                     fig.savefig(path, dpi=150, bbox_inches="tight", facecolor="white")
-                    print(f"[analyze] saved: {path.name}")
+                    logger.info(f"[analyze] saved: {path.name}")
 
                 import matplotlib.pyplot as plt
 
                 plt.close(fig)
             except Exception as e:
-                print(f"[analyze] failed {s}:{p}: {e}")
+                logger.error(f"[analyze] failed {s}:{p}: {e}")
