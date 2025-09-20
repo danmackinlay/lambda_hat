@@ -73,7 +73,7 @@ class Config:
     use_batched_chains: bool = False
 
     # SGLD
-    sgld_steps: int = 4_000
+    sgld_steps: int = 16_000
     sgld_warmup: int = 1_000
     sgld_batch_size: int = 256
     sgld_step_size: float = 1e-6
@@ -88,7 +88,7 @@ class Config:
     sgld_bias_correction: bool = True  # Adam bias correction on/off
 
     # SGHMC (Stochastic Gradient Hamiltonian Monte Carlo)
-    sghmc_steps: int = 4_000
+    sghmc_steps: int = 12_000
     sghmc_warmup: int = 1_000
     sghmc_batch_size: int = 256
     sghmc_step_size: float = 1e-6
@@ -98,7 +98,7 @@ class Config:
     sghmc_dtype: str = "float32"  # reduce memory
 
     # HMC
-    hmc_draws: int = 1_000
+    hmc_draws: int = 5_000
     hmc_warmup: int = 1_000
     hmc_num_integration_steps: int = 10
     hmc_thin: int = 5  # store every k-th draw for diagnostics
@@ -106,7 +106,7 @@ class Config:
     hmc_dtype: str = "float64"
 
     # MCLMC (unadjusted)
-    mclmc_draws: int = 2_000  # post-tuning steps (MCLMC yields 1 sample per step)
+    mclmc_draws: int = 8_000  # post-tuning steps (MCLMC yields 1 sample per step)
     mclmc_eval_every: int = 1
     mclmc_thin: int = 10
     mclmc_dtype: str = "float64"  # keep f64 for stability (like HMC)
