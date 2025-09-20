@@ -17,11 +17,14 @@ uv run modal volume create llc-runs      # optional; code can create it on first
 # Single run
 uv run python -m llc run --backend=modal --preset=quick
 
+# Single run with specific GPU types
+uv run python -m llc run --backend=modal --gpu-mode=vectorized --gpu-types=H100,A100
+
 # Sweep (traditional: one job per config)
 uv run python -m llc sweep --backend=modal
 
 # Sweep (split samplers: one job per sampler for better concurrency)
-uv run python -m llc sweep --backend=modal --split-samplers
+uv run python -m llc sweep --backend=modal --split-samplers --gpu-types=L40S
 ```
 
 ### How it Works
@@ -54,16 +57,50 @@ Use `--split-samplers` to run each sampler (SGLD, HMC, MCLMC) as a separate Moda
 
 **How it works:** Each configuration is expanded into one job per sampler. All jobs in a "family" use the same dataset/ERM (same `cfg.seed`) but run different samplers. Results include a `family_id` column for grouping.
 
+### GPU Selection
+
+Use `--gpu-types` to specify preferred GPU types with fallbacks:
+
+```bash
+# Single GPU type
+--gpu-types=H100
+
+# Multiple types (priority order)
+--gpu-types=H100,A100,L40S
+```
+
+**Valid GPU types:** H100, A100, L40S, T4, A10G
+
+If invalid types are specified, the system warns and falls back to L40S.
+
 ### Artifact Management
 
 **Automatic download**: When you run `llc run/sweep --backend=modal`, runs are automatically downloaded to `./runs/<run_id>/` as each job completes.
 
 **Manual retrieval**: For browsing or recovering old runs from the Modal volume use `llc pull-runs`.
 
+### Environment Variables
+
+Advanced users can tune Modal behavior via environment variables:
+
+```bash
+# GPU selection (set by --gpu-types flag)
+LLC_MODAL_GPU_LIST=H100,A100,L40S
+
+# Timeout and retry settings
+LLC_MODAL_TIMEOUT_S=10800          # 3 hours default
+LLC_MODAL_MAX_RETRIES=3
+LLC_MODAL_BACKOFF=2.0
+LLC_MODAL_INITIAL_DELAY_S=10
+```
+
+These are automatically set by CLI flags but can be overridden for advanced use cases.
+
 ### Troubleshooting
 
-* **Timeouts not taking effect:** Remember timeouts are set in the decorator in `modal_app.py` (we use generous defaults), not per-call flags.
+* **Timeouts not taking effect:** Timeouts are tunable via `LLC_MODAL_TIMEOUT_S` environment variable (default: 3 hours).
 * **Runs missing locally:** Fetch from the volume with `llc pull-runs <run_id>`.
+* **GPU allocation issues:** Check `--gpu-types` values against the allowlist: H100, A100, L40S, T4, A10G.
 
 ### Cleanup
 

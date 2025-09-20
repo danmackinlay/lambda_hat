@@ -18,16 +18,22 @@ def sweep_entry(kwargs: dict) -> None:
     skip_if_exists = kwargs.pop("skip_if_exists", True)
     preset = kwargs.pop("preset", None)
     gpu_mode = kwargs.pop("gpu_mode", "off")
-    cuda_devices = kwargs.pop("cuda_devices", None)
+    gpu_types = kwargs.pop("gpu_types", "")
     split_samplers = kwargs.pop("split_samplers", False)
 
-    # Set JAX platform before any JAX imports
-    if gpu_mode == "off":
-        os.environ["JAX_PLATFORMS"] = "cpu"
-    else:
-        os.environ["JAX_PLATFORMS"] = "cuda"
-    if cuda_devices:
-        os.environ["CUDA_VISIBLE_DEVICES"] = cuda_devices
+    # Set JAX platform for local backend only (remote decides from decorator)
+    if backend == "local":
+        os.environ["JAX_PLATFORMS"] = "cuda" if gpu_mode != "off" else "cpu"
+    # Validate and set GPU type list for modal_app decorators (evaluated at import time)
+    if gpu_types:
+        valid_gpus = {"A100", "H100", "L40S", "T4", "A10G"}
+        requested = [t.strip() for t in gpu_types.split(",") if t.strip()]
+        bad = [t for t in requested if t not in valid_gpus]
+        if bad:
+            print(f"[warn] unknown GPU types {bad}; falling back to L40S")
+            os.environ["LLC_MODAL_GPU_LIST"] = "L40S"
+        else:
+            os.environ["LLC_MODAL_GPU_LIST"] = ",".join(requested)
 
     # Build base config for sweep
     base_cfg = apply_preset_then_overrides(CFG, preset, kwargs)

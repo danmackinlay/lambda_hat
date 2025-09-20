@@ -28,9 +28,10 @@ def run_shared_options():
             help="GPU execution on a single device: 'vectorized' vmaps chains; 'sequential' runs one chain at a time.",
         )(f)
         f = click.option(
-            "--cuda-devices",
+            "--gpu-types",
             type=str,
-            help="CUDA_VISIBLE_DEVICES string, e.g. '0' or '0,1'. Optional.",
+            default="L40S",
+            help="Comma-separated Modal GPU types to request (e.g. 'H100,A100,L40S'). Optional.",
         )(f)
         # Control flags
         f = click.option(

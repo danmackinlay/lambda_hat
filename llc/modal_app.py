@@ -6,6 +6,16 @@ import traceback
 import time
 import modal
 
+
+def _gpu_list_from_env():
+    """Get GPU types from environment variable with fallback to default."""
+    val = os.environ.get("LLC_MODAL_GPU_LIST", "").strip()
+    if not val:
+        return "L40S"  # default stays simple
+    # Allow comma-separated list; Modal accepts str or List[str]
+    lst = [x.strip() for x in val.split(",") if x.strip()]
+    return lst if len(lst) > 1 else (lst[0] if lst else "L40S")
+
 # --- Base image: all build steps before adding local code ---
 base = (
     modal.Image.debian_slim(python_version="3.11")
@@ -135,7 +145,7 @@ def run_experiment_remote(cfg_dict: dict) -> dict:
 # GPU entrypoint: decorated and public
 @app.function(
     image=gpu_image,
-    gpu="L40S",
+    gpu=_gpu_list_from_env(),
     timeout=TIMEOUT_S,
     volumes={"/runs": runs_volume},
     retries=RETRIES,
