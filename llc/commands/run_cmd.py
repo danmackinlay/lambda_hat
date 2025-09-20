@@ -1,6 +1,5 @@
 """Run command implementation."""
 
-import os
 from dataclasses import replace
 from llc.config import CFG
 from llc.util.config_overrides import apply_preset_then_overrides
@@ -68,8 +67,7 @@ def run_entry(kwargs: dict) -> None:
 
     cfg_payloads = prepare_payloads([cfg], save_artifacts=save_artifacts, skip_if_exists=skip_if_exists, gpu_mode=gpu_mode)
 
-    # Import task function only when needed
-    from llc.tasks import run_experiment_task
+    # Use unified backend dispatcher for remote execution
 
     [result_dict] = run_jobs(cfg_payloads=cfg_payloads, opts=opts, task_fn=run_experiment_task)
 

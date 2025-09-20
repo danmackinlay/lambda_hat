@@ -32,7 +32,7 @@ uv run python -m llc run --backend=modal --gpu-mode=vectorized --gpu-types=H100,
 # Sweep (one job per sampler - default behavior)
 uv run python -m llc sweep --backend=modal --gpu-types=L40S
 
-# Sweep (legacy: multiple samplers per job)
+# Sweep (legacy: multiple samplers per job) - DEPRECATED
 uv run python -m llc sweep --backend=modal --no-split-samplers
 ```
 

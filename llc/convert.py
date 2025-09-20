@@ -57,7 +57,7 @@ def to_idata(
                          (theta_0, theta_1, ...) for proper ArviZ plot_trace layout.
                          If False, store as single multi-dimensional theta variable.
     """
-    az_mod = az()
+    az_mod = az
 
     # L traces (C,T)
     if not Ln_histories or all(len(h) == 0 for h in Ln_histories):

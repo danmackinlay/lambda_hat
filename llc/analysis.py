@@ -38,7 +38,7 @@ def idata_from_histories(
 # ---------- Metrics ----------
 def llc_point_se(idata) -> Dict[str, float]:
     """Return mean, SE, ESS_bulk/tail, R-hat for posterior['llc']."""
-    az_mod = az()
+    az_mod = az
     mu = float(idata.posterior["llc"].values.mean())
     summ = az_mod.summary(idata, var_names=["llc"])
     out = {"llc_mean": mu}
@@ -92,7 +92,7 @@ def efficiency_metrics(
     *, idata, timings: Dict, work: Dict, n_data: int, sgld_batch: Optional[int]
 ) -> Dict[str, float]:
     """Compute ESS/sec, ESS/FDE, WNV_time, WNV_FDE (FDE = full-data-equivalent grads)."""
-    az_mod = az()
+    az_mod = az
     summ = az_mod.summary(idata, var_names=["llc"])
     if summ.empty:
         return {
@@ -141,7 +141,7 @@ def fig_running_llc(idata, n: int, beta: float, L0: float, title: str) -> plt.Fi
         pooled[t] = mean_c(L[c,t])_cummean_up_to_t
     so it is directly comparable to each chain's running mean.
     """
-    az_mod = az()
+    az_mod = az
     L = idata.posterior.get("L")
     if L is None:
         raise ValueError("posterior['L'] missing; cannot draw running LLC.")
@@ -186,7 +186,7 @@ def fig_running_llc(idata, n: int, beta: float, L0: float, title: str) -> plt.Fi
 
 
 def fig_rank_llc(idata) -> plt.Figure:
-    az_mod = az()
+    az_mod = az
     axes = az_mod.plot_rank(idata, var_names=["llc"])
     if isinstance(axes, (list, tuple, np.ndarray)):
         return axes.flat[0].figure
@@ -194,7 +194,7 @@ def fig_rank_llc(idata) -> plt.Figure:
 
 
 def fig_autocorr_llc(idata) -> plt.Figure:
-    az_mod = az()
+    az_mod = az
     axes = az_mod.plot_autocorr(idata, var_names=["llc"])
     return (
         axes[0].figure if isinstance(axes, (list, tuple, np.ndarray)) else axes.figure
@@ -202,25 +202,25 @@ def fig_autocorr_llc(idata) -> plt.Figure:
 
 
 def fig_ess_evolution(idata) -> plt.Figure:
-    az_mod = az()
+    az_mod = az
     axes = az_mod.plot_ess(idata, var_names=["llc"], kind="evolution")
     return axes.figure
 
 
 def fig_ess_quantile(idata) -> plt.Figure:
-    az_mod = az()
+    az_mod = az
     axes = az_mod.plot_ess(idata, var_names=["llc"], kind="quantile")
     return axes.figure
 
 
 def fig_energy(idata) -> plt.Figure:
-    az_mod = az()
+    az_mod = az
     ax = az_mod.plot_energy(idata)
     return ax.figure
 
 
 def fig_theta_trace(idata, dims: int = 4) -> plt.Figure:
-    az_mod = az()
+    az_mod = az
 
     # Check if we have scalar theta variables (new approach)
     theta_vars = [v for v in idata.posterior.data_vars if v.startswith("theta_")]
