@@ -6,7 +6,7 @@ WNV and FDE without per-step hooks.
 
 from __future__ import annotations
 from dataclasses import dataclass
-from typing import Callable, Any, Optional, Dict, List, Tuple
+from typing import Callable, Any, Optional, Dict, Tuple
 
 import jax
 import jax.numpy as jnp
@@ -15,16 +15,6 @@ import numpy as np
 
 Array = jnp.ndarray
 
-
-@dataclass
-class ChainResult:
-    kept: np.ndarray  # (draws, k) tiny theta traces (or (0,k) if none)
-    L_hist: np.ndarray  # (draws_L,) Ln evaluations
-    extras: Dict[str, np.ndarray]  # e.g. {"accept": (draws,), "energy": (draws,)}
-    mean_L: float
-    var_L: float
-    n_L: int
-    eval_time_seconds: float  # time spent in L_n evaluations
 
 
 @dataclass
@@ -109,44 +99,6 @@ def precond_update(
 
     inv_sqrt = jax.lax.rsqrt(v_hat + eps)
     return inv_sqrt, DiagPrecondState(m_new, v_new, t_new)
-
-
-@dataclass
-class RunSummary:
-    chains: List[ChainResult]
-    kept_stacked: np.ndarray  # (C, draws, k) or (C, 0, k) if no storage
-    L_hist_stacked: np.ndarray  # (C, draws_L)
-    extras: Dict[str, List[np.ndarray]]  # per-chain lists
-    eval_time_seconds: (
-        float  # time spent in Ln() (so you can subtract from sampling time)
-    )
-
-
-class RunningMeanVar:
-    def __init__(self):
-        self.n = 0
-        self.mean = 0.0
-        self.M2 = 0.0
-
-    def update(self, x: float):
-        self.n += 1
-        delta = x - self.mean
-        self.mean += delta / self.n
-        self.M2 += delta * (x - self.mean)
-
-    def value(self) -> Tuple[float, float, int]:
-        var = self.M2 / (self.n - 1) if self.n > 1 else np.nan
-        return float(self.mean), float(var), int(self.n)
-
-
-def default_tiny_store(
-    vec: np.ndarray, diag_dims=None, Rproj=None
-) -> Optional[np.ndarray]:
-    if diag_dims is not None:
-        return vec[diag_dims]
-    if Rproj is not None:
-        return Rproj @ vec
-    return None
 
 
 def select_diag_dims(dim, k, seed):
