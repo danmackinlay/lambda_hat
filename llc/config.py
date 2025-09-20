@@ -67,7 +67,7 @@ class Config:
 
     # Sampling
     # Choose which samplers to run. Order controls reporting & gallery grouping.
-    samplers: list[str] = ("sgld", "hmc", "mclmc")
+    samplers: list[str] = ("sgld", "sghmc", "hmc", "mclmc")
     chains: int = 4
     # Optimization: use batched (vmap+scan) chain execution for speed
     use_batched_chains: bool = False

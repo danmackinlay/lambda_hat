@@ -232,7 +232,7 @@ def _save_sweep_results(results):
             from llc.cache import run_family_id
             family_id = run_family_id(Config(**C))
 
-        for s in ("sgld", "hmc", "mclmc"):
+        for s in ("sgld", "sghmc", "hmc", "mclmc"):
             if f"{s}_llc_mean" not in M:
                 continue
             rows.append(

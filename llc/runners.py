@@ -18,6 +18,7 @@ from .samplers.adapters import (
     run_sgld_chains_batched,
     run_hmc_chains_batched,
     run_mclmc_chains_batched,
+    run_sghmc_chains_batched,
     sgld_spec,
     hmc_spec,
     mclmc_spec,
@@ -242,6 +243,89 @@ def run_sgld_online_batched(
     chains = init_thetas.shape[0]
     work = {
         "n_minibatch_grads": int(chains * num_steps),
+        "n_full_loss": int(chains * M),
+    }
+
+    return SamplerResult(
+        Ln_histories=L_histories,
+        theta_thin=kept_stacked,
+        acceptance=None,
+        energy=None,
+        timings=timings,
+        work=work,
+    )
+
+
+def run_sghmc_online_batched(
+    key,
+    init_thetas,
+    grad_logpost_minibatch,
+    X,
+    Y,
+    n_data,
+    step_size,
+    temperature,
+    draws,
+    eval_every,
+    thin,
+    batch_size,
+    Ln_full64,
+    diag_dims=None,
+    Rproj=None,
+    # Ignored parameters for compatibility
+    use_tqdm=None,
+    progress_update_every=None,
+    stats=None,
+):
+    """Batched SGHMC runner using vmap + lax.scan for speed"""
+    tiny_store = build_tiny_store(diag_dims, Rproj)
+
+    # Time the adapter call
+    t0 = time.perf_counter()
+    result = run_sghmc_chains_batched(
+        rng_key=key,
+        init_thetas=init_thetas,
+        grad_logpost_minibatch=grad_logpost_minibatch,
+        X=X,
+        Y=Y,
+        n_data=n_data,
+        step_size=step_size,
+        temperature=temperature,
+        draws=draws,
+        eval_every=eval_every,
+        thin=thin,
+        batch_size=batch_size,
+        Ln_eval_f64=Ln_full64,
+        tiny_store_fn=tiny_store,
+    )
+    total_time = time.perf_counter() - t0
+
+    # Estimate and subtract eval time
+    C, M = result.L_hist.shape  # chains, eval points
+    # Micro-benchmark a single vmapped eval
+    Ln_vmapped = jax.jit(jax.vmap(Ln_full64))
+    dummy_theta = init_thetas  # (C, d)
+    t_eval_start = time.perf_counter()
+    _ = Ln_vmapped(dummy_theta).block_until_ready()
+    t_eval_per_call = time.perf_counter() - t_eval_start
+
+    eval_time_est = t_eval_per_call * M
+    sampling_time = max(0.0, total_time - result.warmup_time_seconds - eval_time_est)
+
+    # Convert back to the expected format
+    kept_stacked = np.asarray(result.kept)  # (C, K, k)
+    L_histories = [np.asarray(result.L_hist[c]) for c in range(result.L_hist.shape[0])]
+
+    # Build timing and work dictionaries
+    timings = {
+        "warmup": float(result.warmup_time_seconds),
+        "sampling": float(sampling_time),
+    }
+
+    # SGHMC work computation (similar to SGLD)
+    chains = init_thetas.shape[0]
+    work = {
+        "n_minibatch_grads": int(chains * draws),
         "n_full_loss": int(chains * M),
     }
 

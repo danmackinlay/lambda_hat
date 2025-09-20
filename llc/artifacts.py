@@ -144,8 +144,8 @@ def generate_gallery_html(run_dir: str, cfg, metrics: Dict[str, Any]) -> str:
     png_files.sort()
 
     # Group plots by sampler - determine from metrics instead of cfg
-    samplers_run = [s for s in ("sgld", "hmc", "mclmc") if f"{s}_llc_mean" in metrics]
-    samplers = samplers_run if samplers_run else ["sgld", "hmc", "mclmc"]  # fallback
+    samplers_run = [s for s in ("sgld", "sghmc", "hmc", "mclmc") if f"{s}_llc_mean" in metrics]
+    samplers = samplers_run if samplers_run else ["sgld", "sghmc", "hmc", "mclmc"]  # fallback
     plot_groups = {sampler: [] for sampler in samplers}
 
     for png_file in png_files:

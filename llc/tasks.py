@@ -62,7 +62,7 @@ def run_experiment_task(cfg_dict: Dict[str, Any]) -> Dict[str, Any]:
         "cfg": cfg_dict,
         "run_dir": out.run_dir or "",
     }
-    for s in ("sgld", "hmc", "mclmc"):
+    for s in ("sgld", "sghmc", "hmc", "mclmc"):
         k = f"{s}_llc_mean"
         if k in out.metrics:
             result[f"llc_{s}"] = float(out.metrics[k])

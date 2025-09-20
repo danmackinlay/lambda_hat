@@ -251,9 +251,17 @@ def run_sghmc_chains_batched(
     batch_size: int,
     Ln_eval_f64,
     tiny_store_fn=None,
+    diag_dims=None,
+    Rproj=None,
 ) -> BatchedResult:
     """Parallel SGHMC with vmap + lax.scan (canonical)."""
+    from .base import build_tiny_store
+
     C = init_thetas.shape[0]
+
+    # Build tiny store function if not provided
+    if tiny_store_fn is None:
+        tiny_store_fn = build_tiny_store(diag_dims, Rproj)
 
     # Build SGHMC kernel
     sghmc = blackjax.sghmc(grad_logpost_minibatch)

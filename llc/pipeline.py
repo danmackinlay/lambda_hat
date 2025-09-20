@@ -27,6 +27,7 @@ from .posterior import (
 )
 from .runners import (
     run_sgld_online_batched,
+    run_sghmc_online_batched,
     run_hmc_online_batched,
     run_mclmc_online_batched,
 )
@@ -165,6 +166,28 @@ def run_one(
                 **env["diag_targets"],
             ),
         },
+        "sghmc": {
+            "init": lambda key, d, theta0_f32, cfg: (
+                theta0_f32
+                + 0.01 * random.normal(key, (cfg.chains, d)).astype(jnp.float32)
+            ),
+            "run": lambda key, init, env: run_sghmc_online_batched(
+                key,
+                init,
+                env["grad_logpost_minibatch_f32"],
+                env["X_f32"],
+                env["Y_f32"],
+                cfg.n_data,
+                cfg.sghmc_step_size,
+                cfg.sghmc_temperature,
+                cfg.sghmc_steps,
+                cfg.sghmc_eval_every,
+                cfg.sghmc_thin,
+                cfg.sghmc_batch_size,
+                env["Ln_full64"],
+                **env["diag_targets"],
+            ),
+        },
         "hmc": {
             "init": lambda key, d, theta0_f64, cfg: (
                 theta0_f64 + 0.01 * random.normal(key, (cfg.chains, d))
@@ -238,7 +261,7 @@ def run_one(
                     timings={"sampling": np.nan, "warmup": np.nan},  # Unknown on reload
                     work={"n_full_loss": np.nan},  # Optional on reload
                     n_data=cfg.n_data,
-                    sgld_batch=cfg.sgld_batch_size if name == "sgld" else None,
+                    sgld_batch=cfg.sgld_batch_size if name == "sgld" else (cfg.sghmc_batch_size if name == "sghmc" else None),
                 )
                 # Merge metrics and continue to next sampler
                 for k2, v in {**m_core, **m_eff}.items():
@@ -273,7 +296,7 @@ def run_one(
             timings=res.timings,
             work=res.work,
             n_data=cfg.n_data,
-            sgld_batch=(cfg.sgld_batch_size if name == "sgld" else None),
+            sgld_batch=(cfg.sgld_batch_size if name == "sgld" else (cfg.sghmc_batch_size if name == "sghmc" else None)),
         )
 
         print(
