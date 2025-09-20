@@ -18,8 +18,11 @@ from .samplers.adapters import (
     run_sgld_chains_batched,
     run_hmc_chains_batched,
     run_mclmc_chains_batched,
+    sgld_spec,
+    hmc_spec,
+    mclmc_spec,
 )
-from .samplers.base import build_tiny_store
+from .samplers.base import build_tiny_store, run_sampler_spec
 from .types import SamplerResult
 
 if TYPE_CHECKING:
@@ -39,6 +42,117 @@ def toc(t0):
 def llc_from_running_mean(E_L, L0, n, beta):
     """Compute LLC from running mean of loss values"""
     return float(n * beta * (E_L - L0))
+
+
+def run_sampler_online_batched(
+    key,
+    init_thetas,
+    sampler_name: str,
+    sampler_params: dict,
+    num_steps: int,
+    warmup: int,
+    eval_every: int,
+    thin: int,
+    Ln_full64,
+    diag_dims=None,
+    Rproj=None,
+) -> SamplerResult:
+    """Unified runner using SamplerSpec interface."""
+    tiny_store = build_tiny_store(diag_dims, Rproj)
+
+    # Create appropriate SamplerSpec
+    if sampler_name == "sgld":
+        spec = sgld_spec(**sampler_params)
+    elif sampler_name == "hmc":
+        spec = hmc_spec(**sampler_params)
+    elif sampler_name == "mclmc":
+        spec = mclmc_spec(**sampler_params)
+    else:
+        raise ValueError(f"Unknown sampler: {sampler_name}")
+
+    # Time the execution
+    t0 = time.perf_counter()
+
+    # For HMC and MCLMC, we need to handle adaptation/tuning separately
+    # This is a simplified version - the full implementation would handle
+    # the adaptation phase and update the spec.step_vmapped accordingly
+
+    # Use the generic sampler runner
+    result = run_sampler_spec(
+        spec,
+        rng_key=key,
+        init_states=init_thetas,
+        n_steps=num_steps,
+        warmup=warmup,
+        eval_every=eval_every,
+        thin=thin,
+        Ln_eval_f64_vmapped=jax.jit(jax.vmap(Ln_full64)),
+        tiny_store_fn=tiny_store,
+    )
+
+    total_time = time.perf_counter() - t0
+
+    # Estimate and subtract eval time
+    C, M = result.L_hist.shape  # chains, eval points
+    Ln_vmapped = jax.jit(jax.vmap(Ln_full64))
+    dummy_theta = init_thetas  # (C, d)
+    t_eval_start = time.perf_counter()
+    _ = Ln_vmapped(dummy_theta).block_until_ready()
+    t_eval_per_call = time.perf_counter() - t_eval_start
+
+    eval_time_est = t_eval_per_call * M
+    sampling_time = max(0.0, total_time - result.warmup_time_seconds - eval_time_est)
+
+    # Convert to expected format
+    kept_stacked = np.asarray(result.kept)  # (C, K, k)
+    L_histories = [np.asarray(result.L_hist[c]) for c in range(result.L_hist.shape[0])]
+
+    # Extract extras
+    acceptance = None
+    energy = None
+    if "accept" in result.extras:
+        acc = result.extras["accept"]
+        acceptance = [np.asarray(acc[c]) for c in range(acc.shape[0])]
+    if "energy" in result.extras:
+        en = result.extras["energy"]
+        energy = [np.asarray(en[c]) for c in range(en.shape[0])]
+
+    # Build timing and work dictionaries
+    timings = {
+        "warmup": float(result.warmup_time_seconds),
+        "sampling": float(sampling_time),
+    }
+
+    # Work computation based on sampler
+    chains = init_thetas.shape[0]
+    if sampler_name == "sgld":
+        work = {
+            "n_minibatch_grads": int(chains * num_steps),
+            "n_full_loss": int(chains * M),
+        }
+    elif sampler_name == "hmc":
+        L = sampler_params.get("L", 10)  # Default if not specified
+        work = {
+            "n_leapfrog_grads": int(chains * num_steps * (L + 1)),
+            "n_full_loss": int(chains * M),
+            "n_warmup_leapfrog_grads": int(result.warmup_grads or 0),
+        }
+    elif sampler_name == "mclmc":
+        work = {
+            "n_steps": int(chains * num_steps),
+            "n_full_loss": int(chains * M),
+        }
+    else:
+        work = {}
+
+    return SamplerResult(
+        Ln_histories=L_histories,
+        theta_thin=kept_stacked,
+        acceptance=acceptance,
+        energy=energy,
+        timings=timings,
+        work=work,
+    )
 
 
 # ---------- Batched (fast) versions of the above runners ----------
