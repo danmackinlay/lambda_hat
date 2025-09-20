@@ -10,7 +10,7 @@ from typing import Dict, Optional, List
 import numpy as np
 import matplotlib.pyplot as plt
 from pathlib import Path
-from ._az import az
+import arviz as az
 
 
 # ---------- Data Conversion ----------
@@ -38,9 +38,8 @@ def idata_from_histories(
 # ---------- Metrics ----------
 def llc_point_se(idata) -> Dict[str, float]:
     """Return mean, SE, ESS_bulk/tail, R-hat for posterior['llc']."""
-    az_mod = az
     mu = float(idata.posterior["llc"].values.mean())
-    summ = az_mod.summary(idata, var_names=["llc"])
+    summ = az.summary(idata, var_names=["llc"])
     out = {"llc_mean": mu}
     if not summ.empty:
         ess_bulk = float(summ.get("ess_bulk", np.nan).iloc[0])
@@ -92,8 +91,7 @@ def efficiency_metrics(
     *, idata, timings: Dict, work: Dict, n_data: int, sgld_batch: Optional[int]
 ) -> Dict[str, float]:
     """Compute ESS/sec, ESS/FDE, WNV_time, WNV_FDE (FDE = full-data-equivalent grads)."""
-    az_mod = az
-    summ = az_mod.summary(idata, var_names=["llc"])
+    summ = az.summary(idata, var_names=["llc"])
     if summ.empty:
         return {
             "ess": np.nan,
@@ -141,7 +139,6 @@ def fig_running_llc(idata, n: int, beta: float, L0: float, title: str) -> plt.Fi
         pooled[t] = mean_c(L[c,t])_cummean_up_to_t
     so it is directly comparable to each chain's running mean.
     """
-    az_mod = az
     L = idata.posterior.get("L")
     if L is None:
         raise ValueError("posterior['L'] missing; cannot draw running LLC.")
@@ -161,7 +158,7 @@ def fig_running_llc(idata, n: int, beta: float, L0: float, title: str) -> plt.Fi
     lam_pooled = n * float(beta) * (pooled - L0)  # (T,)
 
     # mean ± 2·SE band from ESS
-    summ = az_mod.summary(idata, var_names=["llc"])
+    summ = az.summary(idata, var_names=["llc"])
     mu, se = float(idata.posterior["llc"].values.mean()), np.nan
     if not summ.empty:
         ess = float(summ["ess_bulk"].iloc[0])
@@ -186,41 +183,35 @@ def fig_running_llc(idata, n: int, beta: float, L0: float, title: str) -> plt.Fi
 
 
 def fig_rank_llc(idata) -> plt.Figure:
-    az_mod = az
-    axes = az_mod.plot_rank(idata, var_names=["llc"])
+    axes = az.plot_rank(idata, var_names=["llc"])
     if isinstance(axes, (list, tuple, np.ndarray)):
         return axes.flat[0].figure
     return axes.figure
 
 
 def fig_autocorr_llc(idata) -> plt.Figure:
-    az_mod = az
-    axes = az_mod.plot_autocorr(idata, var_names=["llc"])
+    axes = az.plot_autocorr(idata, var_names=["llc"])
     return (
         axes[0].figure if isinstance(axes, (list, tuple, np.ndarray)) else axes.figure
     )
 
 
 def fig_ess_evolution(idata) -> plt.Figure:
-    az_mod = az
-    axes = az_mod.plot_ess(idata, var_names=["llc"], kind="evolution")
+    axes = az.plot_ess(idata, var_names=["llc"], kind="evolution")
     return axes.figure
 
 
 def fig_ess_quantile(idata) -> plt.Figure:
-    az_mod = az
-    axes = az_mod.plot_ess(idata, var_names=["llc"], kind="quantile")
+    axes = az.plot_ess(idata, var_names=["llc"], kind="quantile")
     return axes.figure
 
 
 def fig_energy(idata) -> plt.Figure:
-    az_mod = az
-    ax = az_mod.plot_energy(idata)
+    ax = az.plot_energy(idata)
     return ax.figure
 
 
 def fig_theta_trace(idata, dims: int = 4) -> plt.Figure:
-    az_mod = az
 
     # Check if we have scalar theta variables (new approach)
     theta_vars = [v for v in idata.posterior.data_vars if v.startswith("theta_")]
@@ -231,7 +222,7 @@ def fig_theta_trace(idata, dims: int = 4) -> plt.Figure:
         theta_vars_sorted = sorted(theta_vars, key=lambda x: int(x.split('_')[1]))
         n_vars = min(dims, len(theta_vars_sorted))
         var_names = theta_vars_sorted[:n_vars]
-        axes = az_mod.plot_trace(
+        axes = az.plot_trace(
             idata,
             var_names=var_names,
             backend_kwargs={"constrained_layout": True}
@@ -248,7 +239,7 @@ def fig_theta_trace(idata, dims: int = 4) -> plt.Figure:
         n_vars = min(dims, nd)
         sel = {"theta_dim": list(range(n_vars))}
         fig, axes = plt.subplots(n_vars, 2, figsize=(12, 3*n_vars), squeeze=False)
-        az_mod.plot_trace(
+        az.plot_trace(
             idata,
             var_names=["theta"],
             coords=sel,
