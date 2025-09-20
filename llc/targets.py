@@ -31,11 +31,6 @@ class TargetBundle:
     L0: float  # L_n at theta0 (f64)
 
 
-def _identity_unravel(theta: jnp.ndarray):
-    # For analytic targets with a flat parameter vector
-    return theta
-
-
 def build_target(key, cfg: Config) -> TargetBundle:
     """Return a self-contained target for the pipeline to consume."""
     if (cfg.target or "mlp") == "mlp":

@@ -37,11 +37,6 @@ def toc(t0):
     return time.perf_counter() - t0
 
 
-def llc_from_running_mean(E_L, L0, n, beta):
-    """Compute LLC from running mean of loss values"""
-    return float(n * beta * (E_L - L0))
-
-
 
 
 # ---------- Batched (fast) versions of the above runners ----------

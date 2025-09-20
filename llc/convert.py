@@ -2,12 +2,7 @@
 from __future__ import annotations
 from typing import List, Optional
 import numpy as np
-
-
-def _az():
-    import arviz as az
-
-    return az
+from ._az import az
 
 
 def stack_ragged_2d(arrs: List[np.ndarray]) -> Optional[np.ndarray]:
@@ -62,7 +57,7 @@ def to_idata(
                          (theta_0, theta_1, ...) for proper ArviZ plot_trace layout.
                          If False, store as single multi-dimensional theta variable.
     """
-    az = _az()
+    az_mod = az()
 
     # L traces (C,T)
     if not Ln_histories or all(len(h) == 0 for h in Ln_histories):
@@ -151,4 +146,4 @@ def to_idata(
             data["coords"]["theta_dim"] = theta_dims
             data["dims"]["theta"] = ["chain", "draw", "theta_dim"]
 
-    return az.from_dict(**data)
+    return az_mod.from_dict(**data)
