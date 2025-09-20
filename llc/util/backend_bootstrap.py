@@ -1,7 +1,14 @@
 # llc/util/backend_bootstrap.py
 """
-Centralized backend bootstrap utilities to reduce boilerplate in run_cmd/sweep_cmd.
-Handles JAX platform selection, GPU validation, schema stamping, and Modal function selection.
+LEGACY: Backend bootstrap utilities. These are now consolidated in backend_dispatch.py.
+
+Remaining functions are used by the unified dispatcher:
+- select_jax_platform: Sets JAX_PLATFORMS environment variable
+- validate_modal_gpu_types: Validates GPU types for Modal decorators
+- pick_modal_remote_fn: Selects Modal remote function based on GPU mode
+- schema_stamp: Adds metadata to config dicts for remote execution
+
+For new code, use llc.util.backend_dispatch.BackendOptions and run_jobs() instead.
 """
 
 import logging

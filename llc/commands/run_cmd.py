@@ -4,13 +4,8 @@ import os
 from dataclasses import replace
 from llc.config import CFG
 from llc.util.config_overrides import apply_preset_then_overrides
-from llc.util.modal_utils import extract_modal_runs_locally
-from llc.util.backend_bootstrap import (
-    select_jax_platform,
-    validate_modal_gpu_types,
-    pick_modal_remote_fn,
-    schema_stamp,
-)
+from llc.util.backend_dispatch import BackendOptions, prepare_payloads, run_jobs
+from llc.tasks import run_experiment_task
 
 
 def run_entry(kwargs: dict) -> None:
@@ -30,12 +25,6 @@ def run_entry(kwargs: dict) -> None:
     mem_gb = kwargs.pop("mem_gb", 16)
     slurm_signal_delay_s = kwargs.pop("slurm_signal_delay_s", 120)
 
-    # Set JAX platform for local backend only (remote decides from decorator)
-    if backend == "local":
-        select_jax_platform(gpu_mode)
-
-    # Validate and set GPU type list for modal_app decorators (evaluated at import time)
-    validate_modal_gpu_types(gpu_types)
 
     # Build config = preset + overrides
     cfg = apply_preset_then_overrides(CFG, preset, kwargs)
@@ -65,81 +54,36 @@ def run_entry(kwargs: dict) -> None:
         _print_summary_like_argparse(result)
         return
 
-    # Prepare payload for remote executors
-    cfg_dict = schema_stamp(cfg, save_artifacts, skip_if_exists, gpu_mode)
+    # Use unified backend dispatcher for remote execution
+    opts = BackendOptions(
+        backend=backend,
+        gpu_mode=gpu_mode,
+        gpu_types=gpu_types,
+        slurm_partition=slurm_partition,
+        timeout_min=timeout_min,
+        cpus=cpus,
+        mem_gb=mem_gb,
+        slurm_signal_delay_s=slurm_signal_delay_s,
+    )
 
-    # Import execution modules only when needed for remote backends
-    from llc.execution import get_executor
+    cfg_payloads = prepare_payloads([cfg], save_artifacts=save_artifacts, skip_if_exists=skip_if_exists, gpu_mode=gpu_mode)
+
+    # Import task function only when needed
     from llc.tasks import run_experiment_task
 
-    if backend == "modal":
-        from llc.modal_app import app, ping
+    [result_dict] = run_jobs(cfg_payloads=cfg_payloads, opts=opts, task_fn=run_experiment_task)
 
-        remote_fn = pick_modal_remote_fn(gpu_mode)
-
-        with app.run():
-            try:
-                # Fast preflight: detect "out of funds" / account disabled immediately
-                ping.remote()
-            except Exception as e:
-                msg = str(e).lower()
-                if any(k in msg for k in ["insufficient", "funds", "balance", "quota", "billing"]):
-                    raise SystemExit(
-                        "Modal preflight failed: likely out of funds or billing disabled.\n"
-                        "Tip: top up your Modal balance or set auto-recharge, then retry."
-                    )
-                raise
-
-            executor = get_executor(backend="modal", remote_fn=remote_fn)
-            [result_dict] = executor.map(run_experiment_task, [cfg_dict])
-
-        # Download artifacts locally (optional convenience)
-        extract_modal_runs_locally(result_dict)
-
-        # Adapt to summary printer shape
-        result = type("RunOutputs", (), {})()
-        result.run_dir = result_dict.get("run_dir", "")
-        result.metrics = {}
-        for s in ("sgld", "sghmc", "hmc", "mclmc"):
-            k = f"llc_{s}"
-            if k in result_dict:
-                result.metrics[f"{s}_llc_mean"] = float(result_dict[k])
-        result.histories = {}
-        result.L0 = 0.0
-        _print_summary_like_argparse(result)
-        return
-
-    elif backend == "submitit":
-        # Honor GPU intent and pass Submitit parameters
-        gpus_per_node = 1 if gpu_mode != "off" else 0
-        submitit_kwargs = {
-            "gpus_per_node": gpus_per_node,
-            "timeout_min": timeout_min,
-            "cpus_per_task": cpus,
-            "mem_gb": mem_gb,
-            "slurm_signal_delay_s": slurm_signal_delay_s,
-        }
-        if slurm_partition:
-            submitit_kwargs["slurm_partition"] = slurm_partition
-
-        executor = get_executor(backend="submitit", **submitit_kwargs)
-        [result_dict] = executor.map(run_experiment_task, [cfg_dict])
-
-        # No artifact auto-download for submitit (local FS)
-        result = type("RunOutputs", (), {})()
-        result.run_dir = result_dict.get("run_dir", "")
-        result.metrics = {}
-        for s in ("sgld", "sghmc", "hmc", "mclmc"):
-            k = f"llc_{s}"
-            if k in result_dict:
-                result.metrics[f"{s}_llc_mean"] = float(result_dict[k])
-        result.histories = {}
-        result.L0 = 0.0
-        _print_summary_like_argparse(result)
-        return
-
-    else:
-        raise ValueError(f"Unknown backend: {backend}")
+    # Adapt to summary printer shape for all backends
+    result = type("RunOutputs", (), {})()
+    result.run_dir = result_dict.get("run_dir", "")
+    result.metrics = {}
+    for s in ("sgld", "sghmc", "hmc", "mclmc"):
+        k = f"llc_{s}"
+        if k in result_dict:
+            result.metrics[f"{s}_llc_mean"] = float(result_dict[k])
+    result.histories = {}
+    result.L0 = 0.0
+    _print_summary_like_argparse(result)
 
 
 def _print_summary_like_argparse(result):

@@ -7,13 +7,7 @@ from dataclasses import replace
 
 from llc.config import CFG
 from llc.util.config_overrides import apply_preset_then_overrides
-from llc.util.modal_utils import extract_modal_runs_locally
-from llc.util.backend_bootstrap import (
-    select_jax_platform,
-    validate_modal_gpu_types,
-    pick_modal_remote_fn,
-    schema_stamp,
-)
+from llc.util.backend_dispatch import BackendOptions, prepare_payloads, run_jobs
 
 
 def sweep_entry(kwargs: dict) -> None:
@@ -38,13 +32,6 @@ def sweep_entry(kwargs: dict) -> None:
     cpus = kwargs.pop("cpus", 4)
     mem_gb = kwargs.pop("mem_gb", 16)
     slurm_signal_delay_s = kwargs.pop("slurm_signal_delay_s", 120)
-
-    # Set JAX platform for local backend only (remote decides from decorator)
-    if backend == "local":
-        select_jax_platform(gpu_mode)
-
-    # Validate and set GPU type list for modal_app decorators (evaluated at import time)
-    validate_modal_gpu_types(gpu_types)
 
     # Build base config for sweep
     base_cfg = apply_preset_then_overrides(CFG, preset, kwargs)
@@ -112,113 +99,36 @@ def sweep_entry(kwargs: dict) -> None:
     if backend == "local" and workers > 1:
         logger.info(f"Using {workers} parallel workers")
 
-    # Modal handle (if needed)
-    remote_fn = None
-    if backend == "modal":
-        from llc.modal_app import app, ping
-
-        remote_fn = pick_modal_remote_fn(gpu_mode)
-
-        # Scale concurrency automatically
-        maxc = min(8, len(items))  # Cap at 8 containers for reasonable concurrency
-        modal_opts = {
-            "max_containers": maxc,
-            "min_containers": 0,
-            "buffer_containers": max(1, maxc // 2),
-        }
-    else:
-        modal_opts = None
-
-    # Import execution modules only when needed
-    from llc.execution import get_executor
-    from llc.tasks import run_experiment_task
-
-    def _run_map():
-        if backend == "submitit":
-            # Honor GPU intent and pass Submitit parameters
-            gpus_per_node = 1 if gpu_mode != "off" else 0
-            submitit_kwargs = {
-                "gpus_per_node": gpus_per_node,
-                "timeout_min": timeout_min,
-                "cpus_per_task": cpus,
-                "mem_gb": mem_gb,
-                "slurm_signal_delay_s": slurm_signal_delay_s,
-            }
-            if slurm_partition:
-                submitit_kwargs["slurm_partition"] = slurm_partition
-            ex = get_executor(backend="submitit", **submitit_kwargs)
-        else:
-            ex = get_executor(
-                backend=backend,
-                workers=workers if backend == "local" else None,
-                remote_fn=remote_fn,
-                options=modal_opts,
-            )
-        return ex.map(run_experiment_task, cfg_dicts)
-
     # Build cfg dicts with schema hash (one per job)
     cfg_dicts = []
     for _problem, _sampler, _seed, cfg in items:
-        d = schema_stamp(cfg, save_artifacts, skip_if_exists, gpu_mode)
-        d["problem_name"] = _problem  # Include problem name for CSV
-        cfg_dicts.append(d)
+        cfg_dicts.append(cfg)
 
-    if backend == "modal":
-        # Hydrate functions by running inside the app context
-        # Chunk the work to avoid multi-hour heartbeats
-        with app.run():
-            try:
-                # Fast preflight: detect "out of funds" / account disabled immediately
-                ping.remote()
-            except Exception as e:
-                msg = str(e).lower()
-                if any(k in msg for k in ["insufficient", "funds", "balance", "quota", "billing"]):
-                    raise SystemExit(
-                        "Modal preflight failed: likely out of funds or billing disabled.\n"
-                        "Tip: top up your Modal balance or set auto-recharge, then retry."
-                    )
-                raise
+    # Use unified backend dispatcher
+    opts = BackendOptions(
+        backend=backend,
+        gpu_mode=gpu_mode,
+        gpu_types=gpu_types,
+        local_workers=workers,
+        slurm_partition=slurm_partition,
+        timeout_min=timeout_min,
+        cpus=cpus,
+        mem_gb=mem_gb,
+        slurm_signal_delay_s=slurm_signal_delay_s,
+        modal_chunk_size=16,  # Process in batches to avoid long heartbeats
+        modal_autoscaler_cap=min(8, len(items)),  # Cap at 8 containers for reasonable concurrency
+    )
 
-            results = []
-            chunk_size = 16  # Process in batches to avoid long heartbeats
+    cfg_payloads = prepare_payloads(cfg_dicts, save_artifacts=save_artifacts, skip_if_exists=skip_if_exists, gpu_mode=gpu_mode)
 
-            for i in range(0, len(cfg_dicts), chunk_size):
-                batch = cfg_dicts[i:i+chunk_size]
-                ex = get_executor(
-                    backend=backend,
-                    remote_fn=remote_fn,
-                    options=modal_opts,
-                )
-                try:
-                    batch_results = ex.map(run_experiment_task, batch)
-                    results.extend(batch_results)
-                except Exception as e:
-                    # Emit a synthetic error row so llc_sweep_errors.csv captures it
-                    results.append({
-                        "status": "error",
-                        "run_id": "N/A",
-                        "stage": "scheduling",
-                        "error_type": e.__class__.__name__,
-                        "error": str(e)[:2000],
-                        "duration_s": 0,
-                    })
-                    logger.error(f"[sweep] Scheduling failed for batch: {e}")
-                logger.info(f"[sweep] Completed batch {i//chunk_size + 1}/{(len(cfg_dicts) + chunk_size - 1)//chunk_size}")
-    else:
-        results = _run_map()
+    # Include problem names for CSV
+    for i, (_problem, _sampler, _seed, cfg) in enumerate(items):
+        cfg_payloads[i]["problem_name"] = _problem
 
-    # For Modal, optionally pull runs locally (convenience)
-    if backend == "modal":
-        os.makedirs("runs", exist_ok=True)
-        for r in results:
-            # Check if run had an error
-            if r.get("status") == "error":
-                logger.warning(f"[sweep] Run {r.get('run_id', 'unknown')} failed: {r.get('error_type', 'Unknown')} at stage {r.get('stage', 'unknown')}")
-                continue
-            try:
-                extract_modal_runs_locally(r)
-            except Exception as e:
-                logger.warning(f"failed to extract runs for a job: {e}")
+    # Import task function only when needed
+    from llc.tasks import run_experiment_task
+
+    results = run_jobs(cfg_payloads=cfg_payloads, opts=opts, task_fn=run_experiment_task)
 
     # Save long-form CSV with WNV fields (same as argparse version)
     _save_sweep_results(results)
