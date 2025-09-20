@@ -19,6 +19,7 @@ from .samplers.adapters import (
     run_hmc_chains_batched,
     run_mclmc_chains_batched,
 )
+from .samplers.base import build_tiny_store
 from .types import SamplerResult
 
 if TYPE_CHECKING:
@@ -71,15 +72,7 @@ def run_sgld_online_batched(
     stats=None,
 ):
     """Batched SGLD runner using vmap + lax.scan for speed"""
-    tiny_store = None
-    if diag_dims is not None:
-
-        def tiny_store(vec_batch):
-            return vec_batch[:, diag_dims]
-    elif Rproj is not None:
-
-        def tiny_store(vec_batch):
-            return jax.vmap(lambda v: Rproj @ v)(vec_batch)
+    tiny_store = build_tiny_store(diag_dims, Rproj)
 
     # Time the adapter call
     t0 = time.perf_counter()
@@ -166,15 +159,7 @@ def run_hmc_online_batched(
     stats=None,
 ):
     """Batched HMC runner using vmap + lax.scan for speed"""
-    tiny_store = None
-    if diag_dims is not None:
-
-        def tiny_store(vec_batch):
-            return vec_batch[:, diag_dims]
-    elif Rproj is not None:
-
-        def tiny_store(vec_batch):
-            return jax.vmap(lambda v: Rproj @ v)(vec_batch)
+    tiny_store = build_tiny_store(diag_dims, Rproj)
 
     # Time the adapter call
     t0 = time.perf_counter()
@@ -259,15 +244,7 @@ def run_mclmc_online_batched(
     stats=None,
 ):
     """Batched MCLMC runner using vmap + lax.scan for speed"""
-    tiny_store = None
-    if diag_dims is not None:
-
-        def tiny_store(vec_batch):
-            return vec_batch[:, diag_dims]
-    elif Rproj is not None:
-
-        def tiny_store(vec_batch):
-            return jax.vmap(lambda v: Rproj @ v)(vec_batch)
+    tiny_store = build_tiny_store(diag_dims, Rproj)
 
     # Time the adapter call
     t0 = time.perf_counter()

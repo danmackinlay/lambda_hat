@@ -174,6 +174,19 @@ def prepare_diag_targets(dim, cfg):
     return {}  # none
 
 
+def build_tiny_store(diag_dims=None, Rproj=None):
+    """
+    Return a vmapped extractor: theta[C,d] -> tiny[C,k], or None.
+
+    This centralizes the tiny-store logic used across all samplers.
+    """
+    if diag_dims is not None:
+        return lambda vec_batch: vec_batch[:, diag_dims]
+    if Rproj is not None:
+        return jax.vmap(lambda v: Rproj @ v)
+    return None
+
+
 def make_tiny_store(dim: int, config) -> tuple[Callable, Any]:
     """
     Create a function to store subset or projection of parameters.
