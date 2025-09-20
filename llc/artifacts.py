@@ -4,20 +4,12 @@
 import os
 import json
 from datetime import datetime
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any
 import numpy as np
 
 # ArviZ is heavy; import lazily inside the functions that need it
 import pandas as pd
 from pathlib import Path
-
-
-def create_run_directory(cfg) -> str:
-    """Create a timestamped run directory"""
-    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    run_dir = f"artifacts/{timestamp}"
-    os.makedirs(run_dir, exist_ok=True)
-    return run_dir
 
 
 def save_config(run_dir: str, cfg) -> str:
@@ -42,50 +34,6 @@ def save_config(run_dir: str, cfg) -> str:
         json.dump(config_dict, f, indent=2)
 
     return config_path
-
-
-def save_idata_L(
-    run_dir: str, name: str, Ln_histories: List[np.ndarray]
-) -> Optional[str]:
-    """Save L_n histories as ArviZ InferenceData"""
-    if not Ln_histories or all(len(h) == 0 for h in Ln_histories):
-        return None
-
-    # Stack histories (truncate to minimum length)
-    min_len = min(len(h) for h in Ln_histories if len(h) > 0)
-    if min_len == 0:
-        return None
-
-    H = np.stack([h[:min_len] for h in Ln_histories], axis=0)
-    import arviz as az
-
-    idata = az.from_dict(posterior={"L": H})
-
-    path = f"{run_dir}/{name}_L.nc"
-    idata.to_netcdf(path)
-    return path
-
-
-def save_idata_theta(
-    run_dir: str, name: str, samples_thin: np.ndarray
-) -> Optional[str]:
-    """Save thinned theta samples as ArviZ InferenceData"""
-    S = np.asarray(samples_thin)
-    if S.size == 0 or S.shape[1] < 2:
-        return None
-
-    k = S.shape[-1]
-    import arviz as az
-
-    idata = az.from_dict(
-        posterior={"theta": S},
-        coords={"theta_dim": list(range(k))},
-        dims={"theta": ["theta_dim"]},
-    )
-
-    path = f"{run_dir}/{name}_theta.nc"
-    idata.to_netcdf(path)
-    return path
 
 
 def save_metrics(run_dir: str, metrics: Dict[str, Any]) -> str:
@@ -113,23 +61,6 @@ def save_metrics(run_dir: str, metrics: Dict[str, Any]) -> str:
         json.dump(clean_metrics, f, indent=2)
 
     return metrics_path
-
-
-def save_summary_csv(run_dir: str, summary_df: pd.DataFrame) -> str:
-    """Save summary statistics to CSV"""
-    csv_path = f"{run_dir}/run_summary.csv"
-
-    # Check if file exists and append mode is desired
-    if os.path.exists("run_summary.csv"):
-        # Append to main summary file
-        summary_df.to_csv("run_summary.csv", mode="a", header=False, index=False)
-    else:
-        # Create new main summary file
-        summary_df.to_csv("run_summary.csv", index=False)
-
-    # Also save to run-specific directory
-    summary_df.to_csv(csv_path, index=False)
-    return csv_path
 
 
 # NOTE: create_manifest has been removed - use generate_gallery_html instead
