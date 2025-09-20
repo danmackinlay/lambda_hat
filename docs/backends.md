@@ -20,11 +20,11 @@ uv run python -m llc run --backend=modal --preset=quick
 # Single run with specific GPU types
 uv run python -m llc run --backend=modal --gpu-mode=vectorized --gpu-types=H100,A100
 
-# Sweep (traditional: one job per config)
-uv run python -m llc sweep --backend=modal
+# Sweep (one job per sampler - default behavior)
+uv run python -m llc sweep --backend=modal --gpu-types=L40S
 
-# Sweep (split samplers: one job per sampler for better concurrency)
-uv run python -m llc sweep --backend=modal --split-samplers --gpu-types=L40S
+# Sweep (legacy: multiple samplers per job)
+uv run python -m llc sweep --backend=modal --no-split-samplers
 ```
 
 ### How it Works
@@ -45,9 +45,9 @@ def run_experiment_remote(cfg_dict: dict) -> dict:
     ...
 ```
 
-### Split Samplers (Recommended)
+### Split Samplers (Default)
 
-Use `--split-samplers` to run each sampler (SGLD, HMC, MCLMC) as a separate Modal job:
+Sweeps always run one sampler per job (default). This makes jobs shorter, retries independent, and analysis cleaner:
 
 **Benefits:**
 - **Shorter jobs** → fewer timeout issues
@@ -131,8 +131,8 @@ Modal jobs can hang indefinitely if your account runs out of funds, since Modal'
 uv run python -m llc run --backend=submitit --gpu-mode=vectorized \
   --slurm-partition=gpu --timeout-min=180
 
-# Sweep with split samplers (recommended)
-uv run python -m llc sweep --backend=submitit --split-samplers \
+# Sweep (one job per sampler - default behavior)
+uv run python -m llc sweep --backend=submitit \
   --gpu-mode=vectorized --slurm-partition=gpu --timeout-min=180
 ```
 

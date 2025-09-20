@@ -24,3 +24,19 @@ These adaptive SGMCMC variants are heuristics: the per-parameter scale changes d
 - `--sgld-beta2`: RMSProp/Adam second-moment decay (default: 0.999)
 - `--sgld-eps`: Numerical stabilizer (default: 1e-8)
 - `--sgld-bias-correction` / `--no-sgld-bias-correction`: Adam bias correction (default: on)
+
+## Sweeps with SGLD Variants
+
+In sweeps, you can declare `sgld` variants with different `--sgld-precond` values in your study YAML, and each will run as its own job:
+
+```yaml
+samplers:
+  - name: sgld
+    overrides: {sgld_precond: none}
+  - name: sgld
+    overrides: {sgld_precond: rmsprop, sgld_beta2: 0.99}
+  - name: sgld
+    overrides: {sgld_precond: adam, sgld_beta1: 0.9, sgld_beta2: 0.999}
+```
+
+This makes it easy to compare different preconditioning strategies on the same problems.
