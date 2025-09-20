@@ -15,11 +15,8 @@ import numpy as np
 from jax import numpy as jnp
 
 from .samplers.adapters import (
-    run_sgld_chains_batched,
-    run_hmc_chains_batched,
-    run_mclmc_chains_batched,
-    run_sghmc_chains_batched,
     sgld_spec,
+    sghmc_spec,
     hmc_spec,
     mclmc_spec,
 )
@@ -77,31 +74,36 @@ def run_sgld_online_batched(
     progress_update_every=None,
     stats=None,
 ):
-    """Batched SGLD runner using vmap + lax.scan for speed"""
+    """Batched SGLD runner using SamplerSpec + run_sampler_spec"""
     tiny_store = build_tiny_store(diag_dims, Rproj)
 
-    # Time the adapter call
-    t0 = time.perf_counter()
-    result = run_sgld_chains_batched(
-        rng_key=key,
-        init_thetas=init_thetas,
+    # Create SGLD SamplerSpec
+    spec = sgld_spec(
         grad_logpost_minibatch=grad_logpost_minibatch,
         X=X,
         Y=Y,
         n_data=n,
         step_size=step_size,
-        n_steps=num_steps,
-        warmup=warmup,
         batch_size=batch_size,
-        eval_every=eval_every,
-        thin=thin,
-        Ln_eval_f64=Ln_full64,
-        tiny_store_fn=tiny_store,
         precond_mode=precond_mode,
         beta1=beta1,
         beta2=beta2,
         eps=eps,
         bias_correction=bias_correction,
+    )
+
+    # Run using unified driver
+    t0 = time.perf_counter()
+    result = run_sampler_spec(
+        spec=spec,
+        rng_key=key,
+        init_thetas=init_thetas,
+        n_steps=num_steps,
+        warmup=warmup,
+        eval_every=eval_every,
+        thin=thin,
+        Ln_eval_f64=Ln_full64,
+        tiny_store_fn=tiny_store,
     )
     total_time = time.perf_counter() - t0
 
@@ -161,24 +163,30 @@ def run_sghmc_online_batched(
     progress_update_every=None,
     stats=None,
 ):
-    """Batched SGHMC runner using vmap + lax.scan for speed"""
+    """Batched SGHMC runner using SamplerSpec + run_sampler_spec"""
     tiny_store = build_tiny_store(diag_dims, Rproj)
 
-    # Time the adapter call
-    t0 = time.perf_counter()
-    result = run_sghmc_chains_batched(
-        rng_key=key,
-        init_thetas=init_thetas,
+    # Create SGHMC SamplerSpec
+    spec = sghmc_spec(
         grad_logpost_minibatch=grad_logpost_minibatch,
         X=X,
         Y=Y,
         n_data=n_data,
         step_size=step_size,
         temperature=temperature,
-        draws=draws,
+        batch_size=batch_size,
+    )
+
+    # Run using unified driver
+    t0 = time.perf_counter()
+    result = run_sampler_spec(
+        spec=spec,
+        rng_key=key,
+        init_thetas=init_thetas,
+        n_steps=draws,
+        warmup=0,  # SGHMC has no warmup
         eval_every=eval_every,
         thin=thin,
-        batch_size=batch_size,
         Ln_eval_f64=Ln_full64,
         tiny_store_fn=tiny_store,
     )
@@ -233,18 +241,23 @@ def run_hmc_online_batched(
     progress_update_every=None,
     stats=None,
 ):
-    """Batched HMC runner using vmap + lax.scan for speed"""
+    """Batched HMC runner using SamplerSpec + run_sampler_spec"""
     tiny_store = build_tiny_store(diag_dims, Rproj)
 
-    # Time the adapter call
+    # Create HMC SamplerSpec
+    spec = hmc_spec(
+        logpost_and_grad=logpost_and_grad,
+        L=L,
+    )
+
+    # Run using unified driver
     t0 = time.perf_counter()
-    result = run_hmc_chains_batched(
+    result = run_sampler_spec(
+        spec=spec,
         rng_key=key,
         init_thetas=init_thetas,
-        logpost_and_grad=logpost_and_grad,
-        draws=draws,
-        warmup_draws=warmup,
-        L=L,
+        n_steps=draws,
+        warmup=warmup,
         eval_every=eval_every,
         thin=thin,
         Ln_eval_f64=Ln_full64,
@@ -311,23 +324,29 @@ def run_mclmc_online_batched(
     progress_update_every=None,
     stats=None,
 ):
-    """Batched MCLMC runner using vmap + lax.scan for speed"""
+    """Batched MCLMC runner using SamplerSpec + run_sampler_spec"""
     tiny_store = build_tiny_store(diag_dims, Rproj)
 
-    # Time the adapter call
-    t0 = time.perf_counter()
-    result = run_mclmc_chains_batched(
-        rng_key=key,
-        init_thetas=init_thetas,
+    # Create MCLMC SamplerSpec
+    spec = mclmc_spec(
         logdensity_fn=logdensity_fn,
-        draws=draws,
-        eval_every=eval_every,
-        thin=thin,
-        Ln_eval_f64=Ln_full64,
         tuner_steps=tuner_steps,
         diagonal_preconditioning=diagonal_preconditioning,
         desired_energy_var=desired_energy_var,
         integrator_name=integrator_name,
+    )
+
+    # Run using unified driver
+    t0 = time.perf_counter()
+    result = run_sampler_spec(
+        spec=spec,
+        rng_key=key,
+        init_thetas=init_thetas,
+        n_steps=draws,
+        warmup=0,  # MCLMC uses tuner_steps, not warmup
+        eval_every=eval_every,
+        thin=thin,
+        Ln_eval_f64=Ln_full64,
         tiny_store_fn=tiny_store,
     )
     total_time = time.perf_counter() - t0
