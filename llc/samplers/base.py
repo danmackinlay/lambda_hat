@@ -139,43 +139,6 @@ def build_tiny_store(diag_dims=None, Rproj=None):
     return None
 
 
-def make_tiny_store(dim: int, config) -> tuple[Callable, Any]:
-    """
-    Create a function to store subset or projection of parameters.
-
-    Returns:
-        tiny_store_fn: Function that extracts subset/projection
-        targets: The target indices or projection matrix
-    """
-    if hasattr(config, "track_subset_indices") and config.track_subset_indices:
-        # Track specific parameter indices
-        indices = config.track_subset_indices
-        if max(indices) >= dim:
-            indices = list(range(min(10, dim)))  # Fallback to first 10
-        targets = jnp.array(indices)
-
-        def tiny_store_fn(theta):
-            return theta[targets]
-
-        return tiny_store_fn, targets
-
-    elif hasattr(config, "track_projection_dim") and config.track_projection_dim:
-        # Random projection
-        proj_dim = config.track_projection_dim
-        key = jax.random.PRNGKey(config.seed)
-        projection = jax.random.normal(key, (proj_dim, dim)) / jnp.sqrt(proj_dim)
-        targets = projection
-
-        def tiny_store_fn(theta):
-            return projection @ theta
-
-        return tiny_store_fn, targets
-
-    else:
-        # No tracking
-        return lambda x: None, None
-
-
 def drive_chains_batched(
     *,
     rng_keys: Array,  # (T, C) or (T, C, ...), one key per step & chain
