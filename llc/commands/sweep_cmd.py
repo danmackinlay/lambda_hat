@@ -21,7 +21,6 @@ def sweep_entry(kwargs: dict) -> None:
     preset = kwargs.pop("preset", None)
     gpu_mode = kwargs.pop("gpu_mode", "off")
     gpu_types = kwargs.pop("gpu_types", "")
-    split_samplers = kwargs.pop("split_samplers", True)
     study_path = kwargs.pop("study", None)
     sampler_grid_json = kwargs.pop("sampler_grid", None)
     problem_grid_json = kwargs.pop("problem_grid", None)
@@ -84,15 +83,10 @@ def sweep_entry(kwargs: dict) -> None:
         sw["base"] = base_cfg
         # Emits tuples: (name, param, val, seed, cfg) — convert to matrix shape
         legacy = build_sweep_worklist(sw, n_seeds=n_seeds)
+        # Legacy fallback (kept for convenience) — always split per sampler
         for name, param, val, seed, cfg in legacy:
-            if split_samplers:
-                for s in cfg.samplers:
-                    items.append((name, s, seed, replace(cfg, samplers=[s])))
-            else:
-                # Keep single job that still lists multiple samplers (legacy)
-                # but prefer matrix style: submit one per sampler anyway
-                for s in cfg.samplers:
-                    items.append((name, s, seed, replace(cfg, samplers=[s])))
+            for s in cfg.samplers:
+                items.append((name, s, seed, replace(cfg, samplers=[s])))
 
     logger.info(f"Running sweep with {len(items)} jobs on {backend} backend")
     logger.info("Each job = (problem, sampler, seed).")

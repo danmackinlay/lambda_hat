@@ -28,7 +28,7 @@ All backends (local CPU/GPU, SLURM via Submitit, Modal serverless) are now dispa
   - Local execution with optional timeouts
 - Automatic artifact download from Modal to `./runs/<run_id>`
 
-Sweeps default to **one sampler per job**. This makes runs shorter, retries independent, and results easier to analyze. The old multi-sampler jobs mode (`--no-split-samplers`) is deprecated.
+Sweeps run **one sampler per job**. This makes runs shorter, retries independent, and results easier to analyze.
 
 
 ![SGLD running LLC](assets/readme/sgld_llc_running.png)

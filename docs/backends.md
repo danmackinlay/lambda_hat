@@ -36,8 +36,6 @@ uv run python -m llc run --backend=modal --gpu-mode=vectorized --gpu-types=H100,
 # Sweep (one job per sampler - default behavior)
 uv run python -m llc sweep --backend=modal --gpu-types=L40S
 
-# Sweep (legacy: multiple samplers per job) - DEPRECATED
-uv run python -m llc sweep --backend=modal --no-split-samplers
 ```
 
 ### How it Works
@@ -58,9 +56,9 @@ def run_experiment_remote(cfg_dict: dict) -> dict:
     ...
 ```
 
-### Split Samplers (Default)
+### Split Samplers
 
-Sweeps always run one sampler per job (default). This makes jobs shorter, retries independent, and analysis cleaner:
+Sweeps always run one sampler per job. This makes jobs shorter, retries independent, and analysis cleaner:
 
 **Benefits:**
 - **Shorter jobs** → fewer timeout issues

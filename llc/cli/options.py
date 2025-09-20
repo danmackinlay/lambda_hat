@@ -183,11 +183,6 @@ def sweep_shared_options():
             default=2,
             help="Number of random seeds per configuration",
         )(f)
-        f = click.option(
-            "--split-samplers/--no-split-samplers",
-            default=True,
-            help="Expand every config into one job per sampler (default: on).",
-        )(f)
         # Study inputs
         f = click.option(
             "--study",
