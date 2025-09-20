@@ -102,9 +102,11 @@ def run_sweep(sweep_config, n_seeds=3):
         param = sweep["param"]
         values = sweep["values"]
 
-        print(f"\n=== Sweeping {name} ===")
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"\n=== Sweeping {name} ===")
         for val in values:
-            print(f"\n{param} = {val}")
+            logger.info(f"\n{param} = {val}")
 
             llc_sgld_seeds = []
             llc_hmc_seeds = []
@@ -119,7 +121,7 @@ def run_sweep(sweep_config, n_seeds=3):
                     llc_sgld_seeds.append(llc_sgld)
                     llc_hmc_seeds.append(llc_hmc)
                 except Exception as e:
-                    print(f"  Seed {seed} failed: {e}")
+                    logger.warning(f"  Seed {seed} failed: {e}")
                     continue
 
             if llc_sgld_seeds:
@@ -134,7 +136,7 @@ def run_sweep(sweep_config, n_seeds=3):
                     "n_seeds": len(llc_sgld_seeds),
                 }
                 results.append(result)
-                print(
+                logger.info(
                     f"  LLC: SGLD={result['llc_sgld_mean']:.3f}±{result['llc_sgld_std']:.3f}, "
                     f"HMC={result['llc_hmc_mean']:.3f}±{result['llc_hmc_std']:.3f}"
                 )

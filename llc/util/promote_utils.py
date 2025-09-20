@@ -11,6 +11,7 @@ from typing import List, Tuple
 # We prefer exact filename matches; else substring fallback.
 DEFAULT_SELECTION = [
     ("sgld_running_llc.png", "sgld_llc_running.png"),
+    ("sghmc_running_llc.png", "sghmc_llc_running.png"),
     ("hmc_running_llc.png",  "hmc_llc_running.png"),
     ("mclmc_running_llc.png","mclmc_llc_running.png"),
 
@@ -24,6 +25,7 @@ DEFAULT_SELECTION = [
     ("mclmc_energy.png", "mclmc_energy.png"),
 
     # (optional) theta traces for the paper
+    ("sghmc_theta_trace.png", "sghmc_theta_trace.png"),
     ("hmc_theta_trace.png",   "hmc_theta_trace.png"),
     ("sgld_theta_trace.png",  "sgld_theta_trace.png"),
     ("mclmc_theta_trace.png", "mclmc_theta_trace.png"),
@@ -79,7 +81,9 @@ def promote_images(
     if not run_dir.exists():
         raise RuntimeError(f"Run dir not found: {run_dir}")
 
-    print(f"Promoting images from: {run_dir}")
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.info(f"Promoting images from: {run_dir}")
     copied = 0
 
     for key, outname in selection:
@@ -92,25 +96,25 @@ def promote_images(
         elif root_src.exists():
             src = root_src
         else:
-            print(f"  [skip] no match for '{key}'")
+            logger.info(f"  [skip] no match for '{key}'")
             continue
 
         dst = assets_dir / outname
         shutil.copy2(src, dst)
         if root_dir:
-            print(f"  copied {src.name} -> {dst.relative_to(root_dir)}")
+            logger.info(f"  copied {src.name} -> {dst.relative_to(root_dir)}")
         else:
-            print(f"  copied {src.name} -> {dst}")
+            logger.info(f"  copied {src.name} -> {dst}")
         copied += 1
 
     if copied == 0:
-        print(
+        logger.warning(
             "No images copied. Did this run save plots? (save_plots=True) "
             "Or are you running an old diagnostics set?"
         )
     else:
-        print(f"Done. Copied {copied} images.")
-        print(
+        logger.info(f"Done. Copied {copied} images.")
+        logger.info(
             "Commit updated assets/readme/*.png and refresh README references if needed."
         )
 

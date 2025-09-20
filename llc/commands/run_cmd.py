@@ -90,7 +90,7 @@ def run_entry(kwargs: dict) -> None:
         result = type("RunOutputs", (), {})()
         result.run_dir = result_dict.get("run_dir", "")
         result.metrics = {}
-        for s in ("sgld", "hmc", "mclmc"):
+        for s in ("sgld", "sghmc", "hmc", "mclmc"):
             k = f"llc_{s}"
             if k in result_dict:
                 result.metrics[f"{s}_llc_mean"] = float(result_dict[k])
@@ -119,7 +119,7 @@ def run_entry(kwargs: dict) -> None:
         result = type("RunOutputs", (), {})()
         result.run_dir = result_dict.get("run_dir", "")
         result.metrics = {}
-        for s in ("sgld", "hmc", "mclmc"):
+        for s in ("sgld", "sghmc", "hmc", "mclmc"):
             k = f"llc_{s}"
             if k in result_dict:
                 result.metrics[f"{s}_llc_mean"] = float(result_dict[k])

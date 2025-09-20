@@ -50,7 +50,9 @@ def run_experiment_task(cfg_dict: Dict[str, Any]) -> Dict[str, Any]:
             "Redeploy the Modal app or use object-based remote function to auto-deploy."
         )
     if dropped:
-        print(f"[llc] Warning: dropping unknown config keys: {dropped}")
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.warning(f"[llc] dropping unknown config keys: {dropped}")
 
     cfg = Config(**cfg_kwargs)
 

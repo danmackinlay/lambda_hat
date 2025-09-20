@@ -124,3 +124,38 @@ def test_ragged_alignment():
     # Should be truncated to minimum length
     assert idata.posterior["llc"].shape[1] == 80  # min of acceptance lengths
     assert idata.sample_stats["acceptance_rate"].shape[1] == 80
+
+
+def test_sghmc_smoke():
+    """Test SGHMC can run without errors"""
+    from llc.config import TEST_CFG
+    from llc.pipeline import run_one
+    from dataclasses import replace
+
+    cfg = replace(TEST_CFG, samplers=("sghmc",), save_plots=False)
+    out = run_one(cfg, save_artifacts=False, skip_if_exists=False)
+    assert "sghmc_llc_mean" in out.metrics
+    assert np.isfinite(out.metrics["sghmc_llc_mean"])
+
+
+def test_quick_run_smoke():
+    """Test that a quick run completes successfully"""
+    from llc.config import TEST_CFG
+    from llc.pipeline import run_one
+    from dataclasses import replace
+
+    # Test with very fast settings
+    cfg = replace(
+        TEST_CFG,
+        samplers=("sgld", "sghmc"),
+        save_plots=False,
+        sgld_steps=100,
+        sgld_warmup=20,
+        sghmc_steps=100,
+        sghmc_warmup=20,
+    )
+    out = run_one(cfg, save_artifacts=False, skip_if_exists=False)
+    assert "sgld_llc_mean" in out.metrics
+    assert "sghmc_llc_mean" in out.metrics
+    assert np.isfinite(out.metrics["sgld_llc_mean"])
+    assert np.isfinite(out.metrics["sghmc_llc_mean"])

@@ -78,11 +78,13 @@ def _remote_impl(cfg_dict: dict, *, gpu_label: str) -> dict:
         stage = "setup"
         cfg_dict = dict(cfg_dict)  # copy
         if os.path.isdir("/runs"):
-            print(f"[Modal {gpu_label}] Volume /runs exists, setting runs_dir=/runs")
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.info(f"[Modal {gpu_label}] Volume /runs exists, setting runs_dir=/runs")
             cfg_dict.setdefault("save_artifacts", True)
             cfg_dict["runs_dir"] = "/runs"
         else:
-            print(f"[Modal {gpu_label}] Warning: Volume /runs not found, using default runs_dir")
+            logger.warning(f"[Modal {gpu_label}] Volume /runs not found, using default runs_dir")
 
         stage = "run_experiment_task"
         result = run_experiment_task(cfg_dict)
@@ -112,7 +114,7 @@ def _remote_impl(cfg_dict: dict, *, gpu_label: str) -> dict:
                 result["run_dir"] = vol_dir
             except Exception as e:
                 # Non-fatal; we still have the tar
-                print(f"[Modal {gpu_label}] Warning: failed to persist to volume: {e}")
+                logger.warning(f"[Modal {gpu_label}] Warning: failed to persist to volume: {e}")
 
         return result
 

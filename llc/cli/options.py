@@ -200,7 +200,7 @@ def analyze_shared_options():
     def decorator(f):
         f = click.option(
             "--which",
-            type=click.Choice(["all", "sgld", "hmc", "mclmc"]),
+            type=click.Choice(["all", "sgld", "sghmc", "hmc", "mclmc"]),
             default="all",
             help="Which sampler(s) to analyze",
         )(f)

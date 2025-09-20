@@ -133,7 +133,7 @@ def pull_artifacts_cmd(run_id, target):
 )
 @click.option(
     "--samplers",
-    default="sgld,hmc,mclmc",
+    default="sgld,sghmc,hmc,mclmc",
     help="Comma-separated subset of samplers to plot (default: all).",
 )
 @click.option(

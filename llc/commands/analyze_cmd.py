@@ -46,52 +46,59 @@ def analyze_entry(
             f"ESS={m.get('ess_bulk', float('nan')):.1f} Rhat={m.get('rhat', float('nan')):.3f}"
         )
 
+        # Plot registry for cleaner dispatch
+        def _plot_running_llc(idata, sampler):
+            # need L0, n, beta; derive from attrs if you stored them, else skip:
+            n_attr = idata.attrs.get("n_data", None)
+            if n_attr is None:
+                logger.warning(f"[{sampler}] n_data missing in attrs; reading {run_dir/'config.json'}")
+                try:
+                    import json
+                    with open(run_dir/'config.json') as f:
+                        n = int(json.load(f)["n_data"])
+                except Exception:
+                    logger.error(f"[{sampler}] cannot determine n_data; skipping running_llc")
+                    return None, None
+            else:
+                n = int(n_attr)
+            beta = float(idata.attrs.get("beta", 1.0))
+            L0 = float(idata.attrs.get("L0", 0.0))
+            fig = fig_running_llc(idata, n, beta, L0, f"{sampler} Running LLC")
+            path = out_dir / f"{sampler}_running_llc.png"
+            return fig, path
+
+        def _plot_energy(idata, sampler):
+            # only if this idata actually has sample_stats.energy
+            if "energy" in (getattr(idata, "sample_stats", {}) or {}):
+                fig = fig_energy(idata)
+                path = out_dir / f"{sampler}_energy.png"
+                return fig, path
+            else:
+                # silently skip for samplers like SGLD
+                return None, None
+
+        registry = {
+            "running_llc": _plot_running_llc,
+            "rank": lambda idata, sampler: (fig_rank_llc(idata), out_dir / f"{sampler}_llc_rank.png"),
+            "ess_evolution": lambda idata, sampler: (fig_ess_evolution(idata), out_dir / f"{sampler}_llc_ess_evolution.png"),
+            "ess_quantile": lambda idata, sampler: (fig_ess_quantile(idata), out_dir / f"{sampler}_llc_ess_quantile.png"),
+            "autocorr": lambda idata, sampler: (fig_autocorr_llc(idata), out_dir / f"{sampler}_llc_autocorr.png"),
+            "energy": _plot_energy,
+            "theta": lambda idata, sampler: (fig_theta_trace(idata, dims=4), out_dir / f"{sampler}_theta_trace.png"),
+        }
+
         # figures
         for p in plots:
             try:
-                if p == "running_llc":
-                    # need L0, n, beta; derive from attrs if you stored them, else skip:
-                    n_attr = idata.attrs.get("n_data", None)
-                    if n_attr is None:
-                        logger.warning(f"[{s}] n_data missing in attrs; reading {run_dir/'config.json'}")
-                        try:
-                            import json
-                            with open(run_dir/'config.json') as f:
-                                n = int(json.load(f)["n_data"])
-                        except Exception:
-                            logger.error(f"[{s}] cannot determine n_data; skipping running_llc")
-                            continue
-                    else:
-                        n = int(n_attr)
-                    beta = float(idata.attrs.get("beta", 1.0))
-                    L0 = float(idata.attrs.get("L0", 0.0))
-                    fig = fig_running_llc(idata, n, beta, L0, f"{s} Running LLC")
-                    path = out_dir / f"{s}_running_llc.png"
-                elif p == "rank":
-                    fig = fig_rank_llc(idata)
-                    path = out_dir / f"{s}_llc_rank.png"
-                elif p == "ess_evolution":
-                    fig = fig_ess_evolution(idata)
-                    path = out_dir / f"{s}_llc_ess_evolution.png"
-                elif p == "ess_quantile":
-                    fig = fig_ess_quantile(idata)
-                    path = out_dir / f"{s}_llc_ess_quantile.png"
-                elif p == "autocorr":
-                    fig = fig_autocorr_llc(idata)
-                    path = out_dir / f"{s}_llc_autocorr.png"
-                elif p == "energy":
-                    # only if this idata actually has sample_stats.energy
-                    if "energy" in (getattr(idata, "sample_stats", {}) or {}):
-                        fig = fig_energy(idata)
-                        path = out_dir / f"{s}_energy.png"
-                    else:
-                        # silently skip for samplers like SGLD
-                        continue
-                elif p == "theta":
-                    fig = fig_theta_trace(idata, dims=4)
-                    path = out_dir / f"{s}_theta_trace.png"
-                else:
+                plot_fn = registry.get(p)
+                if plot_fn is None:
                     continue
+
+                result = plot_fn(idata, s)
+                if result is None or result == (None, None):
+                    continue
+
+                fig, path = result
 
                 if path.exists() and not overwrite:
                     logger.info(f"[analyze] exists: {path.name} (use --overwrite)")

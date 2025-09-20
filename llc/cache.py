@@ -138,7 +138,9 @@ def load_cached_outputs(run_dir: str) -> Optional[Dict[str, Any]]:
             "cached": True,  # Flag to indicate this was loaded from cache
         }
     except Exception as e:
-        print(f"Warning: Failed to load cache from {run_dir}: {e}")
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.warning(f"Failed to load cache from {run_dir}: {e}")
         return None
 
 
