@@ -2,9 +2,15 @@
 
 import os
 from dataclasses import replace
-from llc.config import CFG, config_schema_hash
+from llc.config import CFG
 from llc.util.config_overrides import apply_preset_then_overrides
 from llc.util.modal_utils import extract_modal_runs_locally
+from llc.util.backend_bootstrap import (
+    select_jax_platform,
+    validate_modal_gpu_types,
+    pick_modal_remote_fn,
+    schema_stamp,
+)
 
 
 def run_entry(kwargs: dict) -> None:
@@ -25,17 +31,10 @@ def run_entry(kwargs: dict) -> None:
 
     # Set JAX platform for local backend only (remote decides from decorator)
     if backend == "local":
-        os.environ["JAX_PLATFORMS"] = "cuda" if gpu_mode != "off" else "cpu"
+        select_jax_platform(gpu_mode)
+
     # Validate and set GPU type list for modal_app decorators (evaluated at import time)
-    if gpu_types:
-        valid_gpus = {"A100", "H100", "L40S", "T4", "A10G"}
-        requested = [t.strip() for t in gpu_types.split(",") if t.strip()]
-        bad = [t for t in requested if t not in valid_gpus]
-        if bad:
-            print(f"[warn] unknown GPU types {bad}; falling back to L40S")
-            os.environ["LLC_MODAL_GPU_LIST"] = "L40S"
-        else:
-            os.environ["LLC_MODAL_GPU_LIST"] = ",".join(requested)
+    validate_modal_gpu_types(gpu_types)
 
     # Build config = preset + overrides
     cfg = apply_preset_then_overrides(CFG, preset, kwargs)
@@ -57,26 +56,16 @@ def run_entry(kwargs: dict) -> None:
         return
 
     # Prepare payload for remote executors
-    cfg_dict = cfg.__dict__.copy()
-    cfg_dict["save_artifacts"] = save_artifacts
-    cfg_dict["skip_if_exists"] = skip_if_exists
-    cfg_dict["config_schema"] = config_schema_hash()
-    cfg_dict["gpu_mode"] = gpu_mode  # Pass GPU mode to remote executor
+    cfg_dict = schema_stamp(cfg, save_artifacts, skip_if_exists, gpu_mode)
 
     # Import execution modules only when needed for remote backends
     from llc.execution import get_executor
     from llc.tasks import run_experiment_task
 
     if backend == "modal":
-        # Choose GPU or CPU Modal function based on gpu_mode
-        if gpu_mode == "off":
-            from llc.modal_app import app, ping, run_experiment_remote
+        from llc.modal_app import app, ping
 
-            remote_fn = run_experiment_remote
-        else:
-            from llc.modal_app import app, ping, run_experiment_remote_gpu
-
-            remote_fn = run_experiment_remote_gpu
+        remote_fn = pick_modal_remote_fn(gpu_mode)
 
         with app.run():
             try:

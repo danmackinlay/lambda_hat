@@ -4,9 +4,15 @@ import json
 import os
 from dataclasses import replace
 
-from llc.config import CFG, config_schema_hash
+from llc.config import CFG
 from llc.util.config_overrides import apply_preset_then_overrides
 from llc.util.modal_utils import extract_modal_runs_locally
+from llc.util.backend_bootstrap import (
+    select_jax_platform,
+    validate_modal_gpu_types,
+    pick_modal_remote_fn,
+    schema_stamp,
+)
 
 
 def sweep_entry(kwargs: dict) -> None:
@@ -30,17 +36,10 @@ def sweep_entry(kwargs: dict) -> None:
 
     # Set JAX platform for local backend only (remote decides from decorator)
     if backend == "local":
-        os.environ["JAX_PLATFORMS"] = "cuda" if gpu_mode != "off" else "cpu"
+        select_jax_platform(gpu_mode)
+
     # Validate and set GPU type list for modal_app decorators (evaluated at import time)
-    if gpu_types:
-        valid_gpus = {"A100", "H100", "L40S", "T4", "A10G"}
-        requested = [t.strip() for t in gpu_types.split(",") if t.strip()]
-        bad = [t for t in requested if t not in valid_gpus]
-        if bad:
-            print(f"[warn] unknown GPU types {bad}; falling back to L40S")
-            os.environ["LLC_MODAL_GPU_LIST"] = "L40S"
-        else:
-            os.environ["LLC_MODAL_GPU_LIST"] = ",".join(requested)
+    validate_modal_gpu_types(gpu_types)
 
     # Build base config for sweep
     base_cfg = apply_preset_then_overrides(CFG, preset, kwargs)
@@ -75,13 +74,9 @@ def sweep_entry(kwargs: dict) -> None:
     # Modal handle (if needed)
     remote_fn = None
     if backend == "modal":
-        # Choose CPU or GPU function based on --gpu-mode (like llc run)
-        if gpu_mode == "off":
-            from llc.modal_app import app, ping, run_experiment_remote
-            remote_fn = run_experiment_remote
-        else:
-            from llc.modal_app import app, ping, run_experiment_remote_gpu
-            remote_fn = run_experiment_remote_gpu
+        from llc.modal_app import app, ping
+
+        remote_fn = pick_modal_remote_fn(gpu_mode)
 
         # Scale concurrency automatically
         maxc = min(8, len(items))  # Cap at 8 containers for reasonable concurrency
@@ -122,13 +117,8 @@ def sweep_entry(kwargs: dict) -> None:
 
     # Build cfg dicts with schema hash
     cfg_dicts = []
-    schema = config_schema_hash()
     for _name, _param, _val, _seed, cfg in items:
-        d = cfg.__dict__.copy()
-        d["save_artifacts"] = save_artifacts
-        d["skip_if_exists"] = skip_if_exists
-        d["config_schema"] = schema
-        d["gpu_mode"] = gpu_mode  # Pass GPU mode to remote workers
+        d = schema_stamp(cfg, save_artifacts, skip_if_exists, gpu_mode)
         cfg_dicts.append(d)
 
     if backend == "modal":
