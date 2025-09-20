@@ -33,6 +33,38 @@ def run_shared_options():
             default="L40S",
             help="Comma-separated Modal GPU types to request (e.g. 'H100,A100,L40S'). Optional.",
         )(f)
+
+        # Submitit/SLURM options
+        f = click.option(
+            "--slurm-partition",
+            type=str,
+            help="SLURM partition name (e.g. 'gpu', 'cpu'). Optional.",
+        )(f)
+        f = click.option(
+            "--timeout-min",
+            type=int,
+            default=180,  # 3 hours to match Modal default
+            help="Timeout in minutes for SLURM jobs.",
+        )(f)
+        f = click.option(
+            "--cpus",
+            type=int,
+            default=4,
+            help="CPUs per task for SLURM jobs.",
+        )(f)
+        f = click.option(
+            "--mem-gb",
+            type=int,
+            default=16,
+            help="Memory in GB for SLURM jobs.",
+        )(f)
+        f = click.option(
+            "--slurm-signal-delay-s",
+            type=int,
+            default=120,
+            help="Grace period in seconds before SLURM kills job.",
+        )(f)
+
         # Control flags
         f = click.option(
             "--skip/--no-skip",

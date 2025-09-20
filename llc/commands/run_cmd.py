@@ -16,6 +16,13 @@ def run_entry(kwargs: dict) -> None:
     gpu_mode = kwargs.pop("gpu_mode", "off")
     gpu_types = kwargs.pop("gpu_types", "")
 
+    # Submitit-specific parameters
+    slurm_partition = kwargs.pop("slurm_partition", None)
+    timeout_min = kwargs.pop("timeout_min", 180)
+    cpus = kwargs.pop("cpus", 4)
+    mem_gb = kwargs.pop("mem_gb", 16)
+    slurm_signal_delay_s = kwargs.pop("slurm_signal_delay_s", 120)
+
     # Set JAX platform for local backend only (remote decides from decorator)
     if backend == "local":
         os.environ["JAX_PLATFORMS"] = "cuda" if gpu_mode != "off" else "cpu"
@@ -92,7 +99,19 @@ def run_entry(kwargs: dict) -> None:
         return
 
     elif backend == "submitit":
-        executor = get_executor(backend="submitit")
+        # Honor GPU intent and pass Submitit parameters
+        gpus_per_node = 1 if gpu_mode != "off" else 0
+        submitit_kwargs = {
+            "gpus_per_node": gpus_per_node,
+            "timeout_min": timeout_min,
+            "cpus_per_task": cpus,
+            "mem_gb": mem_gb,
+            "slurm_signal_delay_s": slurm_signal_delay_s,
+        }
+        if slurm_partition:
+            submitit_kwargs["slurm_partition"] = slurm_partition
+
+        executor = get_executor(backend="submitit", **submitit_kwargs)
         [result_dict] = executor.map(run_experiment_task, [cfg_dict])
 
         # No artifact auto-download for submitit (local FS)

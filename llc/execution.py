@@ -34,6 +34,36 @@ def _run_with_soft_timeout(fn, arg, seconds):
     return result.get("value")
 
 
+def _submitit_safe_call(fn, item):
+    """Wrapper that ensures Submitit jobs always return structured dict with status."""
+    import time
+    import traceback
+
+    t0 = time.time()
+    stage = "start"
+    try:
+        out = fn(item)  # run_experiment_task(cfg_dict)
+        if isinstance(out, dict):
+            out["status"] = "ok"
+            out["duration_s"] = time.time() - t0
+            return out
+        else:
+            # Legacy fallback for non-dict returns
+            return {
+                "status": "ok",
+                "result": out,
+                "duration_s": time.time() - t0,
+            }
+    except Exception as e:
+        return {
+            "status": "error",
+            "error_type": e.__class__.__name__,
+            "error": str(e)[:2000],
+            "traceback": "".join(traceback.format_exc())[-4000:],
+            "duration_s": time.time() - t0,
+        }
+
+
 # ----------------- Local -----------------
 class LocalExecutor(BaseExecutor):
     def __init__(self, workers: int = 0, timeout_s: int | None = None):
@@ -64,20 +94,21 @@ class LocalExecutor(BaseExecutor):
 class _SubmititExperiment:
     """Small checkpointable wrapper for submitit with timeout handling"""
 
-    def __init__(self, fn, item):
-        # Store the function and item to call
+    def __init__(self, wrapper_fn, fn, item):
+        # Store the wrapper, function and item to call
+        self.wrapper_fn = wrapper_fn
         self.fn = fn
         self.item = item
 
     def __call__(self):
-        return self.fn(self.item)
+        return self.wrapper_fn(self.fn, self.item)
 
     def checkpoint(self):
         # Requeue same work on preemption/timeout
         import submitit
 
         return submitit.helpers.DelayedSubmission(
-            _SubmititExperiment(self.fn, self.item)
+            _SubmititExperiment(self.wrapper_fn, self.fn, self.item)
         )
 
 
@@ -127,10 +158,11 @@ class SubmititExecutor(BaseExecutor):
         self.executor.update_parameters(**base)
 
     def map(self, fn, items):
-        # Create wrapper jobs that call fn(item) for each item
+        # Create wrapper jobs that call _submitit_safe_call(fn, item) for each item
         items_list = list(items)
         jobs = [
-            self.executor.submit(_SubmititExperiment, fn, item) for item in items_list
+            self.executor.submit(_SubmititExperiment, _submitit_safe_call, fn, item)
+            for item in items_list
         ]
         return [j.result() for j in jobs]
 

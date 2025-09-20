@@ -17,9 +17,17 @@ def run_experiment_task(cfg_dict: Dict[str, Any]) -> Dict[str, Any]:
     Always delegates to pipeline.run_one with save_artifacts controlling I/O.
     Returns uniform shape with cfg, run_dir, and llc_{sampler} values.
     """
+    import os
     from dataclasses import fields
     from llc.config import Config, config_schema_hash
     from llc.pipeline import run_one
+
+    # Ensure worker process honors GPU intent (SLURM/Submitit)
+    gpu_mode = cfg_dict.get("gpu_mode", "off")
+    if gpu_mode != "off":
+        os.environ.setdefault("JAX_PLATFORMS", "cuda")
+    else:
+        os.environ.setdefault("JAX_PLATFORMS", "cpu")
 
     cfg_dict_clean = dict(cfg_dict)
     # control flags (not part of Config)

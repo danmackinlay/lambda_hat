@@ -21,6 +21,13 @@ def sweep_entry(kwargs: dict) -> None:
     gpu_types = kwargs.pop("gpu_types", "")
     split_samplers = kwargs.pop("split_samplers", False)
 
+    # Submitit-specific parameters
+    slurm_partition = kwargs.pop("slurm_partition", None)
+    timeout_min = kwargs.pop("timeout_min", 180)
+    cpus = kwargs.pop("cpus", 4)
+    mem_gb = kwargs.pop("mem_gb", 16)
+    slurm_signal_delay_s = kwargs.pop("slurm_signal_delay_s", 120)
+
     # Set JAX platform for local backend only (remote decides from decorator)
     if backend == "local":
         os.environ["JAX_PLATFORMS"] = "cuda" if gpu_mode != "off" else "cpu"
@@ -91,12 +98,26 @@ def sweep_entry(kwargs: dict) -> None:
     from llc.tasks import run_experiment_task
 
     def _run_map():
-        ex = get_executor(
-            backend=backend,
-            workers=workers if backend == "local" else None,
-            remote_fn=remote_fn,
-            options=modal_opts,
-        )
+        if backend == "submitit":
+            # Honor GPU intent and pass Submitit parameters
+            gpus_per_node = 1 if gpu_mode != "off" else 0
+            submitit_kwargs = {
+                "gpus_per_node": gpus_per_node,
+                "timeout_min": timeout_min,
+                "cpus_per_task": cpus,
+                "mem_gb": mem_gb,
+                "slurm_signal_delay_s": slurm_signal_delay_s,
+            }
+            if slurm_partition:
+                submitit_kwargs["slurm_partition"] = slurm_partition
+            ex = get_executor(backend="submitit", **submitit_kwargs)
+        else:
+            ex = get_executor(
+                backend=backend,
+                workers=workers if backend == "local" else None,
+                remote_fn=remote_fn,
+                options=modal_opts,
+            )
         return ex.map(run_experiment_task, cfg_dicts)
 
     # Build cfg dicts with schema hash
@@ -107,6 +128,7 @@ def sweep_entry(kwargs: dict) -> None:
         d["save_artifacts"] = save_artifacts
         d["skip_if_exists"] = skip_if_exists
         d["config_schema"] = schema
+        d["gpu_mode"] = gpu_mode  # Pass GPU mode to remote workers
         cfg_dicts.append(d)
 
     if backend == "modal":

@@ -112,11 +112,36 @@ These are automatically set by CLI flags but can be overridden for advanced use 
 ### Usage
 
 ```bash
-uv run python -m llc sweep --backend=submitit \
-  --partition=gpu --gpus=1 --timeout-min=60
+# Single run with GPU
+uv run python -m llc run --backend=submitit --gpu-mode=vectorized \
+  --slurm-partition=gpu --timeout-min=180
+
+# Sweep with split samplers (recommended)
+uv run python -m llc sweep --backend=submitit --split-samplers \
+  --gpu-mode=vectorized --slurm-partition=gpu --timeout-min=180
 ```
 
-Add your cluster-specific submitit parameters as needed.
+### Submitit Configuration
+
+Control SLURM job parameters via CLI flags:
+
+```bash
+--slurm-partition=gpu          # SLURM partition
+--timeout-min=180              # Job timeout (default: 3 hours)
+--cpus=4                       # CPUs per task (default: 4)
+--mem-gb=16                    # Memory in GB (default: 16)
+--slurm-signal-delay-s=120     # Grace period before kill (default: 120s)
+```
+
+**GPU handling:** Use `--gpu-mode=vectorized` or `--gpu-mode=sequential` to automatically request 1 GPU per job. Use `--gpu-mode=off` for CPU-only jobs.
+
+### Error Handling
+
+Submitit jobs now return structured status like Modal:
+- Successful jobs: `{"status": "ok", ...}`
+- Failed jobs: `{"status": "error", "error_type": "...", "stage": "...", ...}`
+
+Failed jobs are logged to `llc_sweep_errors.csv` with full error details.
 
 ### Installation
 

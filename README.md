@@ -67,7 +67,7 @@ runs/<run_id>/
 | Local quick run | `uv run llc run --preset=quick` |
 | Local sweep (8 workers) | `uv run llc sweep --workers=8` |
 | Modal sweep (split by sampler) | `uv run llc sweep --backend=modal --split-samplers` |
-| SLURM run | `uv run llc run --backend=submitit` |
+| SLURM sweep (split by sampler) | `uv run llc sweep --backend=submitit --split-samplers --gpu-mode=vectorized` |
 | Analyze saved run | `uv run llc analyze runs/<run_id>` |
 | Plot sweep results | `uv run llc plot-sweep` |
 | Refresh README images | `uv run llc promote-readme-images` |
