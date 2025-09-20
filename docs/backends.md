@@ -4,12 +4,16 @@ This document covers setup and usage for Modal and SLURM backends.
 
 ## Architecture
 
-LLC uses a unified backend dispatcher (`llc.util.backend_dispatch`) to consolidate execution logic across `run` and `sweep` commands. All backends support:
+LLC uses a unified backend dispatcher (`llc.util.backend_dispatch`) to consolidate execution logic across `run` and `sweep` commands. This replaces the previous dual-path approach and provides:
 
-- **Structured error handling** with status reporting
-- **Unified configuration** via `BackendOptions`
-- **Consistent GPU mode handling** (off/vectorized/sequential)
-- **Automatic artifact management**
+- **Single entry point:** `run_jobs()` function handles all backend execution
+- **Structured error handling** with consistent `{"status": "ok"|"error", ...}` responses
+- **Unified configuration** via `BackendOptions` dataclass
+- **Consistent GPU mode handling** (off/vectorized/sequential) across all backends
+- **Automatic artifact management** including Modal auto-download
+- **Schema validation** between client and worker to prevent version skew
+
+The legacy `backend_bootstrap` module remains for helper functions but new code should use the dispatcher directly.
 
 ## Modal Serverless
 

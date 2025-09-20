@@ -7,6 +7,7 @@ Each run is keyed by a hash of (normalized config, code fingerprint).
 - **Code fingerprint:** If `LLC_CODE_VERSION` is set in environment → use it; otherwise → hash of all source files (`llc/**/*.py` + `pyproject.toml`)
 - **Default behavior:** Skip if a run with the same key already exists
 - **Cache location:** Works everywhere (local, Modal, SLURM) with the same logic
+- **Schema validation:** Configs include a `config_schema` hash that is checked between client and worker (Modal/SLURM). If schema mismatches, the job fails early with a clear error to prevent silent client/worker version skew.
 
 ## Commands
 

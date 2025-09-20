@@ -17,6 +17,19 @@ Sweeps expand into many jobs and summarize results in one CSV.
 2. **Analyze** saved runs → generates PNGs in `runs/<run_id>/analysis/` (default) with `llc analyze`
 3. **Promote** (optional) → copy select PNGs to `assets/readme/` for the README gallery
 
+### Unified Backend System
+
+All backends (local CPU/GPU, SLURM via Submitit, Modal serverless) are now dispatched through a single unified executor. This means:
+
+- Same flags (`--backend`, `--gpu-mode`, `--gpu-types`) across all commands
+- Automatic protections:
+  - Modal preflight to catch billing issues before submission
+  - SLURM structured error reporting
+  - Local execution with optional timeouts
+- Automatic artifact download from Modal to `./runs/<run_id>`
+
+Sweeps default to **one sampler per job**. This makes runs shorter, retries independent, and results easier to analyze. The old multi-sampler jobs mode (`--no-split-samplers`) is deprecated.
+
 
 ![SGLD running LLC](assets/readme/sgld_llc_running.png)
 ![HMC running LLC](assets/readme/hmc_llc_running.png)
@@ -153,7 +166,8 @@ uv sync --extra slurm      # SLURM/submitit support
 ## Features
 
 - **Unified CLI** for end-to-end LLC estimation pipeline
-- **Three samplers:** SGLD (with optional preconditioning), HMC, MCLMC
+- **Unified sampler interface:** All samplers (SGLD, SGHMC, HMC, MCLMC) use SamplerSpec for consistent outputs and diagnostics
+- **Three execution backends:** Local, SLURM/Submitit, Modal serverless with unified dispatcher
 - **Configurable targets:** ReLU/tanh/GeLU MLPs, analytical quadratic (for testing)
 - **ArviZ integration:** Full convergence diagnostics (ESS, R̂, autocorrelation, rank plots)
 - **Caching system:** Deterministic run IDs prevent duplicate computation

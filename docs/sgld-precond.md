@@ -17,6 +17,8 @@ uv run python -m llc run --sgld-precond=adam --sgld-beta1=0.9 --sgld-beta2=0.999
 
 These adaptive SGMCMC variants are heuristics: the per-parameter scale changes during sampling, so the chain is not strictly stationary for the target at all times. They are widely used in practice and often yield better mixing than non-adaptive versions. Set `--sgld-precond=none` if you prefer the plain kernel.
 
+**Adam preconditioning implementation:** As of the latest version, Adam preconditioning now uses the bias-corrected first moment (`m̂`) for the drift term, aligning with the standard Adam optimizer. This ensures proper behavior especially in early iterations when the exponential moving averages are warming up.
+
 ## Configuration Options
 
 - `--sgld-precond`: Choose `none` (default), `rmsprop`, or `adam`
