@@ -783,6 +783,7 @@ dependencies = [
     { name = "click" },
     { name = "marimo" },
     { name = "optax" },
+    { name = "pyyaml" },
     { name = "scipy" },
     { name = "tqdm" },
 ]
@@ -811,6 +812,7 @@ requires-dist = [
     { name = "marimo", specifier = ">=0.15.2" },
     { name = "modal", marker = "extra == 'modal'", specifier = ">=0.64" },
     { name = "optax", specifier = ">=0.2.5" },
+    { name = "pyyaml", specifier = ">=6.0" },
     { name = "scipy", specifier = ">=1.11" },
     { name = "submitit", marker = "extra == 'slurm'", specifier = ">=1.5" },
     { name = "tqdm", specifier = ">=4.67.1" },
