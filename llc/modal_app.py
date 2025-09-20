@@ -45,6 +45,12 @@ runs_volume = modal.Volume.from_name("llc-runs", create_if_missing=True)
 
 app = modal.App("llc-experiments", image=image)
 
+# Fast preflight check to detect funding/billing issues immediately
+@app.function(timeout=30)
+def ping():
+    """Quick health check to detect Modal billing/quota issues early."""
+    return {"ok": True}
+
 # Tunable timeouts and retry settings via environment variables
 TIMEOUT_S = int(os.environ.get("LLC_MODAL_TIMEOUT_S", 3 * 60 * 60))  # Default 3 hours
 RETRIES = modal.Retries(

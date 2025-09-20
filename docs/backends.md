@@ -92,12 +92,27 @@ LLC_MODAL_TIMEOUT_S=10800          # 3 hours default
 LLC_MODAL_MAX_RETRIES=3
 LLC_MODAL_BACKOFF=2.0
 LLC_MODAL_INITIAL_DELAY_S=10
+
+# Funding protection: client-side hang timeout
+LLC_MODAL_CLIENT_HANG_TIMEOUT_S=180  # 3 minutes default
 ```
 
 These are automatically set by CLI flags but can be overridden for advanced use cases.
 
+### Funding Protection
+
+Modal jobs can hang indefinitely if your account runs out of funds, since Modal's function timeouts exclude scheduling time. LLC includes automatic protection:
+
+**Preflight check:** Every run/sweep starts with a quick `ping()` to detect funding issues immediately instead of hanging.
+
+**Scheduling watchdog:** Client-side timeout (default: 3 minutes) detects stalled scheduling and fails fast with clear guidance.
+
+**Error handling:** Funding failures are logged to `llc_sweep_errors.csv` with clear error messages.
+
 ### Troubleshooting
 
+* **"Modal preflight failed: likely out of funds":** Top up your Modal balance or enable auto-recharge.
+* **"call did not start within 180s":** Scheduling stalled - check Modal balance and adjust `LLC_MODAL_CLIENT_HANG_TIMEOUT_S` if needed.
 * **Timeouts not taking effect:** Timeouts are tunable via `LLC_MODAL_TIMEOUT_S` environment variable (default: 3 hours).
 * **Runs missing locally:** Fetch from the volume with `llc pull-runs <run_id>`.
 * **GPU allocation issues:** Check `--gpu-types` values against the allowlist: H100, A100, L40S, T4, A10G.

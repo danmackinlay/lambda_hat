@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterable, Callable, List, Any, Optional
 import threading
+import os
+import time
 
 
 @dataclass
@@ -188,6 +190,7 @@ class ModalExecutor(BaseExecutor):
         # All resource/timeout/volume settings must be set on the decorator in modal_app.py.
         self.remote_fn = remote_fn
         self._options = options or {}
+        self._hang_timeout = int(os.environ.get("LLC_MODAL_CLIENT_HANG_TIMEOUT_S", "180"))
 
         # (Optional) Only autoscaler hints are adjustable at runtime.
         ac = {
@@ -207,10 +210,44 @@ class ModalExecutor(BaseExecutor):
                 # Non-fatal; ignore autoscaler tweak failures.
                 pass
 
+    def _map_blocking(self, items):
+        # Existing behavior
+        return list(self.remote_fn.map(list(items)))
+
     def map(self, fn, items):
         # For Modal, we assume remote_fn has the same signature as fn
         # The caller should pass a remote_fn that matches the intended function
-        return list(self.remote_fn.map(list(items)))
+        if self._hang_timeout <= 0:
+            return self._map_blocking(items)
+
+        result_box, exc_box = {}, {}
+
+        def runner():
+            try:
+                result_box["value"] = self._map_blocking(items)
+            except BaseException as e:
+                exc_box["err"] = e
+
+        t = threading.Thread(target=runner, daemon=True)
+        t.start()
+        t.join(self._hang_timeout)
+
+        if t.is_alive():
+            # We're stuck in scheduling. Exit cleanly with guidance.
+            raise RuntimeError(
+                "Modal: call did not start within "
+                f"{self._hang_timeout}s (likely scheduling stalled: out of funds or disabled billing). "
+                "Set LLC_MODAL_CLIENT_HANG_TIMEOUT_S to adjust, or top up your Modal balance and retry."
+            )
+        if "err" in exc_box:
+            msg = str(exc_box["err"]).lower()
+            if any(k in msg for k in ["insufficient", "funds", "balance", "quota", "billing"]):
+                raise RuntimeError(
+                    "Modal billing/quota error while scheduling or running. "
+                    "Top up balance or enable auto-recharge, then retry."
+                ) from exc_box["err"]
+            raise exc_box["err"]
+        return result_box["value"]
 
 
 # ----------------- factory -----------------

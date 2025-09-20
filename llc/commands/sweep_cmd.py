@@ -77,10 +77,10 @@ def sweep_entry(kwargs: dict) -> None:
     if backend == "modal":
         # Choose CPU or GPU function based on --gpu-mode (like llc run)
         if gpu_mode == "off":
-            from llc.modal_app import app, run_experiment_remote
+            from llc.modal_app import app, ping, run_experiment_remote
             remote_fn = run_experiment_remote
         else:
-            from llc.modal_app import app, run_experiment_remote_gpu
+            from llc.modal_app import app, ping, run_experiment_remote_gpu
             remote_fn = run_experiment_remote_gpu
 
         # Scale concurrency automatically
@@ -135,6 +135,18 @@ def sweep_entry(kwargs: dict) -> None:
         # Hydrate functions by running inside the app context
         # Chunk the work to avoid multi-hour heartbeats
         with app.run():
+            try:
+                # Fast preflight: detect "out of funds" / account disabled immediately
+                ping.remote()
+            except Exception as e:
+                msg = str(e).lower()
+                if any(k in msg for k in ["insufficient", "funds", "balance", "quota", "billing"]):
+                    raise SystemExit(
+                        "Modal preflight failed: likely out of funds or billing disabled.\n"
+                        "Tip: top up your Modal balance or set auto-recharge, then retry."
+                    )
+                raise
+
             results = []
             chunk_size = 16  # Process in batches to avoid long heartbeats
 
@@ -145,8 +157,20 @@ def sweep_entry(kwargs: dict) -> None:
                     remote_fn=remote_fn,
                     options=modal_opts,
                 )
-                batch_results = ex.map(run_experiment_task, batch)
-                results.extend(batch_results)
+                try:
+                    batch_results = ex.map(run_experiment_task, batch)
+                    results.extend(batch_results)
+                except Exception as e:
+                    # Emit a synthetic error row so llc_sweep_errors.csv captures it
+                    results.append({
+                        "status": "error",
+                        "run_id": "N/A",
+                        "stage": "scheduling",
+                        "error_type": e.__class__.__name__,
+                        "error": str(e)[:2000],
+                        "duration_s": 0,
+                    })
+                    print(f"[sweep] Scheduling failed for batch: {e}")
                 print(f"[sweep] Completed batch {i//chunk_size + 1}/{(len(cfg_dicts) + chunk_size - 1)//chunk_size}")
     else:
         results = _run_map()

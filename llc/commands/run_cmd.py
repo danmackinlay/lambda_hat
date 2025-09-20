@@ -70,15 +70,27 @@ def run_entry(kwargs: dict) -> None:
     if backend == "modal":
         # Choose GPU or CPU Modal function based on gpu_mode
         if gpu_mode == "off":
-            from llc.modal_app import app, run_experiment_remote
+            from llc.modal_app import app, ping, run_experiment_remote
 
             remote_fn = run_experiment_remote
         else:
-            from llc.modal_app import app, run_experiment_remote_gpu
+            from llc.modal_app import app, ping, run_experiment_remote_gpu
 
             remote_fn = run_experiment_remote_gpu
 
         with app.run():
+            try:
+                # Fast preflight: detect "out of funds" / account disabled immediately
+                ping.remote()
+            except Exception as e:
+                msg = str(e).lower()
+                if any(k in msg for k in ["insufficient", "funds", "balance", "quota", "billing"]):
+                    raise SystemExit(
+                        "Modal preflight failed: likely out of funds or billing disabled.\n"
+                        "Tip: top up your Modal balance or set auto-recharge, then retry."
+                    )
+                raise
+
             executor = get_executor(backend="modal", remote_fn=remote_fn)
             [result_dict] = executor.map(run_experiment_task, [cfg_dict])
 
