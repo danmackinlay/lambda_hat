@@ -76,14 +76,19 @@ base:
   hmc_eval_every: 1
   hmc_dtype: float64
 
-  # MCLMC
+  # MCLMC (BlackJAX 1.2.5 fractional API)
   mclmc_draws: 8000
   mclmc_eval_every: 1
   mclmc_thin: 10
   mclmc_dtype: float64
-  mclmc_tune_steps: 2000
+  mclmc_num_steps: 2000
+  mclmc_frac_tune1: 0.1
+  mclmc_frac_tune2: 0.1
+  mclmc_frac_tune3: 0.1
   mclmc_diagonal_preconditioning: false
   mclmc_desired_energy_var: 5e-4
+  mclmc_trust_in_estimate: 1.0
+  mclmc_num_effective_samples: 150.0
   mclmc_integrator: isokinetic_mclachlan
   mclmc_adjusted: false
   mclmc_adjusted_target_accept: 0.90

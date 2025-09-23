@@ -392,9 +392,15 @@ def run_mclmc_online_batched(
     eval_every,
     thin,
     Ln_full64,
-    tuner_steps=2000,
+    # BlackJAX 1.2.5 fractional API parameters
+    num_steps=2000,
+    frac_tune1=0.1,
+    frac_tune2=0.1,
+    frac_tune3=0.1,
     diagonal_preconditioning=False,
     desired_energy_var=5e-4,
+    trust_in_estimate=1.0,
+    num_effective_samples=150.0,
     integrator_name="isokinetic_mclachlan",
     diag_dims=None,
     Rproj=None,
@@ -427,18 +433,21 @@ def run_mclmc_online_batched(
         key_tune, key_run = jax.random.split(key)
         x0 = init_thetas[0]
         integrator = getattr(blackjax.mcmc.integrators, integrator_name)
-        # The find_* helper returns tuned integers/floats to build the kernel
+        # Use BlackJAX 1.2.5 fractional API for tuning
         L_tuned, eps_tuned, _info = blackjax.mclmc_find_L_and_step_size(
-            logdensity_fn,
-            key_tune,
-            x0,
+            mclmc_kernel=None,  # Will be computed internally
+            num_steps=num_steps,
+            state=x0,
+            rng_key=key_tune,
+            logdensity_fn=logdensity_fn,
+            frac_tune1=frac_tune1,
+            frac_tune2=frac_tune2,
+            frac_tune3=frac_tune3,
             desired_energy_var=desired_energy_var,
-            frac_tune3=0.1,
-            num_steps_tune1=tuner_steps // 3,
-            num_steps_tune2=tuner_steps // 3,
-            num_steps_tune3=tuner_steps // 3,
-            integrator=integrator,
+            trust_in_estimate=trust_in_estimate,
+            num_effective_samples=num_effective_samples,
             diagonal_preconditioning=bool(diagonal_preconditioning),
+            integrator=integrator,
         )
 
         # Save tuned parameters if tuned_path is provided

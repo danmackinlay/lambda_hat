@@ -111,10 +111,15 @@ class Config:
     mclmc_thin: int = 10
     mclmc_dtype: str = "float64"  # keep f64 for stability (like HMC)
 
-    # MCLMC tuning
-    mclmc_tune_steps: int = 2_000  # steps used by the automatic tuner
+    # MCLMC tuning (using BlackJAX 1.2.5 fractional API)
+    mclmc_num_steps: int = 2_000  # total adaptation steps
+    mclmc_frac_tune1: float = 0.1  # fraction for tune1 phase
+    mclmc_frac_tune2: float = 0.1  # fraction for tune2 phase
+    mclmc_frac_tune3: float = 0.1  # fraction for tune3 phase
     mclmc_diagonal_preconditioning: bool = False
     mclmc_desired_energy_var: float = 5e-4  # target EEV (per Sampling Book)
+    mclmc_trust_in_estimate: float = 1.0  # trust in L and step size estimates
+    mclmc_num_effective_samples: float = 150.0  # effective samples for estimation
     mclmc_integrator: Literal[
         "isokinetic_mclachlan",
         "isokinetic_velocity_verlet",
@@ -177,7 +182,7 @@ TEST_CFG = Config(
     hmc_thin=5,
     # Minimal MCLMC
     mclmc_draws=80,
-    mclmc_tune_steps=100,
+    mclmc_num_steps=100,
     mclmc_thin=8,
     # Enable headless plot saving for testing
     save_plots=True,

@@ -48,8 +48,8 @@ def test_run_id_ignores_irrelevant_mclmc_knobs_for_sgld():
         "sgld_step_size": 1e-4,
         "sgld_steps": 1000,
     }
-    cfg1 = _with(cfg_base, mclmc_draws=1000, mclmc_tune_steps=100)
-    cfg2 = _with(cfg_base, mclmc_draws=2000, mclmc_tune_steps=200)
+    cfg1 = _with(cfg_base, mclmc_draws=1000, mclmc_num_steps=100)
+    cfg2 = _with(cfg_base, mclmc_draws=2000, mclmc_num_steps=200)
     assert run_id(cfg1) == run_id(cfg2)
 
 
@@ -103,13 +103,13 @@ def test_family_id_ignores_all_sampler_specific_fields():
     cfg1 = _with(cfg_base,
                 sgld_step_size=1e-4, sgld_steps=1000,
                 hmc_draws=500, hmc_warmup=100,
-                mclmc_draws=1000, mclmc_tune_steps=50,
+                mclmc_draws=1000, mclmc_num_steps=50,
                 sghmc_step_size=1e-3, sghmc_temperature=1.0)
 
     cfg2 = _with(cfg_base,
                 sgld_step_size=1e-5, sgld_steps=2000,
                 hmc_draws=1000, hmc_warmup=200,
-                mclmc_draws=2000, mclmc_tune_steps=100,
+                mclmc_draws=2000, mclmc_num_steps=100,
                 sghmc_step_size=1e-4, sghmc_temperature=2.0)
 
     # Family IDs should be the same despite different sampler parameters

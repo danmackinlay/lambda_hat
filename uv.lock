@@ -621,7 +621,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "arviz", specifier = "~=0.22.0" },
-    { name = "blackjax", specifier = "~=1.2.5" },
+    { name = "blackjax", specifier = "==1.2.5" },
     { name = "click", specifier = ">=8.2.1" },
     { name = "jax", marker = "extra == 'cpu'", specifier = ">=0.4.28" },
     { name = "jax", extras = ["cuda12-local"], marker = "extra == 'cuda12'", specifier = ">=0.4.28" },

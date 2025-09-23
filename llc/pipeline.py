@@ -62,6 +62,11 @@ def run_one(
     """
     logger = logging.getLogger(__name__)
 
+    # Validate configuration before execution
+    from llc.validation import validate_config_before_dispatch
+    cfg_dict = cfg.__dict__
+    validate_config_before_dispatch(cfg_dict)
+
     # NEW: Enforce atomic runs (exactly one sampler per run)
     if not getattr(cfg, "samplers", None) or len(cfg.samplers) != 1:
         if os.environ.get("LLC_ALLOW_MULTI_SAMPLER", "") != "1":
@@ -243,9 +248,14 @@ def run_one(
                 cfg.mclmc_eval_every,
                 cfg.mclmc_thin,
                 env["Ln_full64_vmapped"],
-                tuner_steps=cfg.mclmc_tune_steps,
+                num_steps=cfg.mclmc_num_steps,
+                frac_tune1=cfg.mclmc_frac_tune1,
+                frac_tune2=cfg.mclmc_frac_tune2,
+                frac_tune3=cfg.mclmc_frac_tune3,
                 diagonal_preconditioning=cfg.mclmc_diagonal_preconditioning,
                 desired_energy_var=cfg.mclmc_desired_energy_var,
+                trust_in_estimate=cfg.mclmc_trust_in_estimate,
+                num_effective_samples=cfg.mclmc_num_effective_samples,
                 integrator_name=cfg.mclmc_integrator,
                 tuned_path=tuned_path,
                 **env["diag_targets"],
