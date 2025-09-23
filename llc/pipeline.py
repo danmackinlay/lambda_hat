@@ -11,6 +11,7 @@ import os
 
 import jax.numpy as jnp
 from jax import random, jit, device_put
+import jax
 import numpy as np
 
 from .config import Config
@@ -133,8 +134,10 @@ def run_one(
     L0 = float(bundle.L0)
     logger.info(f"L0 at empirical minimizer: {L0:.6f}")
 
-    # JIT compile the loss evaluator for LLC computation
+    # JIT compile the loss evaluator for LLC computation (scalar θ)
     Ln_full64 = jit(loss_full_f64)
+    # Provide a batched evaluator over chains: theta[C, d] -> Ln[C]
+    Ln_full64_vmapped = jit(jax.vmap(loss_full_f64))
 
     # Prepare diagnostic targets based on config
     diag_targets = prepare_diag_targets(dim, cfg)
@@ -159,7 +162,7 @@ def run_one(
                 cfg.sgld_batch_size,
                 cfg.sgld_eval_every,
                 cfg.sgld_thin,
-                env["Ln_full64"],
+                env["Ln_full64_vmapped"],
                 precond_mode=getattr(cfg, "sgld_precond", "none"),
                 beta1=getattr(cfg, "sgld_beta1", 0.9),
                 beta2=getattr(cfg, "sgld_beta2", 0.999),
@@ -186,7 +189,7 @@ def run_one(
                 cfg.sghmc_eval_every,
                 cfg.sghmc_thin,
                 cfg.sghmc_batch_size,
-                env["Ln_full64"],
+                env["Ln_full64_vmapped"],
                 **env["diag_targets"],
             ),
         },
@@ -203,7 +206,7 @@ def run_one(
                 cfg.hmc_num_integration_steps,
                 cfg.hmc_eval_every,
                 cfg.hmc_thin,
-                env["Ln_full64"],
+                env["Ln_full64_vmapped"],
                 **env["diag_targets"],
             ),
         },
@@ -218,7 +221,7 @@ def run_one(
                 cfg.mclmc_draws,
                 cfg.mclmc_eval_every,
                 cfg.mclmc_thin,
-                env["Ln_full64"],
+                env["Ln_full64_vmapped"],
                 tuner_steps=cfg.mclmc_tune_steps,
                 diagonal_preconditioning=cfg.mclmc_diagonal_preconditioning,
                 desired_energy_var=cfg.mclmc_desired_energy_var,
@@ -231,6 +234,7 @@ def run_one(
     # Environment dictionary with all shared data
     env = dict(
         Ln_full64=Ln_full64,
+        Ln_full64_vmapped=Ln_full64_vmapped,
         grad_logpost_minibatch_f32=grad_logpost_minibatch_f32,
         logpost_and_grad_f64=logpost_and_grad_f64,
         logdensity_mclmc=make_logdensity_for_mclmc(

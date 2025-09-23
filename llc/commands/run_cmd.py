@@ -45,6 +45,10 @@ def run_entry(kwargs: dict) -> None:
         cfg = replace(cfg, use_batched_chains=False)
 
     if backend == "local":
+        # Set JAX platform consistently with remote backends
+        from llc.util.backend_bootstrap import select_jax_platform
+        select_jax_platform(gpu_mode)
+
         # Import heavy JAX-touching modules only when needed
         from llc.pipeline import run_one
 

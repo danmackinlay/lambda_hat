@@ -92,12 +92,12 @@ def run_sgld_online_batched(
     result = run_sampler_spec(
         spec=spec,
         rng_key=key,
-        init_thetas=init_thetas,
+        init_states=init_thetas,
         n_steps=num_steps,
         warmup=warmup,
         eval_every=eval_every,
         thin=thin,
-        Ln_eval_f64=Ln_full64,
+        Ln_eval_f64_vmapped=Ln_full64,
         tiny_store_fn=tiny_store,
     )
     total_time = time.perf_counter() - t0
@@ -177,12 +177,12 @@ def run_sghmc_online_batched(
     result = run_sampler_spec(
         spec=spec,
         rng_key=key,
-        init_thetas=init_thetas,
+        init_states=init_thetas,
         n_steps=draws,
         warmup=0,  # SGHMC has no warmup
         eval_every=eval_every,
         thin=thin,
-        Ln_eval_f64=Ln_full64,
+        Ln_eval_f64_vmapped=Ln_full64,
         tiny_store_fn=tiny_store,
     )
     total_time = time.perf_counter() - t0
@@ -250,12 +250,12 @@ def run_hmc_online_batched(
     result = run_sampler_spec(
         spec=spec,
         rng_key=key,
-        init_thetas=init_thetas,
+        init_states=init_thetas,
         n_steps=draws,
         warmup=warmup,
         eval_every=eval_every,
         thin=thin,
-        Ln_eval_f64=Ln_full64,
+        Ln_eval_f64_vmapped=Ln_full64,
         tiny_store_fn=tiny_store,
     )
     total_time = time.perf_counter() - t0
@@ -336,12 +336,12 @@ def run_mclmc_online_batched(
     result = run_sampler_spec(
         spec=spec,
         rng_key=key,
-        init_thetas=init_thetas,
+        init_states=init_thetas,
         n_steps=draws,
         warmup=0,  # MCLMC uses tuner_steps, not warmup
         eval_every=eval_every,
         thin=thin,
-        Ln_eval_f64=Ln_full64,
+        Ln_eval_f64_vmapped=Ln_full64,
         tiny_store_fn=tiny_store,
     )
     total_time = time.perf_counter() - t0
