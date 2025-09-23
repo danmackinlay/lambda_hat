@@ -1,107 +1,125 @@
 # Local Learning Coefficient Sampler Benchmarks
 
-In [Singular Learning Theory (SLT)](https://singularlearningtheory.com), the Local Learning Coefficient (LLC) quantifies the effective local dimensionality of a model around a trained optimum.
+In [Singular Learning Theory (SLT)](https://singularlearningtheory.com), the **Local Learning Coefficient (LLC)** quantifies the effective local dimensionality of a model around a trained optimum.
 
-This repo provides benchmark estimators of LLC on small but non-trivial neural networks, using standard industrial tooling: [BlackJAX](https://github.com/blackjax-devs/blackjax/tree/1.2.5) (sampling) and [ArviZ](https://python.arviz.org/) (diagnostics).
+This repo provides benchmark estimators of LLC on small but non-trivial neural networks, using standard industrial tooling: [BlackJAX](https://github.com/blackjax-devs/blackjax/tree/1.2.5) for sampling and [ArviZ](https://python.arviz.org/) for diagnostics.
 
-## Quick Start
+---
 
-```python
-uv venv --python 3.12 && source .venv/bin/activate
-uv sync --extra cpu   # or slurm/modal as needed
-uv run llc run --sampler sgld --preset=quick
-uv run llc analyze runs/<run_id> --which all --plots running_llc,rank,ess_evolution,autocorr,energy,theta
-```
+## Prerequisites
 
+* **Python versions**
+
+  * **SLURM/submitit:** Python **3.12** (cluster standard, at least on our cluster)
+  * **Modal:** Python **3.11** (baked into the Modal image)
+  * **Local:** Prefer **3.12** for parity with SLURM; 3.11 also works
+
+* **Package manager:** [uv](https://github.com/astral-sh/uv)
+
+---
+
+## Quick Start (CPU example)
+
+1. Create an environment:
+
+   ```bash
+   uv venv --python 3.12 && source .venv/bin/activate
+   uv sync --extra cpu
+   ```
+
+2. Run a small experiment:
+
+   ```bash
+   uv run llc run --sampler sgld --preset=quick
+   ```
+
+3. Analyze the run:
+
+   ```bash
+   uv run llc analyze runs/<run_id> --which all --plots running_llc,rank,ess_evolution,autocorr,energy,theta
+   ```
+
+This generates diagnostic plots such as:
 
 ![SGLD running LLC](assets/readme/sgld_llc_running.png)
 ![HMC running LLC](assets/readme/hmc_llc_running.png)
 ![MCLMC running LLC](assets/readme/mclmc_llc_running.png)
 
+---
 
-**What to look for in the plots:**
+## Interpreting Plots
 
-- **Running LLC:** Curves should stabilize and agree across chains; divergence suggests poor mixing
-- **Rank plots:** Near-uniform → good; spikes → multimodality or non-convergence
-- **ESS evolution:** Should grow and plateau; flat/slow growth → high autocorrelation
-- **Energy:** HMC energy density should be regular/tight; MCLMC energy changes centered with reasonable spread (not produced for SGLD)
+* **Running LLC:** curves should stabilize and agree across chains; divergence = poor mixing.
+* **Rank plots:** near-uniform → good; spikes → multimodality/non-convergence.
+* **ESS evolution:** should grow and plateau; flat growth → high autocorrelation.
+* **Energy (HMC/MCLMC):** distributions should look regular/tight.
 
-More plots available via `llc analyze` (rank, ESS evolution, autocorrelation, theta traces, energy histograms).
+More plots are available via `llc analyze` (rank, ESS, autocorrelation, theta traces, energy histograms).
 
-### Unified Backend System
+---
 
-All backends (local CPU/GPU, SLURM via Submitit, Modal serverless) are now dispatched through a single unified executor. This means:
+## Running on Different Backends
 
-- Same flags (`--backend`, `--gpu-mode`, `--gpu-types`) across all commands
-- Automatic protections:
-  - Modal preflight to catch billing issues before submission
-  - SLURM structured error reporting
-  - Local execution with optional timeouts
-- Automatic artifact download from Modal to `./runs/<run_id>`
+All backends share the same flags (`--backend`, `--gpu-mode`, `--gpu-types`) via a unified executor.
 
-See **[docs/backends.md](./backends.md)** for full instructions (Modal + SLURM).
+### Local
 
+```bash
+uv sync --extra cpu
+uv run llc run --backend=local --sampler sgld --preset=quick
+```
 
+### SLURM (Python 3.12 + CUDA 12)
 
-> **Python versions per backend**
-> - **SLURM/submitit:** Python **3.12** (cluster standard)
-> - **Modal:** Python **3.11** (baked into the image)
-> - **Local:** Prefer **3.12** for parity with SLURM; 3.11 also works
->
-> Create envs with uv:
-> ```bash
-> # Local/SLURM (3.12)
-> uv venv --python 3.12 && source .venv/bin/activate
-> uv sync --extra slurm
->
-> # Modal (local CLI still uses your env version; Modal runtime is pinned to 3.11)
-> uv sync --extra modal
-> ```
+```bash
+uv venv --python 3.12 && source .venv/bin/activate
+uv sync --extra slurm --extra cuda12
+uv run llc run --backend=submitit --gpu-mode=vectorized --slurm-partition=gpu --sampler sghmc
+```
 
+### Modal (Python 3.11 inside image)
+
+```bash
+uv sync --extra modal
+uv run llc run --backend=modal --gpu-mode=vectorized --sampler sghmc
+```
+
+See [docs/backends.md](docs/backends.md) for full setup (Modal + SLURM).
+
+---
 
 ## Common Tasks
 
-| Task | Command |
-|------|---------|
-| Single SGHMC run | `uv run llc run --sampler sghmc --preset=quick` |
-| Local quick run | `uv run llc run --sampler sgld --preset=quick` |
-| Local sweep (8 workers) | `uv run llc sweep --workers=8` |
-| Sweep with study YAML | `uv run llc sweep --study study.yaml --backend=modal` |
-| Sweep samplers (JSON) | `uv run llc sweep --sampler-grid='[{"name":"sgld","overrides":{"sgld_precond":"adam"}}]'` |
-| Modal sweep | `uv run llc sweep --backend=modal` |
-| SLURM sweep | `uv run llc sweep --backend=submitit --gpu-mode=vectorized` |
-| Analyze saved run | `uv run llc analyze runs/<run_id>` |
-| Plot sweep results | `uv run llc plot-sweep` |
-| Refresh README images | `uv run llc promote-readme-images` |
+| Task                    | Command                                                                                   |
+| ----------------------- | ----------------------------------------------------------------------------------------- |
+| Single SGHMC run        | `uv run llc run --sampler sghmc --preset=quick`                                           |
+| Local sweep (8 workers) | `uv run llc sweep --workers=8`                                                            |
+| Sweep with study YAML   | `uv run llc sweep --study study.yaml --backend=modal`                                     |
+| Sweep samplers (JSON)   | `uv run llc sweep --sampler-grid='[{"name":"sgld","overrides":{"sgld_precond":"adam"}}]'` |
+| SLURM sweep             | `uv run llc sweep --backend=submitit --gpu-mode=vectorized`                               |
+| Modal sweep             | `uv run llc sweep --backend=modal`                                                        |
+| Analyze saved run       | `uv run llc analyze runs/<run_id>`                                                        |
+| Plot sweep results      | `uv run llc plot-sweep`                                                                   |
+| Refresh README images   | `uv run llc promote-readme-images`                                                        |
 
-> **SLURM quick start (CUDA 12.8, Py 3.12)**
->
-> ```bash
-> uv venv --python 3.12 && source .venv/bin/activate
-> uv sync --extra slurm --extra cuda128
-> uv run python -m llc run --backend=submitit --gpu-mode=vectorized --slurm-partition=gpu
-> ```
->
-> Local/macOS: `uv sync --extra cpu` (or just `uv sync`) and run with `--backend=local --gpu-mode=off`.
-
-For backend-specific setup and configuration, see [docs/backends.md](docs/backends.md).
+---
 
 ## Concepts
 
-* A job = (problem, sampler, seed).
-* A family = jobs that share (problem, seed) but differ by sampler.
-* Sweeps = Many Runs + One CSV. Sweeps expand into many jobs and summarize results in one CSV.
-
-`uv run llc sweep` launches a grid of runs and writes `llc_sweep_results.csv` summarizing each run (with a `run_dir` back-pointer to analyze individual runs).
+* **Job** = (problem, sampler, seed)
+* **Family** = jobs sharing (problem, seed) but differing by sampler
+* **Sweep** = many jobs + one CSV summary (`llc_sweep_results.csv`)
 
 Sweeps always run one sampler per job.
-This makes jobs shorter, retries independent, and analysis cleaner. Results include a `family_id` column to group related per-sampler runs.
+Attempts are made to cache identical jobs to avoid wating compute.
 
-### What's in a Run
+---
+
+## What’s in a Run
 
 ```text
 runs/<run_id>/
-├── config.json          # full configuration (all parameters)
+├── config.json          # full configuration
 ├── metrics.json         # summary statistics (LLC mean/SE, ESS, WNV, timings)
 ├── L0.txt               # baseline loss at ERM
 ├── sgld.nc              # ArviZ traces for SGLD
@@ -115,6 +133,7 @@ runs/<run_id>/
 ```
 
 **Sample `metrics.json`:**
+
 ```json
 {
   "sgld_llc_mean": 145.7,
@@ -129,9 +148,11 @@ runs/<run_id>/
 }
 ```
 
-### YAML Study Files
+---
 
-Define experiments declaratively:
+## Defining Sweeps
+
+### YAML Study Files
 
 ```yaml
 # study.yaml
@@ -152,57 +173,62 @@ samplers:
 seeds: [0,1,2]
 ```
 
+Run:
+
 ```bash
 uv run llc sweep --backend=modal --study study.yaml
 ```
 
 ### JSON Grid Sweeps
 
-Quick sampler variant sweeps:
-
 ```bash
 uv run llc sweep --sampler-grid='[{"name":"sgld","overrides":{"sgld_precond":"adam"}}]'
 ```
 
-Plot medians via `uv run llc plot-sweep --size-col target_params` and filter via `--filters "activation=relu,x_dist=gauss_iso"`.
+---
 
+## Efficiency Metrics (Advanced)
 
-## Efficiency Metrics
+From saved traces we compute:
 
-We compute efficiency and work-normalized variance from the saved traces:
+* **ESS/sec** — effective samples per second
+* **ESS/FDE** — effective samples per full-data-equivalent gradient
+* **WNV (time/FDE)** — variance × cost for fair comparison
 
-- **ESS/sec** — statistical efficiency per wall-clock second: `ESS / seconds`
-- **ESS/FDE** — statistical efficiency per full-data-equivalent gradient: `ESS / FDE`, where `FDE = (# full-loss evals) + (# minibatch grads) × (b/n)`
-- **WNV (time/FDE)** — variance × cost for fair comparisons: `WNV_time = (sd² / ESS) × seconds`, `WNV_FDE = (sd² / ESS) × FDE`
+Results are saved to `metrics.json` per run and `llc_sweep_results.csv` for sweeps.
 
-Here `sd` is the Monte Carlo standard deviation of LLC; ESS is ArviZ bulk ESS. Results saved to `metrics.json` per run and `llc_sweep_results.csv` for sweeps.
+---
 
 ## Installation
 
 ```bash
 uv sync
-
-# Optional backends
-uv sync --extra modal      # Modal serverless support
-uv sync --extra slurm      # SLURM/submitit support
+uv sync --extra modal      # Modal support
+uv sync --extra slurm      # SLURM support
 ```
+
+---
 
 ## Features
 
-- **Unified CLI** for end-to-end LLC estimation pipeline
-- **Unified sampler interface:** All samplers (SGLD, SGHMC, HMC, MCLMC) use SamplerSpec for consistent outputs and diagnostics
-- **Three execution backends:** Local, SLURM/Submitit, Modal serverless with unified dispatcher
-- **Configurable targets:** ReLU/tanh/GeLU MLPs, analytical quadratic (for testing)
-- **ArviZ integration:** Full convergence diagnostics (ESS, R̂, autocorrelation, rank plots)
-- **Caching system:** Deterministic run IDs prevent duplicate computation
+* Unified CLI for end-to-end LLC estimation
+* Consistent sampler interface: SGLD, SGHMC, HMC, MCLMC
+* Three execution backends: Local, SLURM, Modal
+* Configurable targets: ReLU/tanh/GeLU MLPs, analytical quadratic
+* Full ArviZ diagnostics (ESS, R̂, autocorrelation, rank plots)
+* Deterministic caching (reuses runs by config+code hash)
+
+---
 
 ## Documentation
 
-- [Backends (Modal/SLURM setup)](docs/backends.md)
-- [Caching behavior](docs/caching.md)
-- [Preconditioned SGLD options](docs/sgld-precond.md)
-- [Target functions and data generators](docs/targets.md)
-- [BlackJAX API notes](docs/blackjax.md)
+* [Backends (Modal/SLURM setup)](docs/backends.md)
+* [Caching behavior](docs/caching.md)
+* [Preconditioned SGLD options](docs/sgld-precond.md)
+* [Target functions and data generators](docs/targets.md)
+* [BlackJAX API notes](docs/blackjax.md)
+
+---
 
 ## License
 

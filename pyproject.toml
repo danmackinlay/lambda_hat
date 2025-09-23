@@ -38,6 +38,6 @@ cpu = [
 ]
 
 # CUDA 12.x wheels for Linux (bundled CUDA libs; only needs a recent NVIDIA driver)
-cuda128 = [
+cuda12 = [
   "jax[cuda12_local]>=0.4.28"
 ]

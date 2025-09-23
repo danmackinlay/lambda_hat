@@ -31,7 +31,7 @@ uv run modal volume create llc-runs      # optional; code can create it on first
 
 ```bash
 # Single run
-uv run python -m llc run --backend=modal --preset=quick
+uv run python -m llc run --backend=modal --preset=quick --sampler sghmc
 
 # Single run with specific GPU types
 uv run python -m llc run --backend=modal --gpu-mode=vectorized --gpu-types=H100,A100
@@ -143,7 +143,7 @@ Modal jobs can hang indefinitely if your account runs out of funds, since Modal'
 ```bash
 # Single run with GPU
 uv run python -m llc run --backend=submitit --gpu-mode=vectorized \
-  --slurm-partition=gpu --timeout-min=180
+  --slurm-partition=gpu --timeout-min=180 --sampler hmc
 
 # Sweep (one job per sampler - default behavior)
 uv run python -m llc sweep --backend=submitit \
@@ -170,12 +170,14 @@ Control SLURM job parameters via CLI flags:
 
 **One-time on the login node (per venv):**
 ```bash
+# activate needful modules
+module add python/3.12.0 cuda/12.8.1 cudnn/9.13.0-cu12
 # Create/activate your environment
 uv venv --python 3.12
 source .venv/bin/activate
 
 # Install base project + SLURM extras + CUDA wheels for JAX
-uv sync --extra slurm --extra cuda128
+uv sync --extra slurm --extra cuda12
 ```
 
 **Run (GPU on SLURM):**
@@ -185,7 +187,7 @@ uv sync --extra slurm --extra cuda128
 uv run python -m llc run --backend=submitit \
   --gpu-mode=vectorized \
   --slurm-partition=gpu \
-  --timeout-min=180 --cpus=4 --mem-gb=16
+  --timeout-min=180 --cpus=4 --mem-gb=16 --sampler sghmc
 ```
 
 **Notes**
