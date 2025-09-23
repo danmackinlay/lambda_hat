@@ -17,6 +17,7 @@ class BackendOptions:
     local_workers: int = 0
     # submitit
     slurm_partition: Optional[str] = None
+    slurm_account: Optional[str] = None
     timeout_min: int = 180
     cpus: int = 4
     mem_gb: int = 16
@@ -37,6 +38,9 @@ def _build_submitit_kwargs(opts: BackendOptions) -> Dict[str, Any]:
     )
     if opts.slurm_partition:
         kw["slurm_partition"] = opts.slurm_partition
+    # Pass account via Submitit's slurm_additional_parameters
+    if opts.slurm_account:
+        kw["slurm_additional_parameters"] = {"account": opts.slurm_account}
     return kw
 
 def _build_modal_options(n_jobs: int, cap: int) -> Dict[str, int]:

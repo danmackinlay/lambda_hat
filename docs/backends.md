@@ -143,7 +143,7 @@ Modal jobs can hang indefinitely if your account runs out of funds, since Modal'
 ```bash
 # Single run with GPU
 uv run python -m llc run --backend=submitit --gpu-mode=vectorized \
-  --slurm-partition=gpu --timeout-min=180 --sampler hmc
+  --slurm-partition=gpu --account=abc123 --timeout-min=180 --sampler hmc
 
 # Sweep (one job per sampler - default behavior)
 uv run python -m llc sweep --backend=submitit \
@@ -156,6 +156,7 @@ Control SLURM job parameters via CLI flags:
 
 ```bash
 --slurm-partition=gpu          # SLURM partition
+--account=abc123               # SLURM account (optional)
 --timeout-min=180              # Job timeout (default: 3 hours)
 --cpus=4                       # CPUs per task (default: 4)
 --mem-gb=16                    # Memory in GB (default: 16)
@@ -186,7 +187,7 @@ uv sync --extra slurm --extra cuda12
 # vectorized = 1 GPU per job, multiple chains batched
 uv run python -m llc run --backend=submitit \
   --gpu-mode=vectorized \
-  --slurm-partition=gpu \
+  --slurm-partition=gpu --account=abc123 \
   --timeout-min=180 --cpus=4 --mem-gb=16 --sampler sghmc
 ```
 

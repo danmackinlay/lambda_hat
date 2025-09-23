@@ -19,6 +19,7 @@ def run_entry(kwargs: dict) -> None:
 
     # Submitit-specific parameters
     slurm_partition = kwargs.pop("slurm_partition", None)
+    slurm_account = kwargs.pop("slurm_account", None)
     timeout_min = kwargs.pop("timeout_min", 180)
     cpus = kwargs.pop("cpus", 4)
     mem_gb = kwargs.pop("mem_gb", 16)
@@ -59,6 +60,7 @@ def run_entry(kwargs: dict) -> None:
         gpu_mode=gpu_mode,
         gpu_types=gpu_types,
         slurm_partition=slurm_partition,
+        slurm_account=slurm_account,
         timeout_min=timeout_min,
         cpus=cpus,
         mem_gb=mem_gb,

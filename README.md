@@ -74,7 +74,8 @@ uv run llc run --backend=local --sampler sgld --preset=quick
 ```bash
 uv venv --python 3.12 && source .venv/bin/activate
 uv sync --extra slurm --extra cuda12
-uv run llc run --backend=submitit --gpu-mode=vectorized --slurm-partition=gpu --sampler sghmc
+uv run llc run --backend=submitit --gpu-mode=vectorized \
+  --slurm-partition=gpu --account=abc123 --sampler sghmc
 ```
 
 ### Modal (Python 3.11 inside image)

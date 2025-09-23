@@ -41,6 +41,12 @@ def run_shared_options():
             help="SLURM partition name (e.g. 'gpu', 'cpu'). Optional.",
         )(f)
         f = click.option(
+            "--account",
+            "slurm_account",
+            type=str,
+            help="SLURM account name (e.g. 'abc123'). Optional.",
+        )(f)
+        f = click.option(
             "--timeout-min",
             type=int,
             default=180,  # 3 hours to match Modal default
