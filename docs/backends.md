@@ -15,6 +15,18 @@ LLC uses a unified backend dispatcher (`llc.util.backend_dispatch`) to consolida
 
 The legacy `backend_bootstrap` module remains for helper functions but new code should use the dispatcher directly.
 
+## GPU Mode Options
+
+`--gpu-mode`
+
+* **`off`** — CPU only. Forces `JAX_PLATFORMS=cpu`.
+* **`vectorized`** — Default/fast GPU path. All chains are batched (`vmap+scan`) and run simultaneously on a single GPU. Maximizes throughput, typical for production runs.
+* **`sequential`** — Runs chains one-by-one on GPU (no vectorization). This is slower, but has two legitimate uses:
+
+  * **Debugging / resource limits:** If the vectorized kernel is too big to compile or fit in GPU memory, sequential mode still lets you run on GPU.
+  * **Fair-cost comparisons:** Sometimes you want to compare algorithms under “no parallelism” assumptions (e.g. one chain per GPU). Sequential mode ensures each chain uses the GPU in isolation, making runtime metrics like ESS/sec more comparable across algorithms or hardware.
+
+
 ## Modal Serverless
 
 **Python:** The Modal image is pinned to Python **3.11** in `llc/modal_app.py`.
@@ -84,8 +96,8 @@ Use `--gpu-types` to specify preferred GPU types with fallbacks:
 ```
 
 **Valid GPU types:** H100, A100, L40S, T4, A10G
-
 If invalid types are specified, the system warns and falls back to L40S.
+
 
 ### Artifact Management
 
@@ -143,11 +155,11 @@ Modal jobs can hang indefinitely if your account runs out of funds, since Modal'
 ```bash
 # Single run with GPU
 uv run python -m llc run --backend=submitit --gpu-mode=vectorized \
-  --slurm-partition=gpu --account=abc123 --timeout-min=180 --sampler hmc
+  --slurm-partition=gpu --account=abc123 --timeout-min=119 --sampler hmc
 
 # Sweep (one job per sampler - default behavior)
 uv run python -m llc sweep --backend=submitit \
-  --gpu-mode=vectorized --slurm-partition=gpu --timeout-min=180
+  --gpu-mode=vectorized --slurm-partition=gpu --timeout-min=119
 ```
 
 ### Submitit Configuration
@@ -157,7 +169,7 @@ Control SLURM job parameters via CLI flags:
 ```bash
 --slurm-partition=gpu          # SLURM partition
 --account=abc123               # SLURM account (optional)
---timeout-min=180              # Job timeout (default: 3 hours)
+--timeout-min=119              # Job timeout (default: nearly 2 hours)
 --cpus=4                       # CPUs per task (default: 4)
 --mem-gb=16                    # Memory in GB (default: 16)
 --slurm-signal-delay-s=120     # Grace period before kill (default: 120s)
@@ -188,7 +200,7 @@ uv sync --extra slurm --extra cuda12
 uv run python -m llc run --backend=submitit \
   --gpu-mode=vectorized \
   --slurm-partition=gpu --account=abc123 \
-  --timeout-min=180 --cpus=4 --mem-gb=16 --sampler sghmc
+  --timeout-min=119 --cpus=4 --mem-gb=16 --sampler sghmc
 ```
 
 **Notes**

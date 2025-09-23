@@ -12,7 +12,7 @@ def test_backend_options_creation():
         gpu_types="H100,A100",
         local_workers=2,
         slurm_partition="gpu",
-        timeout_min=120,
+        timeout_min=119,
         cpus=8,
         mem_gb=32,
         slurm_signal_delay_s=60,

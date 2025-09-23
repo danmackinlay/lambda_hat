@@ -22,7 +22,7 @@ class BackendOptions:
     # submitit
     slurm_partition: Optional[str] = None
     slurm_account: Optional[str] = None
-    timeout_min: int = 180
+    timeout_min: int = 119
     cpus: int = 4
     mem_gb: int = 16
     slurm_signal_delay_s: int = 120

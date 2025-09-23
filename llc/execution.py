@@ -117,7 +117,7 @@ class SubmititExecutor(BaseExecutor):
     def __init__(
         self,
         folder: str = "slurm_logs",
-        timeout_min: int = 60,
+        timeout_min: int = 119,
         slurm_partition: Optional[str] = None,
         gpus_per_node: int = 0,
         cpus_per_task: int = 4,
@@ -190,7 +190,7 @@ class ModalExecutor(BaseExecutor):
         self.remote_fn = remote_fn
         self._options = options or {}
         self._hang_timeout = int(
-            os.environ.get("LLC_MODAL_CLIENT_HANG_TIMEOUT_S", "180")
+            os.environ.get("LLC_MODAL_CLIENT_HANG_TIMEOUT_S", "119")
         )
 
         # (Optional) Only autoscaler hints are adjustable at runtime.

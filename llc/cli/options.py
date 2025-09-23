@@ -49,7 +49,7 @@ def run_shared_options():
         f = click.option(
             "--timeout-min",
             type=int,
-            default=180,  # 3 hours to match Modal default
+            default=119,  # 119 minutes to match cluster defaults
             help="Timeout in minutes for SLURM jobs.",
         )(f)
         f = click.option(
