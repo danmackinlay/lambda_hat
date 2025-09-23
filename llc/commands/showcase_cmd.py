@@ -7,9 +7,47 @@ from llc.tasks import run_experiment_task
 from llc.commands.analyze_cmd import analyze_entry
 from llc.commands.promote_cmd import promote_readme_images_entry
 from dataclasses import replace
+import copy
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+def _explode_samplers(payload):
+    """
+    Given a payload with possibly multiple samplers in payload["samplers"],
+    return a list of payloads each with exactly one sampler.
+    If samplers is missing or already length==1, return [payload].
+    """
+    # Handle both flat payload (from schema_stamp) and nested payload (from task processing)
+    if "cfg" in payload:
+        # Nested structure: payload["cfg"]["samplers"]
+        cfg = payload["cfg"]
+        samplers = list(cfg.get("samplers") or [])
+        if len(samplers) <= 1:
+            return [payload]
+        out = []
+        for s in samplers:
+            p = copy.deepcopy(payload)
+            p["cfg"]["samplers"] = (s,)
+            # Optional: help operators by surfacing the sampler choice in metadata/logs
+            meta = p.setdefault("meta", {})
+            meta["sampler"] = s
+            out.append(p)
+        return out
+    else:
+        # Flat structure: payload["samplers"] (from schema_stamp)
+        samplers = list(payload.get("samplers") or [])
+        if len(samplers) <= 1:
+            return [payload]
+        out = []
+        for s in samplers:
+            p = copy.deepcopy(payload)
+            p["samplers"] = (s,)
+            # Optional: help operators by surfacing the sampler choice in metadata/logs
+            p["_sampler"] = s  # Add a marker for logging
+            out.append(p)
+        return out
 
 
 def showcase_readme_entry(**kwargs):
@@ -21,6 +59,7 @@ def showcase_readme_entry(**kwargs):
     backend = (kwargs.pop("backend", None) or "local").lower()
     gpu_mode = kwargs.pop("gpu_mode", "off")
     gpu_types = kwargs.pop("gpu_types", "")
+    sampler_cli = kwargs.pop("sampler", None)  # CLI override for single sampler
 
     # Submitit-specific parameters
     slurm_partition = kwargs.pop("slurm_partition", None)
@@ -33,6 +72,10 @@ def showcase_readme_entry(**kwargs):
     # 1) Build config (full preset; ensure plots are saved)
     cfg = apply_preset_then_overrides(CFG, "full", {"save_plots": True, "show_plots": False})
 
+    # If the user passed --sampler, honor it and make the config atomic up front
+    if sampler_cli:
+        cfg = replace(cfg, samplers=(sampler_cli,))
+
     # Map GPU mode to batching configuration
     if gpu_mode == "vectorized":
         cfg = replace(cfg, use_batched_chains=True)
@@ -44,6 +87,22 @@ def showcase_readme_entry(**kwargs):
     skip_if_exists = False
     [payload] = prepare_payloads([cfg], save_artifacts=save_artifacts,
                                  skip_if_exists=skip_if_exists, gpu_mode=gpu_mode)
+
+    # 2.5) Explode multi-sampler payload into atomic runs (one per sampler)
+    original_samplers = payload.get("cfg", {}).get("samplers") or payload.get("samplers")
+    logger.debug("Original payload samplers: %s", original_samplers)
+    payloads = _explode_samplers(payload)
+    logger.debug("After explosion, %d payloads", len(payloads))
+    if len(payloads) > 1:
+        # Handle both flat and nested structures for logging
+        samplers_list = []
+        for p in payloads:
+            if "cfg" in p:
+                samplers_list.append(p["cfg"]["samplers"][0])
+            else:
+                samplers_list.append(p["samplers"][0])
+        samplers_str = ", ".join(samplers_list)
+        logger.info("Showcase will run %d atomic jobs (samplers: %s)", len(payloads), samplers_str)
 
     # 3) Run via the unified dispatcher (local / submitit / modal)
     opts = BackendOptions(
@@ -65,23 +124,34 @@ def showcase_readme_entry(**kwargs):
         from llc.util.backend_bootstrap import select_jax_platform
         select_jax_platform(gpu_mode)
 
-    [res] = run_jobs(cfg_payloads=[payload], opts=opts, task_fn=run_experiment_task)
+    results = run_jobs(cfg_payloads=payloads, opts=opts, task_fn=run_experiment_task)
 
-    # 4) Check for errors
-    if res.get("status") == "error":
-        raise SystemExit(f"showcase: job failed with error: {res.get('error', 'unknown')}")
+    # 4) Check for errors in any result
+    for i, res in enumerate(results):
+        if res.get("status") == "error":
+            raise SystemExit(f"showcase: job {i+1}/{len(results)} failed with error: {res.get('error', 'unknown')}")
 
-    # 5) After the run, artifacts are local (Modal path auto-extracted if enabled)
-    run_dir = res.get("run_dir", "")
-    if not run_dir:
-        raise SystemExit("showcase: no run_dir returned; check backend logs")
+    # 5) Analyze & promote images from all runs
+    logger.info(f"All {len(results)} jobs completed successfully")
 
-    logger.info(f"Run completed, analyzing {run_dir}")
+    for i, res in enumerate(results):
+        run_dir = res.get("run_dir", "")
+        if not run_dir:
+            logger.warning(f"Job {i+1}: no run_dir returned; skipping analysis")
+            continue
 
-    # 6) Analyze & promote
-    analyze_entry(run_dir, which="all",
-                  plots="running_llc,rank,ess_evolution,autocorr,energy,theta",
-                  out=None, overwrite=True)
-    promote_readme_images_entry(run_dir)
+        sampler = res.get("meta", {}).get("sampler", "unknown")
+        logger.info(f"Analyzing {sampler} run: {run_dir}")
 
-    logger.info(f"README assets refreshed from {run_dir}")
+        # 6) Analyze each run
+        analyze_entry(run_dir, which="all",
+                      plots="running_llc,rank,ess_evolution,autocorr,energy,theta",
+                      out=None, overwrite=True)
+
+    # 7) Promote images from the first successful run (maintain backward compatibility)
+    first_run_dir = next((res.get("run_dir") for res in results if res.get("run_dir")), None)
+    if first_run_dir:
+        promote_readme_images_entry(first_run_dir)
+        logger.info(f"README assets refreshed from {first_run_dir}")
+    else:
+        logger.warning("No successful runs found for README image promotion")

@@ -11,6 +11,9 @@ from llc.util.backend_bootstrap import (
 )
 from llc.execution import get_executor
 from llc.util.modal_utils import extract_modal_runs_locally
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -71,6 +74,16 @@ def run_jobs(
     task_fn: Callable[[dict], dict],  # usually llc.tasks.run_experiment_task
 ) -> List[dict]:
     backend = (opts.backend or "local").lower()
+
+    # Log dispatch information for multiple payloads
+    if len(cfg_payloads) > 1:
+        try:
+            # Best-effort sampler summary for visibility
+            ss = [p.get("cfg", {}).get("samplers", ("?",))[0] for p in cfg_payloads]
+            logger.info("Dispatching %d jobs; samplers=%s", len(cfg_payloads), ",".join(map(str, ss)))
+        except Exception:
+            logger.info("Dispatching %d jobs", len(cfg_payloads))
+
     # Configure platform/env locally; remote backends do it server-side
     if backend == "local":
         select_jax_platform(opts.gpu_mode)
