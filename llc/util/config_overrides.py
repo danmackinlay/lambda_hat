@@ -7,6 +7,36 @@ from typing import Optional
 from llc.config import Config
 from llc.presets import apply_preset
 
+# Type mapping for Config fields that might come as strings from YAML
+_NUMERIC_FIELDS = {
+    "n_data": int, "seed": int, "chains": int,
+    "sgld_steps": int, "sgld_warmup": int, "sgld_batch_size": int,
+    "sgld_eval_every": int, "sgld_thin": int, "sgld_step_size": float,
+    "sgld_beta1": float, "sgld_beta2": float, "sgld_eps": float,
+    "sghmc_steps": int, "sghmc_warmup": int, "sghmc_batch_size": int,
+    "sghmc_step_size": float, "sghmc_temperature": float,
+    "hmc_draws": int, "hmc_warmup": int, "hmc_num_integration_steps": int,
+    "hmc_eval_every": int, "hmc_thin": int,
+    "mclmc_draws": int, "mclmc_tune_steps": int, "mclmc_eval_every": int, "mclmc_thin": int,
+    "mclmc_desired_energy_var": float,
+    "beta0": float, "gamma": float, "prior_radius": float,
+    "noise_scale": float, "hetero_scale": float, "student_df": float,
+    "outlier_frac": float, "outlier_scale": float,
+    "depth": int, "in_dim": int, "out_dim": int, "target_params": int,
+}
+
+
+def _coerce_types(cfg: Config) -> Config:
+    """Coerce string values from YAML to proper numeric types."""
+    d = cfg.__dict__.copy()
+    for k, caster in _NUMERIC_FIELDS.items():
+        if k in d and d[k] is not None and not isinstance(d[k], (int, float)):
+            try:
+                d[k] = caster(d[k])
+            except Exception:
+                raise SystemExit(f"Bad type for '{k}': expected {caster.__name__}, got {type(d[k]).__name__} ({d[k]!r})")
+    return replace(cfg, **d)
+
 
 def override_config(cfg: Config, args: dict) -> Config:
     """Apply command-line overrides to configuration using dataclass introspection."""
@@ -38,4 +68,5 @@ def apply_preset_then_overrides(
     out = cfg
     if preset:
         out = apply_preset(out, preset)
-    return override_config(out, kwargs)
+    out = override_config(out, kwargs)
+    return _coerce_types(out)  # 🔧 enforce numeric types once

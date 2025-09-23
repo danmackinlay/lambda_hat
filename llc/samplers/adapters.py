@@ -36,6 +36,16 @@ def sgld_spec(
     bias_correction: bool = True,
 ) -> SamplerSpec:
     """Create SamplerSpec for SGLD with optional preconditioning."""
+    import jax.numpy as jnp
+
+    # 🔧 Coerce values that might arrive as strings from YAML
+    step_size = float(step_size)
+    beta1 = float(beta1)
+    beta2 = float(beta2)
+    eps = float(eps)
+    n_data = int(n_data)
+    batch_size = int(batch_size)
+
     precond = (precond_mode or "none").lower()
 
     if precond == "none":
@@ -102,6 +112,12 @@ def sghmc_spec(
     batch_size: int,
 ) -> SamplerSpec:
     """Create SamplerSpec for SGHMC."""
+    # 🔧 Coerce values that might arrive as strings from YAML
+    step_size = float(step_size)
+    temperature = float(temperature)
+    n_data = int(n_data)
+    batch_size = int(batch_size)
+
     sghmc = blackjax.sghmc(grad_logpost_minibatch)
     step_single = jax.jit(sghmc.step)
     step_vmapped = jax.jit(jax.vmap(step_single, in_axes=(0, 0, 0, None, None)))
