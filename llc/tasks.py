@@ -23,10 +23,15 @@ def run_experiment_task(payload: Dict[str, Any]) -> Dict[str, Any]:
     import sys
     import platform
     import traceback
+    import logging
     from dataclasses import fields
     from llc.config import Config, config_schema_hash
     from llc.pipeline import run_one
     from llc.util.json_safe import json_safe
+    from llc.cache import run_id
+    from llc import paths
+
+    logger = logging.getLogger(__name__)
 
     # Track stage for better error reporting
     stage = "init"
@@ -41,6 +46,17 @@ def run_experiment_task(payload: Dict[str, Any]) -> Dict[str, Any]:
             )
         cfg_dict = payload["cfg"]
         meta = payload.get("meta", {})
+
+        # Extract sampler for early logging
+        samplers = cfg_dict.get("samplers") or ()
+        if isinstance(samplers, str):
+            samplers = (samplers,)
+        sampler = samplers[0] if samplers else "default"
+
+        # Compute rid & run_dir early so we can always return them
+        computed_run_id = run_id(cfg_dict)
+        expected_run_dir = paths.run_dir(cfg_dict)
+        logger.debug("worker: sampler=%s rid=%s run_dir=%s", sampler, computed_run_id, expected_run_dir)
 
         # Ensure worker process honors GPU intent (SLURM/Submitit)
         gpu_mode = meta.get("gpu_mode", cfg_dict.get("gpu_mode", "off"))
@@ -95,10 +111,6 @@ def run_experiment_task(payload: Dict[str, Any]) -> Dict[str, Any]:
 
         cfg = Config(**cfg_kwargs)
 
-        # Compute run_id early for error reporting
-        from llc.cache import run_id
-        computed_run_id = run_id(cfg)
-
         # Print and persist config snapshot for debugging/reruns
         stage = "config_snapshot"
         import json
@@ -147,14 +159,27 @@ def run_experiment_task(payload: Dict[str, Any]) -> Dict[str, Any]:
         result_safe = json_safe(result)
         result_safe.setdefault("meta", json_safe(meta))
 
-        # Contract: ok must include run_dir
+        # Contract: MUST include run_dir; if missing, convert to error with details
         if not result_safe.get("run_dir"):
+            # Some callers forget to return it; fix up with the computed path
+            result_safe["run_dir"] = expected_run_dir
+        if not result_safe.get("run_dir"):
+            msg = f"task contract violation: status=ok but no run_dir (sampler={sampler}, rid={computed_run_id})"
+            logger.error(msg)
             return {
                 "status": "error",
-                "error_type": "ProtocolError",
-                "error": "run_experiment_task produced no run_dir on success",
-                "meta": result_safe.get("meta", {}),
+                "error_type": "TaskContractError",
+                "error": msg,
+                "traceback": "",
+                "meta": json_safe(meta),
+                "sampler": sampler,
+                "rid": computed_run_id,
+                "run_dir_expected": expected_run_dir,
             }
+
+        # Also surface sampler/rid/run_dir for caller logs
+        result_safe.setdefault("sampler", sampler)
+        result_safe.setdefault("rid", computed_run_id)
 
         print(f"[llc worker] complete", file=sys.stdout, flush=True)
         return result_safe

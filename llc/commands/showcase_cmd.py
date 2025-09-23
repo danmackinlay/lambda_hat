@@ -82,18 +82,29 @@ def showcase_readme_entry(**kwargs):
     verbose = logger.isEnabledFor(logging.DEBUG) or logging.getLogger().isEnabledFor(logging.DEBUG)
     good_runs = []  # list of (sampler, run_dir)
     for i, res in enumerate(results):
-        sampler = (res.get("meta") or {}).get("sampler", "unknown")
+        # Treat "ok/no run_dir" as an error (belt & braces)
+        if res.get("status") == "ok" and not res.get("run_dir"):
+            res = {
+                **res,
+                "status": "error",
+                "error_type": "TaskContractError",
+                "error": f"status=ok but returned no run_dir",
+            }
+
+        sampler = res.get("sampler") or (res.get("meta") or {}).get("sampler", "unknown")
         if res.get("status") == "error":
             # Collect details
             etype = res.get("error_type", "Error")
             msg = res.get("error", "unknown")
             tb = res.get("traceback", "")
             job = res.get("_job", {}) or {}
+            rid = res.get("rid")
             stderr_path = job.get("stderr")
             stdout_path = job.get("stdout")
             jid = job.get("id")
             details = []
-            details.append(f"showcase: job {i+1}/{len(results)} FAILED [{etype}] {msg} (sampler={sampler})")
+            details.append(f"showcase: job {i+1}/{len(results)} FAILED [{etype}] {msg}")
+            details.append(f"  sampler={sampler} rid={rid}")
             if jid:
                 details.append(f"  submitit job_id: {jid}")
             if stdout_path:
