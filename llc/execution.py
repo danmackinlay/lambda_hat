@@ -7,6 +7,23 @@ import os
 import time
 
 
+def _attach_submitit_logs(job, result: dict, tail_lines: int = 80) -> dict:
+    """Attach stdout/stderr paths and a short tail from stderr to a result dict."""
+    try:
+        out_path = str(job.paths.stdout) if getattr(job, "paths", None) else ""
+        err_path = str(job.paths.stderr) if getattr(job, "paths", None) else ""
+        result["submitit_stdout_path"] = out_path
+        result["submitit_stderr_path"] = err_path
+        if err_path and os.path.exists(err_path):
+            with open(err_path, "r", errors="ignore") as f:
+                lines = f.readlines()[-tail_lines:]
+            result["submitit_stderr_tail"] = "".join(lines)[-4000:]
+    except Exception:
+        # never crash error handling
+        pass
+    return result
+
+
 @dataclass
 class BaseExecutor:
     def map(self, fn: Callable[[Any], Any], items: Iterable[Any]) -> List[Any]:
@@ -159,13 +176,21 @@ class SubmititExecutor(BaseExecutor):
         self.executor.update_parameters(**base)
 
     def map(self, fn, items):
-        # Create wrapper jobs that call _submitit_safe_call(fn, item) for each item
+        # Submit wrapper jobs (we keep handles to access log files on error)
         items_list = list(items)
         jobs = [
             self.executor.submit(_SubmititExperiment(_submitit_safe_call, fn, item))
             for item in items_list
         ]
-        return [j.result() for j in jobs]
+
+        results = []
+        for j in jobs:
+            r = j.result()  # {"status": "ok"|"error", ...} from _submitit_safe_call
+            # On failure, attach Submitit/SLURM log locations (and a small tail)
+            if isinstance(r, dict) and r.get("status") == "error":
+                r = _attach_submitit_logs(j, r, tail_lines=80)
+            results.append(r)
+        return results
 
 
 # ----------------- Modal (serverless) -----------------

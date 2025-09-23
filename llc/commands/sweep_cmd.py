@@ -162,16 +162,22 @@ def _save_sweep_results(results):
     for r in results:
         # Handle errors separately
         if r.get("status") == "error":
-            error_rows.append(
-                {
-                    "run_id": r.get("run_id", "unknown"),
-                    "status": "error",
-                    "stage": r.get("stage", "unknown"),
-                    "error_type": r.get("error_type", "Unknown"),
-                    "duration_s": r.get("duration_s", 0),
-                    "error": r.get("error", "")[:200],  # First 200 chars of error
-                }
-            )
+            error_row = {
+                "run_id": r.get("run_id", "unknown"),
+                "status": "error",
+                "stage": r.get("stage", "unknown"),
+                "error_type": r.get("error_type", "Unknown"),
+                "duration_s": r.get("duration_s", 0),
+                "error": r.get("error", "")[:200],  # First 200 chars of error
+            }
+            # Include Submitit log paths if available
+            if "submitit_stdout_path" in r:
+                error_row["submitit_stdout_path"] = r["submitit_stdout_path"]
+            if "submitit_stderr_path" in r:
+                error_row["submitit_stderr_path"] = r["submitit_stderr_path"]
+            if "submitit_stderr_tail" in r:
+                error_row["submitit_stderr_tail"] = r["submitit_stderr_tail"][:1000]
+            error_rows.append(error_row)
             continue
 
         run_dir = r.get("run_dir")
@@ -246,3 +252,22 @@ def _save_sweep_results(results):
         logger.info(
             f"Errors logged to llc_sweep_errors.csv: {len(error_rows)} failed jobs"
         )
+
+        # Surface Submitit logs for easier debugging
+        for er in error_rows:
+            if "submitit_stderr_path" in er:
+                logger.info(f"\n[Submitit Error] Job {er.get('run_id', 'unknown')}")
+                logger.info(f"  stderr log: {er['submitit_stderr_path']}")
+                if "submitit_stdout_path" in er:
+                    logger.info(f"  stdout log: {er['submitit_stdout_path']}")
+                if "submitit_stderr_tail" in er and er["submitit_stderr_tail"].strip():
+                    logger.info("  Last lines of stderr:")
+                    for line in er["submitit_stderr_tail"].strip().split('\n')[-10:]:
+                        logger.info(f"    {line}")
+
+        # Hint about log locations
+        if any("submitit_stderr_path" in er for er in error_rows):
+            logger.info(
+                "\nHint: Submitit logs are stored in the 'slurm_logs/' folder by default. "
+                "Check the paths above or llc_sweep_errors.csv for full details."
+            )
