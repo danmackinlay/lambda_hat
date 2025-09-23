@@ -53,7 +53,7 @@ Run with:
 uv run llc sweep --study study.yaml
 ```
 
-This creates 3 problems × 5 samplers × 5 seeds = 75 jobs.
+This creates 3 problems × 5 samplers × 5 seeds = 75 jobs. Each matrix item expands to **one job per sampler**. Every job produces an **atomic run** with a single sampler's artifacts and metrics.
 
 ## JSON Grid Sweeps
 
@@ -155,7 +155,7 @@ uv run llc plot-sweep --size-col target_params --samplers sgld,sghmc,hmc
 uv run llc plot-sweep --filters "problem=large"
 ```
 
-**Family Grouping**: The `family_id` allows cross-sampler comparisons on identical (problem, seed) combinations, enabling fair statistical comparisons.
+**Family Grouping**: The `family_id` allows cross-sampler comparisons on identical (problem, seed) combinations, enabling fair statistical comparisons. Per-sampler parameters only affect the cache key **for that sampler**; knobs for other samplers are ignored when hashing.
 
 ## Legacy Compatibility
 

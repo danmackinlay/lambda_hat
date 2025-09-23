@@ -12,6 +12,39 @@ from dataclasses import asdict, is_dataclass
 from typing import Any, Dict, Optional
 from pathlib import Path
 
+# Registry of sampler-specific config field prefixes
+_SAMPLER_FIELDS: Dict[str, tuple[str, ...]] = {
+    "sgld": ("sgld_",),
+    "sghmc": ("sghmc_",),
+    "hmc": ("hmc_",),
+    "mclmc": ("mclmc_",),
+}
+
+
+def _strip_irrelevant_sampler_fields(d: dict) -> dict:
+    """
+    Return a shallow dict copy with sampler-specific fields for *inactive* samplers removed.
+    If cfg.samplers is missing/ambiguous, leave dict unchanged (fail-safe).
+    """
+    samplers = list(d.get("samplers") or [])
+    if len(samplers) != 1:
+        return d
+    active = samplers[0]
+    if active not in _SAMPLER_FIELDS:
+        return d
+    inactive_prefixes = tuple(
+        p for s, prefixes in _SAMPLER_FIELDS.items() if s != active for p in prefixes
+    )
+    if not inactive_prefixes:
+        return d
+    # Do not mutate original
+    out = {}
+    for k, v in d.items():
+        if any(k.startswith(p) for p in inactive_prefixes):
+            continue
+        out[k] = v
+    return out
+
 
 def _normalize_cfg(cfg) -> Dict[str, Any]:
     """
@@ -35,6 +68,9 @@ def _normalize_cfg(cfg) -> Dict[str, Any]:
 
     for k in volatile_keys:
         d.pop(k, None)
+
+    # NEW: keep cache key scoped to the active sampler by dropping other samplers' fields
+    d = _strip_irrelevant_sampler_fields(d)
 
     return d
 
@@ -81,8 +117,9 @@ def run_id(cfg) -> str:
 
 def run_family_id(cfg) -> str:
     """
-    Hash like run_id, but with samplers removed so multiple per-sampler runs
-    are recognized as the same underlying experiment (same data/ERM).
+    Group runs by problem/data/model/seed.
+    Excludes sampler choice and *all* sampler-specific knobs.
+    Excludes code version to allow cross-version comparison within a family.
 
     Args:
         cfg: Configuration object (Config dataclass or dict)
@@ -91,15 +128,17 @@ def run_family_id(cfg) -> str:
         12-character hex string identifying the family of runs
     """
     d = _normalize_cfg(cfg)
-    d["samplers"] = []  # Ignore sampler choice for family grouping
-
-    payload = json.dumps(
-        {"cfg": d, "code": _code_version()},
-        sort_keys=True,
-        default=str,
-    )
-
-    return hashlib.sha1(payload.encode()).hexdigest()[:12]
+    # Drop sampler selection entirely
+    d.pop("samplers", None)
+    # Drop all sampler-specific fields regardless of active sampler
+    for prefixes in _SAMPLER_FIELDS.values():
+        for p in prefixes:
+            for k in list(d.keys()):
+                if k.startswith(p):
+                    d.pop(k, None)
+    payload = {"cfg": d}
+    s = json.dumps(payload, sort_keys=True, default=str)
+    return hashlib.sha1(s.encode()).hexdigest()[:12]
 
 
 def load_cached_outputs(run_dir: str) -> Optional[Dict[str, Any]]:

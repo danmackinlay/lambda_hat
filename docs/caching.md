@@ -22,6 +22,23 @@ uv run python -m llc run --preset=quick --no-skip
 LLC_CODE_VERSION=deploy-123 uv run python -m llc run
 ```
 
+## Sampler-scoped hashing
+
+When computing `run_id(cfg)` we:
+1. Normalize the config (drop volatile fields).
+2. **Remove all sampler-specific fields for samplers other than the selected one.**
+3. Hash the normalized config + code version.
+
+Effect: changing `hmc_*` fields does not change the hash for an `sgld` run (and vice-versa).
+
+## Family IDs
+
+`run_family_id(cfg)` hashes the normalized config **after** dropping:
+- `samplers`
+- *all* sampler-specific fields (for any sampler)
+
+It intentionally **excludes code version**, making family comparisons stable across upgrades.
+
 ## Tips
 
 - Editing any `llc/*.py` file changes the fingerprint automatically

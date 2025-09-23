@@ -44,4 +44,5 @@ cuda12 = [
 [dependency-groups]
 dev = [
     "marimo>=0.15.2",
+    "pytest>=8.4.2",
 ]

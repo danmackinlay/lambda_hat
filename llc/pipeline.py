@@ -62,6 +62,14 @@ def run_one(
     """
     logger = logging.getLogger(__name__)
 
+    # NEW: Enforce atomic runs (exactly one sampler per run)
+    if not getattr(cfg, "samplers", None) or len(cfg.samplers) != 1:
+        if os.environ.get("LLC_ALLOW_MULTI_SAMPLER", "") != "1":
+            raise SystemExit(
+                f"pipeline.run_one requires exactly one sampler; got {getattr(cfg, 'samplers', None)!r}. "
+                "Use `llc sweep` or pass --sampler to run a single sampler."
+            )
+
     # Compute deterministic run ID and family ID
     rid = run_id(cfg)
     fid = run_family_id(cfg)
@@ -89,6 +97,7 @@ def run_one(
     if save_artifacts:
         os.makedirs(run_dir, exist_ok=True)
         logger.info(f"Run ID: {rid}")
+        logger.info(f"Running atomic run with sampler={cfg.samplers[0]}")
         logger.info(f"Run will be saved to: {run_dir}")
         # Save config up-front so it's available even if we crash
         save_config(run_dir, cfg)

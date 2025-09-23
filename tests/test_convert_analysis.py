@@ -139,23 +139,31 @@ def test_sghmc_smoke():
 
 
 def test_quick_run_smoke():
-    """Test that a quick run completes successfully"""
+    """Test that a quick run completes successfully with atomic runs"""
     from llc.config import TEST_CFG
     from llc.pipeline import run_one
     from dataclasses import replace
 
-    # Test with very fast settings
-    cfg = replace(
+    # Test SGLD run (atomic)
+    cfg_sgld = replace(
         TEST_CFG,
-        samplers=("sgld", "sghmc"),
+        samplers=("sgld",),
         save_plots=False,
         sgld_steps=100,
         sgld_warmup=20,
+    )
+    out1 = run_one(cfg_sgld, save_artifacts=False, skip_if_exists=False)
+    assert "sgld_llc_mean" in out1.metrics
+    assert np.isfinite(out1.metrics["sgld_llc_mean"])
+
+    # Test SGHMC run (atomic)
+    cfg_sghmc = replace(
+        TEST_CFG,
+        samplers=("sghmc",),
+        save_plots=False,
         sghmc_steps=100,
         sghmc_warmup=20,
     )
-    out = run_one(cfg, save_artifacts=False, skip_if_exists=False)
-    assert "sgld_llc_mean" in out.metrics
-    assert "sghmc_llc_mean" in out.metrics
-    assert np.isfinite(out.metrics["sgld_llc_mean"])
-    assert np.isfinite(out.metrics["sghmc_llc_mean"])
+    out2 = run_one(cfg_sghmc, save_artifacts=False, skip_if_exists=False)
+    assert "sghmc_llc_mean" in out2.metrics
+    assert np.isfinite(out2.metrics["sghmc_llc_mean"])
