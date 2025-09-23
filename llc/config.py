@@ -18,7 +18,7 @@ class Config:
     # Model architecture
     in_dim: int = 32
     out_dim: int = 1
-    depth: int = 1  # number of hidden layers
+    depth: int = 3  # number of hidden layers
     widths: Optional[List[int]] = None  # per-layer widths; if None, auto-infer
     activation: Literal["relu", "tanh", "gelu", "identity"] = "relu"
     bias: bool = True

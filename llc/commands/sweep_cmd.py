@@ -9,10 +9,12 @@ from llc.config import CFG
 from llc.util.config_overrides import apply_preset_then_overrides
 from llc.util.backend_dispatch import BackendOptions, prepare_payloads, run_jobs
 
+# Module-level logger
+logger = logging.getLogger(__name__)
+
 
 def sweep_entry(kwargs: dict) -> None:
     """Entry point for sweep command."""
-    logger = logging.getLogger(__name__)
     backend = (kwargs.pop("backend") or "local").lower()
     workers = kwargs.pop("workers", 0)
     n_seeds = kwargs.pop("n_seeds", 2)

@@ -240,12 +240,45 @@ def run_hmc_online_batched(
     stats=None,
 ):
     """Batched HMC runner using SamplerSpec + run_sampler_spec"""
+    import blackjax
+    import jax
+    from jax import numpy as jnp
+
     tiny_store = build_tiny_store(diag_dims, Rproj)
 
-    # Create HMC SamplerSpec
-    spec = hmc_spec(
-        logpost_and_grad=logpost_and_grad,
-        L=L,
+    def logdensity(theta):
+        val, _ = logpost_and_grad(theta)
+        return val
+
+    # Build concrete HMC kernel with reasonable defaults
+    # TODO: These should be tuned or passed as parameters
+    step_size = 1e-2
+    inv_mass = jnp.ones(init_thetas.shape[1])
+
+    hmc_kernel = blackjax.hmc(
+        logdensity,
+        step_size=step_size,
+        inverse_mass_matrix=inv_mass,
+        num_integration_steps=L
+    )
+
+    # Initialize HMC states from initial positions
+    init_states = jax.vmap(hmc_kernel.init)(init_thetas)
+
+    # Create vmapped step function
+    step_vmapped = jax.jit(jax.vmap(jax.jit(hmc_kernel.step), in_axes=(0, 0)))
+
+    # Create SamplerSpec with proper HMC components
+    from llc.samplers.base import SamplerSpec
+    spec = SamplerSpec(
+        name="hmc",
+        step_vmapped=lambda keys, states: step_vmapped(keys, states),
+        position_fn=lambda st: st.position,
+        info_extractors={
+            "accept": lambda info: info.acceptance_rate,
+            "energy": lambda info: info.energy,
+        },
+        grads_per_step=L + 1,
     )
 
     # Run using unified driver
@@ -253,7 +286,7 @@ def run_hmc_online_batched(
     result = run_sampler_spec(
         spec=spec,
         rng_key=key,
-        init_states=init_thetas,
+        init_states=init_states,  # Now passing HMCState objects
         n_steps=draws,
         warmup=warmup,
         eval_every=eval_every,

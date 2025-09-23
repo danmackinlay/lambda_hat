@@ -162,7 +162,7 @@ class SubmititExecutor(BaseExecutor):
         # Create wrapper jobs that call _submitit_safe_call(fn, item) for each item
         items_list = list(items)
         jobs = [
-            self.executor.submit(_SubmititExperiment, _submitit_safe_call, fn, item)
+            self.executor.submit(_SubmititExperiment(_submitit_safe_call, fn, item))
             for item in items_list
         ]
         return [j.result() for j in jobs]

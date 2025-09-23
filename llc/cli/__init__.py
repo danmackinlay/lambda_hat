@@ -165,6 +165,14 @@ def plot_sweep_cmd(csv_path, out_dir, size_col, samplers, filters, logx, overwri
     )
 
 
+@cli.command("showcase-readme")
+@run_shared_options()  # inherits backend/gpu/slurm/modal flags
+def showcase_readme_cmd(**kwargs):
+    """Run 'full' preset on chosen backend, generate plots, and refresh README images."""
+    from llc.commands.showcase_cmd import showcase_readme_entry
+    return showcase_readme_entry(**kwargs)
+
+
 @cli.command("preview")
 @click.argument("run_dir", type=click.Path(exists=True, file_okay=False))
 def preview_cmd(run_dir):

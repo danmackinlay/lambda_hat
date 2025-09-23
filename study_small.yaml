@@ -1,0 +1,27 @@
+# study_small.yaml
+base:
+  preset: quick     # pulls in lighter defaults (shorter runs, fewer steps)
+  # Optionally override even smaller to be extra gentle:
+  sgld_steps: 1000
+  sgld_warmup: 200
+  sghmc_steps: 0      # unused here, but harmless
+  hmc_draws: 500
+  hmc_warmup: 200
+  n_data: 1000
+  chains: 2
+
+problems:
+  - name: tiny
+    overrides:
+      target_params: 2000    # small model (≈ a couple thousand params)
+
+samplers:
+  - name: sgld
+    overrides:
+      sgld_precond: adam     # show a “fancy” variant but still small
+      sgld_step_size: 1e-6
+  - name: hmc
+    overrides:
+      hmc_num_integration_steps: 10
+
+seeds: [0]
