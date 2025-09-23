@@ -147,6 +147,15 @@ def run_experiment_task(payload: Dict[str, Any]) -> Dict[str, Any]:
         result_safe = json_safe(result)
         result_safe.setdefault("meta", json_safe(meta))
 
+        # Contract: ok must include run_dir
+        if not result_safe.get("run_dir"):
+            return {
+                "status": "error",
+                "error_type": "ProtocolError",
+                "error": "run_experiment_task produced no run_dir on success",
+                "meta": result_safe.get("meta", {}),
+            }
+
         print(f"[llc worker] complete", file=sys.stdout, flush=True)
         return result_safe
 

@@ -78,9 +78,11 @@ def showcase_readme_entry(**kwargs):
 
     results = run_jobs(cfg_payloads=payloads, opts=opts, task_fn=run_experiment_task)
 
-    # 4) Check for errors in any result
+    # 4) Validate results and require run_dir on success
     verbose = logger.isEnabledFor(logging.DEBUG) or logging.getLogger().isEnabledFor(logging.DEBUG)
+    good_runs = []  # list of (sampler, run_dir)
     for i, res in enumerate(results):
+        sampler = (res.get("meta") or {}).get("sampler", "unknown")
         if res.get("status") == "error":
             # Collect details
             etype = res.get("error_type", "Error")
@@ -91,7 +93,7 @@ def showcase_readme_entry(**kwargs):
             stdout_path = job.get("stdout")
             jid = job.get("id")
             details = []
-            details.append(f"showcase: job {i+1}/{len(results)} FAILED [{etype}] {msg}")
+            details.append(f"showcase: job {i+1}/{len(results)} FAILED [{etype}] {msg} (sampler={sampler})")
             if jid:
                 details.append(f"  submitit job_id: {jid}")
             if stdout_path:
@@ -114,16 +116,22 @@ def showcase_readme_entry(**kwargs):
                 details.append("  --- end traceback ---")
             raise SystemExit("\n".join(details))
 
-    # 5) Analyze & promote images from all runs
-    logger.info(f"All {len(results)} jobs completed successfully")
-
-    for i, res in enumerate(results):
+        # status ok: must have run_dir or it is a protocol error
         run_dir = res.get("run_dir", "")
         if not run_dir:
-            logger.warning(f"Job {i+1}: no run_dir returned; skipping analysis")
-            continue
+            # escalate as error with best available context
+            job = res.get("_job", {}) or {}
+            jid = job.get("id")
+            raise SystemExit(
+                f"showcase: job {i+1}/{len(results)} reported status=ok but returned no run_dir "
+                f"(sampler={sampler}, submitit job_id={jid}). This indicates a task contract bug."
+            )
+        good_runs.append((sampler, run_dir))
 
-        sampler = res.get("meta", {}).get("sampler", "unknown")
+    # 5) Analyze & promote images from all runs
+    logger.info(f"All {len(good_runs)} jobs completed successfully")
+
+    for sampler, run_dir in good_runs:
         logger.info(f"Analyzing {sampler} run: {run_dir}")
 
         # 6) Analyze each run - only generate running_llc plots for README
@@ -131,10 +139,6 @@ def showcase_readme_entry(**kwargs):
                       plots="running_llc",
                       out=None, overwrite=True)
 
-    # 7) Promote images from the first successful run (maintain backward compatibility)
-    first_run_dir = next((res.get("run_dir") for res in results if res.get("run_dir")), None)
-    if first_run_dir:
-        promote_readme_images_entry(first_run_dir)
-        logger.info(f"README assets refreshed from {first_run_dir}")
-    else:
-        logger.warning("No successful runs found for README image promotion")
+    # 7) Promote images from ALL successful runs (sgld/sghmc/hmc/mclmc)
+    promote_readme_images_entry(good_runs)
+    logger.info("README assets refreshed from %s", ", ".join(rd for _, rd in good_runs))
