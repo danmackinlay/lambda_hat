@@ -249,6 +249,7 @@ def run_hmc_online_batched(
     Ln_full64,
     diag_dims=None,
     Rproj=None,
+    tuned_path=None,
     # Ignored parameters for compatibility
     use_tqdm=None,
     progress_update_every=None,
@@ -265,16 +266,42 @@ def run_hmc_online_batched(
         val, _ = logpost_and_grad(theta)
         return val
 
-    # ---- Window adaptation (single chain) ----
-    # Use the first chain's init as the adaptation reference; cheap and robust.
-    key_tune, key_run = jax.random.split(key)
-    x0 = init_thetas[0]
-    # Target acceptance ~ 0.8 is a common default
-    wa = blackjax.window_adaptation(blackjax.hmc, logdensity, num_integration_steps=L)
-    (adapted_state, adaptation_info) = wa.run(key_tune, x0, num_steps=warmup)
-    # Extract tuned parameters from adapted_state.parameters
-    step_size = adapted_state.parameters["step_size"]
-    inv_mass = adapted_state.parameters["inverse_mass_matrix"]
+    # ---- Try to load tuned parameters, or perform window adaptation ----
+    step_size = None
+    inv_mass = None
+
+    if tuned_path:
+        from llc.artifacts import load_tuned_params
+        cached_params = load_tuned_params(tuned_path, "hmc")
+        if cached_params:
+            step_size = cached_params.get("step_size")
+            inv_mass_list = cached_params.get("inverse_mass_matrix")
+            if inv_mass_list is not None:
+                inv_mass = jnp.array(inv_mass_list)
+
+    if step_size is None or inv_mass is None:
+        # ---- Window adaptation (single chain) ----
+        # Use the first chain's init as the adaptation reference; cheap and robust.
+        key_tune, key_run = jax.random.split(key)
+        x0 = init_thetas[0]
+        # Target acceptance ~ 0.8 is a common default
+        wa = blackjax.window_adaptation(blackjax.hmc, logdensity, num_integration_steps=L)
+        (adapted_state, adaptation_info) = wa.run(key_tune, x0, num_steps=warmup)
+        # Extract tuned parameters from adapted_state.parameters
+        step_size = adapted_state.parameters["step_size"]
+        inv_mass = adapted_state.parameters["inverse_mass_matrix"]
+
+        # Save tuned parameters if tuned_path is provided
+        if tuned_path:
+            from llc.artifacts import save_tuned_params
+            tuned_params = {
+                "step_size": float(step_size),
+                "inverse_mass_matrix": inv_mass,
+            }
+            save_tuned_params(tuned_path, "hmc", tuned_params)
+    else:
+        # Using cached parameters, split key for run only
+        key_run = key
 
     # ---- Build the tuned kernel; then vmap across chains ----
     hmc_kernel = blackjax.hmc(
@@ -371,6 +398,7 @@ def run_mclmc_online_batched(
     integrator_name="isokinetic_mclachlan",
     diag_dims=None,
     Rproj=None,
+    tuned_path=None,
     # Ignored parameters for compatibility
     use_tqdm=None,
     progress_update_every=None,
@@ -383,23 +411,52 @@ def run_mclmc_online_batched(
 
     tiny_store = build_tiny_store(diag_dims, Rproj)
 
-    # ---- Tune (L, step_size) once, then share across chains ----
-    key_tune, key_run = jax.random.split(key)
-    x0 = init_thetas[0]
+    # ---- Try to load tuned parameters, or perform tuning ----
+    L_tuned = None
+    eps_tuned = None
+
+    if tuned_path:
+        from llc.artifacts import load_tuned_params
+        cached_params = load_tuned_params(tuned_path, "mclmc")
+        if cached_params:
+            L_tuned = cached_params.get("L")
+            eps_tuned = cached_params.get("step_size")
+
+    if L_tuned is None or eps_tuned is None:
+        # ---- Tune (L, step_size) once, then share across chains ----
+        key_tune, key_run = jax.random.split(key)
+        x0 = init_thetas[0]
+        integrator = getattr(blackjax.mcmc.integrators, integrator_name)
+        # The find_* helper returns tuned integers/floats to build the kernel
+        L_tuned, eps_tuned, _info = blackjax.mclmc_find_L_and_step_size(
+            logdensity_fn,
+            key_tune,
+            x0,
+            desired_energy_var=desired_energy_var,
+            frac_tune3=0.1,
+            num_steps_tune1=tuner_steps // 3,
+            num_steps_tune2=tuner_steps // 3,
+            num_steps_tune3=tuner_steps // 3,
+            integrator=integrator,
+            diagonal_preconditioning=bool(diagonal_preconditioning),
+        )
+
+        # Save tuned parameters if tuned_path is provided
+        if tuned_path:
+            from llc.artifacts import save_tuned_params
+            tuned_params = {
+                "L": int(L_tuned),
+                "step_size": float(eps_tuned),
+                "desired_energy_var": float(desired_energy_var),
+                "integrator_name": integrator_name,
+                "diagonal_preconditioning": bool(diagonal_preconditioning),
+            }
+            save_tuned_params(tuned_path, "mclmc", tuned_params)
+    else:
+        # Using cached parameters, split key for run only
+        key_run = key
+
     integrator = getattr(blackjax.mcmc.integrators, integrator_name)
-    # The find_* helper returns tuned integers/floats to build the kernel
-    L_tuned, eps_tuned, _info = blackjax.mclmc_find_L_and_step_size(
-        logdensity_fn,
-        key_tune,
-        x0,
-        desired_energy_var=desired_energy_var,
-        frac_tune3=0.1,
-        num_steps_tune1=tuner_steps // 3,
-        num_steps_tune2=tuner_steps // 3,
-        num_steps_tune3=tuner_steps // 3,
-        integrator=integrator,
-        diagonal_preconditioning=bool(diagonal_preconditioning),
-    )
     mclmc_kernel = blackjax.mclmc(
         logdensity_fn, L=int(L_tuned), step_size=float(eps_tuned), integrator=integrator
     )

@@ -310,3 +310,32 @@ def save_plot(fig, path: str, **kwargs) -> None:
     default_kwargs = {"dpi": 150, "bbox_inches": "tight", "facecolor": "white"}
     default_kwargs.update(kwargs)
     fig.savefig(path, **default_kwargs)
+
+
+def save_tuned_params(run_dir: str, name: str, params: Dict[str, Any]) -> str:
+    """Save tuned sampler parameters to JSON, e.g. tuned_hmc.json or tuned_mclmc.json."""
+    path = Path(run_dir) / f"tuned_{name}.json"
+    def _to_py(x):
+        try:
+            import numpy as _np
+            if isinstance(x, _np.ndarray):
+                return x.tolist()
+            if isinstance(x, (_np.integer, _np.floating)):
+                return x.item()
+        except Exception:
+            pass
+        return x
+    params_py = {k: _to_py(v) for k, v in params.items()}
+    path.write_text(json.dumps(params_py, indent=2))
+    return str(path)
+
+
+def load_tuned_params(run_dir: str, name: str) -> Dict[str, Any] | None:
+    """Load tuned sampler parameters if present; else return None."""
+    path = Path(run_dir) / f"tuned_{name}.json"
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text())
+    except Exception:
+        return None

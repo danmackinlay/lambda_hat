@@ -151,7 +151,7 @@ def run_one(
                 theta0_f32
                 + 0.01 * random.normal(key, (cfg.chains, d)).astype(jnp.float32)
             ),
-            "run": lambda key, init, env: run_sgld_online_batched(
+            "run": lambda key, init, env, tuned_path=None: run_sgld_online_batched(
                 key,
                 init,
                 env["grad_logpost_minibatch_f32"],
@@ -178,7 +178,7 @@ def run_one(
                 theta0_f32
                 + 0.01 * random.normal(key, (cfg.chains, d)).astype(jnp.float32)
             ),
-            "run": lambda key, init, env: run_sghmc_online_batched(
+            "run": lambda key, init, env, tuned_path=None: run_sghmc_online_batched(
                 key,
                 init,
                 env["grad_logpost_minibatch_f32"],
@@ -199,7 +199,7 @@ def run_one(
             "init": lambda key, d, theta0_f64, cfg: (
                 theta0_f64 + 0.01 * random.normal(key, (cfg.chains, d))
             ),
-            "run": lambda key, init, env: run_hmc_online_batched(
+            "run": lambda key, init, env, tuned_path=None: run_hmc_online_batched(
                 key,
                 init,
                 env["logpost_and_grad_f64"],
@@ -209,6 +209,7 @@ def run_one(
                 cfg.hmc_eval_every,
                 cfg.hmc_thin,
                 env["Ln_full64_vmapped"],
+                tuned_path=tuned_path,
                 **env["diag_targets"],
             ),
         },
@@ -216,7 +217,7 @@ def run_one(
             "init": lambda key, d, theta0_f64, cfg: (
                 theta0_f64 + 0.01 * random.normal(key, (cfg.chains, d))
             ),
-            "run": lambda key, init, env: run_mclmc_online_batched(
+            "run": lambda key, init, env, tuned_path=None: run_mclmc_online_batched(
                 key,
                 init,
                 env["logdensity_mclmc"],
@@ -228,6 +229,7 @@ def run_one(
                 diagonal_preconditioning=cfg.mclmc_diagonal_preconditioning,
                 desired_energy_var=cfg.mclmc_desired_energy_var,
                 integrator_name=cfg.mclmc_integrator,
+                tuned_path=tuned_path,
                 **env["diag_targets"],
             ),
         },
@@ -289,7 +291,9 @@ def run_one(
             k, dim, theta0_f32 if name == "sgld" else theta0_f64, cfg
         )
         init = device_put(init)
-        res = SAMPLERS[name]["run"](k, init, env)
+        # Pass tuned_path for HMC/MCLMC caching, None for SGLD/SGHMC (which ignore it)
+        tuned_path = run_dir if save_artifacts and name in ("hmc", "mclmc") else None
+        res = SAMPLERS[name]["run"](k, init, env, tuned_path=tuned_path)
 
         # Build idata (once; reuse for metrics + later save)
         idata = to_idata(
