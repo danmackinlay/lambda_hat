@@ -102,6 +102,7 @@ See [docs/backends.md](docs/backends.md) for full setup (Modal + SLURM).
 | Analyze saved run       | `uv run llc analyze runs/<run_id>`                                                        |
 | Plot sweep results      | `uv run llc plot-sweep`                                                                   |
 | Refresh README images   | `uv run llc promote-readme-images`                                                        |
+| Debug with verbose mode | `uv run llc --verbose run --sampler sgld` (note: `--verbose` goes BEFORE subcommand)      |
 
 
 ## Debugging and Re-running Jobs
@@ -267,6 +268,9 @@ uv run llc showcase-readme
 uv run llc showcase-readme --gpu-mode=vectorized  # Local GPU
 uv run llc showcase-readme --backend=submitit --gpu-mode=vectorized --slurm-partition=gpu
 uv run llc showcase-readme --backend=modal --gpu-mode=vectorized --gpu-types=H100
+
+# With verbose logging for debugging:
+uv run llc --verbose showcase-readme --backend=submitit --gpu-mode=vectorized --account=abc123
 ```
 
 ### B) Manual approach (advanced)
