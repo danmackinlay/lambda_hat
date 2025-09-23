@@ -107,23 +107,29 @@ def to_idata(
     if acceptance:
         A = stack_ragged_1d(list(acceptance))
         if A is not None:
-            t = min(T, A.shape[1])
-            A = A[:C, :t]
-            L = L[:C, :t]
-            llc = llc[:C, :t]
-            if theta is not None:
-                theta = theta[:C, :t, :]
-            sstats["acceptance_rate"] = A
+            t_new = min(T, A.shape[1])
+            # 🔧 Do not truncate below 4 draws; skip attaching instead.
+            if t_new >= 4:
+                A = A[:C, :t_new]
+                L = L[:C, :t_new]
+                llc = llc[:C, :t_new]
+                if theta is not None:
+                    theta = theta[:C, :t_new, :]
+                T = t_new  # Update T for consistency
+                sstats["acceptance_rate"] = A
     if energy:
         E = stack_ragged_1d(list(energy))
         if E is not None:
-            t = min(T, E.shape[1])
-            E = E[:C, :t]
-            L = L[:C, :t]
-            llc = llc[:C, :t]
-            if theta is not None:
-                theta = theta[:C, :t, :]
-            sstats["energy"] = E
+            t_new = min(T, E.shape[1])
+            # 🔧 Do not truncate below 4 draws; skip attaching instead.
+            if t_new >= 4:
+                E = E[:C, :t_new]
+                L = L[:C, :t_new]
+                llc = llc[:C, :t_new]
+                if theta is not None:
+                    theta = theta[:C, :t_new, :]
+                T = t_new  # Update T for consistency
+                sstats["energy"] = E
 
     data = {
         "posterior": {"llc": llc, "L": L},

@@ -265,22 +265,25 @@ def run_hmc_online_batched(
         val, _ = logpost_and_grad(theta)
         return val
 
-    # Build concrete HMC kernel with reasonable defaults
-    # TODO: These should be tuned or passed as parameters
-    step_size = 1e-2
-    inv_mass = jnp.ones(init_thetas.shape[1])
+    # ---- Window adaptation (single chain) ----
+    # Use the first chain's init as the adaptation reference; cheap and robust.
+    key_tune, key_run = jax.random.split(key)
+    x0 = init_thetas[0]
+    # Target acceptance ~ 0.8 is a common default
+    wa = blackjax.window_adaptation(blackjax.hmc, logdensity, num_integration_steps=L)
+    (adapted_state, adaptation_info) = wa.run(key_tune, x0, num_steps=warmup)
+    # Extract tuned parameters from adapted_state.parameters
+    step_size = adapted_state.parameters["step_size"]
+    inv_mass = adapted_state.parameters["inverse_mass_matrix"]
 
+    # ---- Build the tuned kernel; then vmap across chains ----
     hmc_kernel = blackjax.hmc(
         logdensity,
         step_size=step_size,
         inverse_mass_matrix=inv_mass,
-        num_integration_steps=L
+        num_integration_steps=L,
     )
-
-    # Initialize HMC states from initial positions
     init_states = jax.vmap(hmc_kernel.init)(init_thetas)
-
-    # Create vmapped step function
     step_vmapped = jax.jit(jax.vmap(jax.jit(hmc_kernel.step), in_axes=(0, 0)))
 
     # Create SamplerSpec with proper HMC components
@@ -300,10 +303,10 @@ def run_hmc_online_batched(
     t0 = time.perf_counter()
     result = run_sampler_spec(
         spec=spec,
-        rng_key=key,
+        rng_key=key_run,
         init_states=init_states,  # Now passing HMCState objects
         n_steps=draws,
-        warmup=warmup,
+        warmup=0,  # Warmup already done during adaptation
         eval_every=eval_every,
         thin=thin,
         Ln_eval_f64_vmapped=Ln_full64,
@@ -374,22 +377,49 @@ def run_mclmc_online_batched(
     stats=None,
 ):
     """Batched MCLMC runner using SamplerSpec + run_sampler_spec"""
+    import blackjax
+    import jax
+    from jax import numpy as jnp
+
     tiny_store = build_tiny_store(diag_dims, Rproj)
 
-    # Create MCLMC SamplerSpec
-    spec = mclmc_spec(
-        logdensity_fn=logdensity_fn,
-        tuner_steps=tuner_steps,
-        diagonal_preconditioning=diagonal_preconditioning,
+    # ---- Tune (L, step_size) once, then share across chains ----
+    key_tune, key_run = jax.random.split(key)
+    x0 = init_thetas[0]
+    integrator = getattr(blackjax.mcmc.integrators, integrator_name)
+    # The find_* helper returns tuned integers/floats to build the kernel
+    L_tuned, eps_tuned, _info = blackjax.mclmc_find_L_and_step_size(
+        logdensity_fn,
+        key_tune,
+        x0,
         desired_energy_var=desired_energy_var,
-        integrator_name=integrator_name,
+        frac_tune3=0.1,
+        num_steps_tune1=tuner_steps // 3,
+        num_steps_tune2=tuner_steps // 3,
+        num_steps_tune3=tuner_steps // 3,
+        integrator=integrator,
+        diagonal_preconditioning=bool(diagonal_preconditioning),
+    )
+    mclmc_kernel = blackjax.mclmc(
+        logdensity_fn, L=int(L_tuned), step_size=float(eps_tuned), integrator=integrator
+    )
+    step_single = jax.jit(mclmc_kernel.step)
+
+    # Build a concrete SamplerSpec with vmapped step
+    from llc.samplers.base import SamplerSpec
+    spec = SamplerSpec(
+        name="mclmc",
+        step_vmapped=jax.jit(jax.vmap(step_single, in_axes=(0, 0))),
+        position_fn=lambda st: st.position,
+        info_extractors={"energy": lambda info: info.energy_change},
+        grads_per_step=1.0,
     )
 
     # Run using unified driver
     t0 = time.perf_counter()
     result = run_sampler_spec(
         spec=spec,
-        rng_key=key,
+        rng_key=key_run,
         init_states=init_thetas,
         n_steps=draws,
         warmup=0,  # MCLMC uses tuner_steps, not warmup
