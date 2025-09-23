@@ -48,7 +48,12 @@ def pick_modal_remote_fn(gpu_mode: str):
     return run_experiment_remote_gpu if gpu_mode != "off" else run_experiment_remote
 
 
-def schema_stamp(cfg: Config, save_artifacts: bool = False, skip_if_exists: bool = True, gpu_mode: str = "off") -> Dict[str, Any]:
+def schema_stamp(
+    cfg: Config,
+    save_artifacts: bool = False,
+    skip_if_exists: bool = True,
+    gpu_mode: str = "off",
+) -> Dict[str, Any]:
     """Add schema, artifacts, and GPU metadata to config dict for remote execution."""
     cfg_dict = cfg.__dict__.copy()
     cfg_dict["save_artifacts"] = save_artifacts

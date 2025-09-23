@@ -23,9 +23,7 @@ def test_rmsprop_returns_raw_gradient():
     g = jnp.array([1.0, -2.0])
     st = DiagPrecondState(m=jnp.zeros_like(g), v=jnp.zeros_like(g), t=jnp.zeros(()))
 
-    inv_sqrt, newst, drift_m = precond_update(
-        g, st, "rmsprop", beta2=0.999, eps=1e-8
-    )
+    inv_sqrt, newst, drift_m = precond_update(g, st, "rmsprop", beta2=0.999, eps=1e-8)
 
     # RMSProp should return raw gradient for drift
     assert jnp.allclose(drift_m, g)

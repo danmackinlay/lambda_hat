@@ -6,8 +6,6 @@ from dataclasses import replace
 from jax import jit, value_and_grad
 from jax.flatten_util import ravel_pytree
 import optax
-import numpy as np
-import pandas as pd
 
 from .config import Config
 from .losses import make_loss_fns
@@ -89,5 +87,3 @@ def build_sweep_worklist(sweep_config, n_seeds=3):
                 # emit as dict for cross-process pickling safety
                 work.append((sweep["name"], param, val, seed, cfg))
     return work
-
-

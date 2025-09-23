@@ -51,13 +51,18 @@ def analyze_entry(
             # need L0, n, beta; derive from attrs if you stored them, else skip:
             n_attr = idata.attrs.get("n_data", None)
             if n_attr is None:
-                logger.warning(f"[{sampler}] n_data missing in attrs; reading {run_dir/'config.json'}")
+                logger.warning(
+                    f"[{sampler}] n_data missing in attrs; reading {run_dir / 'config.json'}"
+                )
                 try:
                     import json
-                    with open(run_dir/'config.json') as f:
+
+                    with open(run_dir / "config.json") as f:
                         n = int(json.load(f)["n_data"])
                 except Exception:
-                    logger.error(f"[{sampler}] cannot determine n_data; skipping running_llc")
+                    logger.error(
+                        f"[{sampler}] cannot determine n_data; skipping running_llc"
+                    )
                     return None, None
             else:
                 n = int(n_attr)
@@ -70,8 +75,10 @@ def analyze_entry(
         def _plot_energy(idata, sampler):
             # Only plot energy if sample_stats exists and has energy variable
             try:
-                if hasattr(idata, 'sample_stats') and hasattr(idata.sample_stats, 'data_vars'):
-                    if 'energy' in idata.sample_stats.data_vars:
+                if hasattr(idata, "sample_stats") and hasattr(
+                    idata.sample_stats, "data_vars"
+                ):
+                    if "energy" in idata.sample_stats.data_vars:
                         fig = fig_energy(idata)
                         path = out_dir / f"{sampler}_energy.png"
                         return fig, path
@@ -82,12 +89,27 @@ def analyze_entry(
 
         registry = {
             "running_llc": _plot_running_llc,
-            "rank": lambda idata, sampler: (fig_rank_llc(idata), out_dir / f"{sampler}_llc_rank.png"),
-            "ess_evolution": lambda idata, sampler: (fig_ess_evolution(idata), out_dir / f"{sampler}_llc_ess_evolution.png"),
-            "ess_quantile": lambda idata, sampler: (fig_ess_quantile(idata), out_dir / f"{sampler}_llc_ess_quantile.png"),
-            "autocorr": lambda idata, sampler: (fig_autocorr_llc(idata), out_dir / f"{sampler}_llc_autocorr.png"),
+            "rank": lambda idata, sampler: (
+                fig_rank_llc(idata),
+                out_dir / f"{sampler}_llc_rank.png",
+            ),
+            "ess_evolution": lambda idata, sampler: (
+                fig_ess_evolution(idata),
+                out_dir / f"{sampler}_llc_ess_evolution.png",
+            ),
+            "ess_quantile": lambda idata, sampler: (
+                fig_ess_quantile(idata),
+                out_dir / f"{sampler}_llc_ess_quantile.png",
+            ),
+            "autocorr": lambda idata, sampler: (
+                fig_autocorr_llc(idata),
+                out_dir / f"{sampler}_llc_autocorr.png",
+            ),
             "energy": _plot_energy,
-            "theta": lambda idata, sampler: (fig_theta_trace(idata, dims=4), out_dir / f"{sampler}_theta_trace.png"),
+            "theta": lambda idata, sampler: (
+                fig_theta_trace(idata, dims=4),
+                out_dir / f"{sampler}_theta_trace.png",
+            ),
         }
 
         # figures

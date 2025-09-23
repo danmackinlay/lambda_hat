@@ -27,7 +27,7 @@ def extract_modal_runs_locally(result_dict: dict) -> None:
             fileobj=io.BytesIO(result_dict["artifact_tar"]), mode="r:gz"
         ) as tf:
             # Use data filter to prevent path traversal attacks
-            tf.extractall(dest_root, filter='data')
+            tf.extractall(dest_root, filter="data")
         logger.info(f"Run downloaded and extracted to: {dest}")
         result_dict["run_dir"] = dest
 
@@ -66,7 +66,7 @@ def pull_and_extract_runs(run_id: str = None, target: str = "runs") -> str:
 
     with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as tf:
         # Use data filter to prevent path traversal attacks
-        tf.extractall(dest_root, filter='data')
+        tf.extractall(dest_root, filter="data")
 
     extracted_path = str(dest_root / run_id)
     logger.info(f"[pull-sdk] Extracted into {extracted_path}")

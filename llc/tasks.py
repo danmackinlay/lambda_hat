@@ -51,6 +51,7 @@ def run_experiment_task(cfg_dict: Dict[str, Any]) -> Dict[str, Any]:
         )
     if dropped:
         import logging
+
         logger = logging.getLogger(__name__)
         logger.warning(f"[llc] dropping unknown config keys: {dropped}")
 

@@ -19,6 +19,7 @@ def _gpu_list_from_env():
     lst = [x.strip() for x in val.split(",") if x.strip()]
     return lst if len(lst) > 1 else (lst[0] if lst else "L40S")
 
+
 # --- Base image: all build steps before adding local code ---
 base = (
     modal.Image.debian_slim(python_version="3.11")
@@ -48,11 +49,13 @@ runs_volume = modal.Volume.from_name("llc-runs", create_if_missing=True)
 
 app = modal.App("llc-experiments", image=image)
 
+
 # Fast preflight check to detect funding/billing issues immediately
 @app.function(timeout=30)
 def ping():
     """Quick health check to detect Modal billing/quota issues early."""
     return {"ok": True}
+
 
 # Tunable timeouts and retry settings via environment variables
 TIMEOUT_S = int(os.environ.get("LLC_MODAL_TIMEOUT_S", 3 * 60 * 60))  # Default 3 hours
@@ -73,6 +76,7 @@ def _remote_impl(cfg_dict: dict, *, gpu_label: str) -> dict:
         # - Keep JAX out of module import time (faster cold start)
         # - Avoid importing SDKs globally in the image hydrate phase
         import jax
+
         jax.config.update("jax_enable_x64", True)
         from llc.tasks import run_experiment_task
         import shutil
@@ -81,11 +85,15 @@ def _remote_impl(cfg_dict: dict, *, gpu_label: str) -> dict:
         stage = "setup"
         cfg_dict = dict(cfg_dict)  # copy
         if os.path.isdir("/runs"):
-            logger.info(f"[Modal {gpu_label}] Volume /runs exists, setting runs_dir=/runs")
+            logger.info(
+                f"[Modal {gpu_label}] Volume /runs exists, setting runs_dir=/runs"
+            )
             cfg_dict.setdefault("save_artifacts", True)
             cfg_dict["runs_dir"] = "/runs"
         else:
-            logger.warning(f"[Modal {gpu_label}] Volume /runs not found, using default runs_dir")
+            logger.warning(
+                f"[Modal {gpu_label}] Volume /runs not found, using default runs_dir"
+            )
 
         stage = "run_experiment_task"
         result = run_experiment_task(cfg_dict)
@@ -115,7 +123,9 @@ def _remote_impl(cfg_dict: dict, *, gpu_label: str) -> dict:
                 result["run_dir"] = vol_dir
             except Exception as e:
                 # Non-fatal; we still have the tar
-                logger.warning(f"[Modal {gpu_label}] Warning: failed to persist to volume: {e}")
+                logger.warning(
+                    f"[Modal {gpu_label}] Warning: failed to persist to volume: {e}"
+                )
 
         return result
 
@@ -165,6 +175,7 @@ def run_experiment_remote_gpu(cfg_dict: dict) -> dict:
 
 
 # --- SDK helpers for artifact management ---
+
 
 @app.function(volumes={"/runs": runs_volume})
 def list_runs(prefix: str = "/runs") -> list[str]:

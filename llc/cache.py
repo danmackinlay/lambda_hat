@@ -139,14 +139,13 @@ def load_cached_outputs(run_dir: str) -> Optional[Dict[str, Any]]:
         }
     except Exception as e:
         import logging
+
         logger = logging.getLogger(__name__)
         logger.warning(f"Failed to load cache from {run_dir}: {e}")
         return None
 
 
-def should_skip(
-    cfg, runs_dir: str = "runs"
-) -> tuple[bool, str, Optional[Dict]]:
+def should_skip(cfg, runs_dir: str = "runs") -> tuple[bool, str, Optional[Dict]]:
     """
     Check if a run should be skipped based on existing cache.
 

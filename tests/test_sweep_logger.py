@@ -57,7 +57,7 @@ def test_save_sweep_mixed_results():
             "run_id": "test_run_error_002",
             "error_type": "ValueError",
             "error": "Invalid configuration",
-        }
+        },
     ]
 
     # Should handle both types without crashing

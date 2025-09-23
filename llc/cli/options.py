@@ -246,9 +246,11 @@ def _sampler_choice():
     # Kept separate so we can reuse later if needed
     return click.Choice(["sgld", "sghmc", "hmc", "mclmc"])
 
+
 def add_run_sampler_choice(f):
     """Opt-in sampler selector for `llc run` (single-sampler intent)."""
     import click
+
     return click.option(
         "--sampler",
         type=_sampler_choice(),

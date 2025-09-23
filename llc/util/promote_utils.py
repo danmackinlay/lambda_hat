@@ -1,8 +1,6 @@
 """Image promotion utilities for README examples."""
 
-import re
 import shutil
-from datetime import datetime
 from pathlib import Path
 from typing import List, Tuple
 
@@ -12,24 +10,22 @@ from typing import List, Tuple
 DEFAULT_SELECTION = [
     ("sgld_running_llc.png", "sgld_llc_running.png"),
     ("sghmc_running_llc.png", "sghmc_llc_running.png"),
-    ("hmc_running_llc.png",  "hmc_llc_running.png"),
-    ("mclmc_running_llc.png","mclmc_llc_running.png"),
-
+    ("hmc_running_llc.png", "hmc_llc_running.png"),
+    ("mclmc_running_llc.png", "mclmc_llc_running.png"),
     # rank / ess / acf
-    ("hmc_llc_rank.png",         "llc_rank.png"),
-    ("hmc_llc_ess_evolution.png","llc_ess_evolution.png"),
-    ("hmc_llc_autocorr.png",     "llc_autocorr.png"),
-
+    ("hmc_llc_rank.png", "llc_rank.png"),
+    ("hmc_llc_ess_evolution.png", "llc_ess_evolution.png"),
+    ("hmc_llc_autocorr.png", "llc_autocorr.png"),
     # energy panels we still generate
-    ("hmc_energy.png",   "hmc_energy.png"),
+    ("hmc_energy.png", "hmc_energy.png"),
     ("mclmc_energy.png", "mclmc_energy.png"),
-
     # (optional) theta traces for the paper
     ("sghmc_theta_trace.png", "sghmc_theta_trace.png"),
-    ("hmc_theta_trace.png",   "hmc_theta_trace.png"),
-    ("sgld_theta_trace.png",  "sgld_theta_trace.png"),
+    ("hmc_theta_trace.png", "hmc_theta_trace.png"),
+    ("sgld_theta_trace.png", "sgld_theta_trace.png"),
     ("mclmc_theta_trace.png", "mclmc_theta_trace.png"),
 ]
+
 
 def latest_run_dir(root_dir: Path, selection: List[Tuple[str, str]] = None) -> Path:
     """Pick the newest completed run from canonical runs/ directory."""
@@ -82,6 +78,7 @@ def promote_images(
         raise RuntimeError(f"Run dir not found: {run_dir}")
 
     import logging
+
     logger = logging.getLogger(__name__)
     logger.info(f"Promoting images from: {run_dir}")
     copied = 0

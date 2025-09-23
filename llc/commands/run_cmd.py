@@ -25,7 +25,6 @@ def run_entry(kwargs: dict) -> None:
     mem_gb = kwargs.pop("mem_gb", 16)
     slurm_signal_delay_s = kwargs.pop("slurm_signal_delay_s", 120)
 
-
     # Build config = preset + overrides
     cfg = apply_preset_then_overrides(CFG, preset, kwargs)
 
@@ -47,6 +46,7 @@ def run_entry(kwargs: dict) -> None:
     if backend == "local":
         # Set JAX platform consistently with remote backends
         from llc.util.backend_bootstrap import select_jax_platform
+
         select_jax_platform(gpu_mode)
 
         # Import heavy JAX-touching modules only when needed
@@ -71,11 +71,18 @@ def run_entry(kwargs: dict) -> None:
         slurm_signal_delay_s=slurm_signal_delay_s,
     )
 
-    cfg_payloads = prepare_payloads([cfg], save_artifacts=save_artifacts, skip_if_exists=skip_if_exists, gpu_mode=gpu_mode)
+    cfg_payloads = prepare_payloads(
+        [cfg],
+        save_artifacts=save_artifacts,
+        skip_if_exists=skip_if_exists,
+        gpu_mode=gpu_mode,
+    )
 
     # Use unified backend dispatcher for remote execution
 
-    [result_dict] = run_jobs(cfg_payloads=cfg_payloads, opts=opts, task_fn=run_experiment_task)
+    [result_dict] = run_jobs(
+        cfg_payloads=cfg_payloads, opts=opts, task_fn=run_experiment_task
+    )
 
     # Adapt to summary printer shape for all backends
     result = type("RunOutputs", (), {})()
@@ -93,6 +100,7 @@ def run_entry(kwargs: dict) -> None:
 def _print_summary_like_argparse(result):
     """Print summary in argparse-compatible format."""
     import logging
+
     logger = logging.getLogger(__name__)
 
     logger.info("=== Final Results ===")

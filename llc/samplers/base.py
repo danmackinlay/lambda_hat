@@ -6,7 +6,7 @@ WNV and FDE without per-step hooks.
 
 from __future__ import annotations
 from dataclasses import dataclass
-from typing import Callable, Any, Optional, Dict, Tuple
+from typing import Callable, Any, Dict, Tuple
 
 import jax
 import jax.numpy as jnp
@@ -14,7 +14,6 @@ from jax import lax
 import numpy as np
 
 Array = jnp.ndarray
-
 
 
 @dataclass

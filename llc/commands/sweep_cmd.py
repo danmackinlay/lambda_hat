@@ -47,6 +47,7 @@ def sweep_entry(kwargs: dict) -> None:
     if study_path or sampler_grid_json or problem_grid_json:
         from llc.experiments_matrix import ProblemVariant, SamplerVariant, expand_matrix
         import json
+
         problems = []
         samplers = []
         seeds = list(range(n_seeds))
@@ -55,11 +56,15 @@ def sweep_entry(kwargs: dict) -> None:
             try:
                 import yaml  # requires PyYAML
             except Exception as e:
-                raise SystemExit("`--study` requires PyYAML. Install: `uv add pyyaml` or `pip install pyyaml`.") from e
+                raise SystemExit(
+                    "`--study` requires PyYAML. Install: `uv add pyyaml` or `pip install pyyaml`."
+                ) from e
             with open(study_path) as f:
                 study = yaml.safe_load(f)
             # base overrides (preset already applied)
-            base_cfg = apply_preset_then_overrides(base_cfg, study.get("base", {}).get("preset"), study.get("base", {}))
+            base_cfg = apply_preset_then_overrides(
+                base_cfg, study.get("base", {}).get("preset"), study.get("base", {})
+            )
             problems = [ProblemVariant(**p) for p in (study.get("problems") or [])]
             samplers = [SamplerVariant(**s) for s in (study.get("samplers") or [])]
             if "seeds" in study:
@@ -67,19 +72,27 @@ def sweep_entry(kwargs: dict) -> None:
         else:
             # JSON grids via CLI
             if problem_grid_json:
-                problems = [ProblemVariant(**obj) for obj in json.loads(problem_grid_json)]
+                problems = [
+                    ProblemVariant(**obj) for obj in json.loads(problem_grid_json)
+                ]
             else:
                 problems = [ProblemVariant("default", {})]
             if sampler_grid_json:
-                samplers = [SamplerVariant(**obj) for obj in json.loads(sampler_grid_json)]
+                samplers = [
+                    SamplerVariant(**obj) for obj in json.loads(sampler_grid_json)
+                ]
             else:
                 # default: all four samplers
-                samplers = [SamplerVariant(name, {}) for name in ("sgld", "sghmc", "hmc", "mclmc")]
+                samplers = [
+                    SamplerVariant(name, {})
+                    for name in ("sgld", "sghmc", "hmc", "mclmc")
+                ]
 
         items = list(expand_matrix(base_cfg, problems, samplers, seeds))
     else:
         # Legacy fallback (kept for convenience)
         from llc.experiments import build_sweep_worklist, sweep_space
+
         sw = sweep_space()
         sw["base"] = base_cfg
         # Emits tuples: (name, param, val, seed, cfg) — convert to matrix shape
@@ -112,10 +125,17 @@ def sweep_entry(kwargs: dict) -> None:
         mem_gb=mem_gb,
         slurm_signal_delay_s=slurm_signal_delay_s,
         modal_chunk_size=16,  # Process in batches to avoid long heartbeats
-        modal_autoscaler_cap=min(8, len(items)),  # Cap at 8 containers for reasonable concurrency
+        modal_autoscaler_cap=min(
+            8, len(items)
+        ),  # Cap at 8 containers for reasonable concurrency
     )
 
-    cfg_payloads = prepare_payloads(cfg_dicts, save_artifacts=save_artifacts, skip_if_exists=skip_if_exists, gpu_mode=gpu_mode)
+    cfg_payloads = prepare_payloads(
+        cfg_dicts,
+        save_artifacts=save_artifacts,
+        skip_if_exists=skip_if_exists,
+        gpu_mode=gpu_mode,
+    )
 
     # Include problem names for CSV
     for i, (_problem, _sampler, _seed, cfg) in enumerate(items):
@@ -124,7 +144,9 @@ def sweep_entry(kwargs: dict) -> None:
     # Import task function only when needed
     from llc.tasks import run_experiment_task
 
-    results = run_jobs(cfg_payloads=cfg_payloads, opts=opts, task_fn=run_experiment_task)
+    results = run_jobs(
+        cfg_payloads=cfg_payloads, opts=opts, task_fn=run_experiment_task
+    )
 
     # Save long-form CSV with WNV fields (same as argparse version)
     _save_sweep_results(results)
@@ -138,14 +160,16 @@ def _save_sweep_results(results):
     for r in results:
         # Handle errors separately
         if r.get("status") == "error":
-            error_rows.append({
-                "run_id": r.get("run_id", "unknown"),
-                "status": "error",
-                "stage": r.get("stage", "unknown"),
-                "error_type": r.get("error_type", "Unknown"),
-                "duration_s": r.get("duration_s", 0),
-                "error": r.get("error", "")[:200],  # First 200 chars of error
-            })
+            error_rows.append(
+                {
+                    "run_id": r.get("run_id", "unknown"),
+                    "status": "error",
+                    "stage": r.get("stage", "unknown"),
+                    "error_type": r.get("error_type", "Unknown"),
+                    "duration_s": r.get("duration_s", 0),
+                    "error": r.get("error", "")[:200],  # First 200 chars of error
+                }
+            )
             continue
 
         run_dir = r.get("run_dir")
@@ -168,6 +192,7 @@ def _save_sweep_results(results):
         else:
             from llc.config import Config
             from llc.cache import run_family_id
+
             family_id = run_family_id(Config(**C))
 
         for s in ("sgld", "sghmc", "hmc", "mclmc"):
@@ -206,9 +231,7 @@ def _save_sweep_results(results):
         logger.info(
             "Sweep complete! Results saved to llc_sweep_results.csv with WNV fields."
         )
-        logger.info(
-            f"Successful runs: {len(rows)} rows from {len(results)} jobs"
-        )
+        logger.info(f"Successful runs: {len(rows)} rows from {len(results)} jobs")
     else:
         logger.info("No successful runs to save.")
 
@@ -218,4 +241,6 @@ def _save_sweep_results(results):
 
         error_df = pd.DataFrame(error_rows)
         error_df.to_csv("llc_sweep_errors.csv", index=False)
-        logger.info(f"Errors logged to llc_sweep_errors.csv: {len(error_rows)} failed jobs")
+        logger.info(
+            f"Errors logged to llc_sweep_errors.csv: {len(error_rows)} failed jobs"
+        )

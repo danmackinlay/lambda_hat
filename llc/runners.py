@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import time
 from typing import TYPE_CHECKING
-import jax
 import numpy as np
 from jax import numpy as jnp
 
@@ -35,8 +34,6 @@ def tic():
 def toc(t0):
     """End timing and return elapsed seconds"""
     return time.perf_counter() - t0
-
-
 
 
 # ---------- Batched (fast) versions of the above runners ----------
@@ -104,8 +101,11 @@ def run_sgld_online_batched(
 
     # Estimate and subtract eval time
     from llc.runners_common import estimate_sampling_time
+
     C, M = result.L_hist.shape  # chains, eval points
-    sampling_time = estimate_sampling_time(total_time, result.warmup_time_seconds, Ln_full64, init_thetas, M)
+    sampling_time = estimate_sampling_time(
+        total_time, result.warmup_time_seconds, Ln_full64, init_thetas, M
+    )
 
     # Convert back to the expected format
     kept_stacked = np.asarray(result.kept)  # (C, K, k)
@@ -189,8 +189,11 @@ def run_sghmc_online_batched(
 
     # Estimate and subtract eval time
     from llc.runners_common import estimate_sampling_time
+
     C, M = result.L_hist.shape  # chains, eval points
-    sampling_time = estimate_sampling_time(total_time, result.warmup_time_seconds, Ln_full64, init_thetas, M)
+    sampling_time = estimate_sampling_time(
+        total_time, result.warmup_time_seconds, Ln_full64, init_thetas, M
+    )
 
     # Convert back to the expected format
     kept_stacked = np.asarray(result.kept)  # (C, K, k)
@@ -262,8 +265,11 @@ def run_hmc_online_batched(
 
     # Estimate and subtract eval time
     from llc.runners_common import estimate_sampling_time
+
     C, M = result.L_hist.shape  # chains, eval points
-    sampling_time = estimate_sampling_time(total_time, result.warmup_time_seconds, Ln_full64, init_thetas, M)
+    sampling_time = estimate_sampling_time(
+        total_time, result.warmup_time_seconds, Ln_full64, init_thetas, M
+    )
 
     # Convert back to expected format
     kept_stacked = np.asarray(result.kept)  # (C, K, k)
@@ -348,8 +354,11 @@ def run_mclmc_online_batched(
 
     # Estimate and subtract eval time
     from llc.runners_common import estimate_sampling_time
+
     C, M = result.L_hist.shape  # chains, eval points
-    sampling_time = estimate_sampling_time(total_time, result.warmup_time_seconds, Ln_full64, init_thetas, M)
+    sampling_time = estimate_sampling_time(
+        total_time, result.warmup_time_seconds, Ln_full64, init_thetas, M
+    )
 
     # Convert back to expected format
     kept_stacked = np.asarray(result.kept)  # (C, K, k)

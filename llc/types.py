@@ -21,8 +21,6 @@ class SamplerResult:
     work: dict = field(default_factory=dict)  # grad counts, steps, etc.
 
 
-
-
 @dataclass
 class RunOutputs:
     """Results from running one complete experiment"""

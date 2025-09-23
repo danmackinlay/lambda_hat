@@ -12,7 +12,8 @@ import os
 import click
 
 from llc.cli.options import (
-    run_shared_options, add_run_sampler_choice,
+    run_shared_options,
+    add_run_sampler_choice,
     sweep_shared_options,
     analyze_shared_options,
 )

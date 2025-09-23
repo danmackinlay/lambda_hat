@@ -38,7 +38,6 @@ def _run_with_soft_timeout(fn, arg, seconds):
 
 def _submitit_safe_call(fn, item):
     """Wrapper that ensures Submitit jobs always return structured dict with status."""
-    import time
     import traceback
 
     t0 = time.time()
@@ -190,7 +189,9 @@ class ModalExecutor(BaseExecutor):
         # All resource/timeout/volume settings must be set on the decorator in modal_app.py.
         self.remote_fn = remote_fn
         self._options = options or {}
-        self._hang_timeout = int(os.environ.get("LLC_MODAL_CLIENT_HANG_TIMEOUT_S", "180"))
+        self._hang_timeout = int(
+            os.environ.get("LLC_MODAL_CLIENT_HANG_TIMEOUT_S", "180")
+        )
 
         # (Optional) Only autoscaler hints are adjustable at runtime.
         ac = {
@@ -241,7 +242,10 @@ class ModalExecutor(BaseExecutor):
             )
         if "err" in exc_box:
             msg = str(exc_box["err"]).lower()
-            if any(k in msg for k in ["insufficient", "funds", "balance", "quota", "billing"]):
+            if any(
+                k in msg
+                for k in ["insufficient", "funds", "balance", "quota", "billing"]
+            ):
                 raise RuntimeError(
                     "Modal billing/quota error while scheduling or running. "
                     "Top up balance or enable auto-recharge, then retry."

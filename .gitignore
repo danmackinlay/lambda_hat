@@ -11,6 +11,9 @@ wheels/
 .claude/
 .idea/
 
+# Slurm cruft
+slurm_logs/
+
 # Virtual environments
 .venv
 

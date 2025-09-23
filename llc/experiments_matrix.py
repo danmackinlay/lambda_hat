@@ -13,8 +13,8 @@ class ProblemVariant:
 
 @dataclass
 class SamplerVariant:
-    name: str                 # "sgld" | "sghmc" | "hmc" | "mclmc"
-    overrides: Dict[str, Any] # e.g. {"sgld_precond": "adam", "sgld_step_size": 1e-6}
+    name: str  # "sgld" | "sghmc" | "hmc" | "mclmc"
+    overrides: Dict[str, Any]  # e.g. {"sgld_precond": "adam", "sgld_step_size": 1e-6}
 
 
 def expand_matrix(
@@ -30,5 +30,7 @@ def expand_matrix(
     for p in problems:
         for s in samplers:
             for seed in seeds:
-                cfg = replace(base_cfg, seed=seed, samplers=[s.name], **p.overrides, **s.overrides)
+                cfg = replace(
+                    base_cfg, seed=seed, samplers=[s.name], **p.overrides, **s.overrides
+                )
                 yield p.name, s.name, seed, cfg

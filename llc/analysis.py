@@ -212,20 +212,17 @@ def fig_energy(idata) -> plt.Figure:
 
 
 def fig_theta_trace(idata, dims: int = 4) -> plt.Figure:
-
     # Check if we have scalar theta variables (new approach)
     theta_vars = [v for v in idata.posterior.data_vars if v.startswith("theta_")]
 
     if theta_vars:
         # Use scalar theta variables - ArviZ will naturally create one row per variable
         # Sort numerically to ensure proper ordering (theta_0, theta_1, theta_2, ...)
-        theta_vars_sorted = sorted(theta_vars, key=lambda x: int(x.split('_')[1]))
+        theta_vars_sorted = sorted(theta_vars, key=lambda x: int(x.split("_")[1]))
         n_vars = min(dims, len(theta_vars_sorted))
         var_names = theta_vars_sorted[:n_vars]
         axes = az.plot_trace(
-            idata,
-            var_names=var_names,
-            backend_kwargs={"constrained_layout": True}
+            idata, var_names=var_names, backend_kwargs={"constrained_layout": True}
         )
         # Return figure from axes grid
         if isinstance(axes, (list, tuple, np.ndarray)):
@@ -238,7 +235,7 @@ def fig_theta_trace(idata, dims: int = 4) -> plt.Figure:
         nd = idata.posterior["theta"].shape[-1]
         n_vars = min(dims, nd)
         sel = {"theta_dim": list(range(n_vars))}
-        fig, axes = plt.subplots(n_vars, 2, figsize=(12, 3*n_vars), squeeze=False)
+        fig, axes = plt.subplots(n_vars, 2, figsize=(12, 3 * n_vars), squeeze=False)
         az.plot_trace(
             idata,
             var_names=["theta"],
@@ -301,7 +298,9 @@ def generate_diagnostics(
         if theta_scalar:
             theta_dims = min(max_theta_dims, len(theta_scalar))
         elif "theta" in idata.posterior:
-            theta_dims = min(max_theta_dims, int(idata.posterior["theta"].sizes.get("theta_dim", 0)))
+            theta_dims = min(
+                max_theta_dims, int(idata.posterior["theta"].sizes.get("theta_dim", 0))
+            )
         else:
             theta_dims = 0
 

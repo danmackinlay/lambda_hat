@@ -4,16 +4,20 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
 from llc.util.backend_bootstrap import (
-    select_jax_platform, validate_modal_gpu_types, pick_modal_remote_fn, schema_stamp
+    select_jax_platform,
+    validate_modal_gpu_types,
+    pick_modal_remote_fn,
+    schema_stamp,
 )
 from llc.execution import get_executor
 from llc.util.modal_utils import extract_modal_runs_locally
 
+
 @dataclass
 class BackendOptions:
-    backend: str                   # "local" | "submitit" | "modal"
-    gpu_mode: str                  # "off" | "vectorized" | "sequential"
-    gpu_types: str = ""            # e.g. "H100,A100,L40S"
+    backend: str  # "local" | "submitit" | "modal"
+    gpu_mode: str  # "off" | "vectorized" | "sequential"
+    gpu_types: str = ""  # e.g. "H100,A100,L40S"
     local_workers: int = 0
     # submitit
     slurm_partition: Optional[str] = None
@@ -25,7 +29,8 @@ class BackendOptions:
     # modal
     modal_autoscaler_cap: int = 8
     modal_chunk_size: int = 16
-    modal_auto_extract: bool = True   # download artifacts after each job
+    modal_auto_extract: bool = True  # download artifacts after each job
+
 
 def _build_submitit_kwargs(opts: BackendOptions) -> Dict[str, Any]:
     gpus_per_node = 1 if opts.gpu_mode != "off" else 0
@@ -43,6 +48,7 @@ def _build_submitit_kwargs(opts: BackendOptions) -> Dict[str, Any]:
         kw["slurm_additional_parameters"] = {"account": opts.slurm_account}
     return kw
 
+
 def _build_modal_options(n_jobs: int, cap: int) -> Dict[str, int]:
     maxc = min(cap, max(1, n_jobs))
     return {
@@ -51,8 +57,12 @@ def _build_modal_options(n_jobs: int, cap: int) -> Dict[str, int]:
         "buffer_containers": max(1, maxc // 2),
     }
 
-def prepare_payloads(cfgs: Sequence, *, save_artifacts: bool, skip_if_exists: bool, gpu_mode: str) -> List[dict]:
+
+def prepare_payloads(
+    cfgs: Sequence, *, save_artifacts: bool, skip_if_exists: bool, gpu_mode: str
+) -> List[dict]:
     return [schema_stamp(cfg, save_artifacts, skip_if_exists, gpu_mode) for cfg in cfgs]
+
 
 def run_jobs(
     *,
@@ -70,6 +80,7 @@ def run_jobs(
 
     if backend == "modal":
         from llc.modal_app import app, ping
+
         remote_fn = pick_modal_remote_fn(opts.gpu_mode)
         results: List[dict] = []
         with app.run():
@@ -78,17 +89,24 @@ def run_jobs(
                 ping.remote()
             except Exception as e:
                 msg = str(e).lower()
-                if any(k in msg for k in ["insufficient", "funds", "balance", "quota", "billing"]):
+                if any(
+                    k in msg
+                    for k in ["insufficient", "funds", "balance", "quota", "billing"]
+                ):
                     raise SystemExit(
                         "Modal preflight failed: likely out of funds or billing disabled. "
                         "Top up balance or enable auto-recharge, then retry."
                     )
                 raise
             # chunked map to avoid very long heartbeats
-            modal_opts = _build_modal_options(len(cfg_payloads), opts.modal_autoscaler_cap)
+            modal_opts = _build_modal_options(
+                len(cfg_payloads), opts.modal_autoscaler_cap
+            )
             for i in range(0, len(cfg_payloads), opts.modal_chunk_size):
-                batch = cfg_payloads[i:i+opts.modal_chunk_size]
-                ex = get_executor(backend="modal", remote_fn=remote_fn, options=modal_opts)
+                batch = cfg_payloads[i : i + opts.modal_chunk_size]
+                ex = get_executor(
+                    backend="modal", remote_fn=remote_fn, options=modal_opts
+                )
                 batch_results = ex.map(task_fn, batch)
                 if opts.modal_auto_extract:
                     for r in batch_results:

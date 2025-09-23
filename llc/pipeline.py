@@ -267,7 +267,9 @@ def run_one(
                     timings={"sampling": np.nan, "warmup": np.nan},  # Unknown on reload
                     work={"n_full_loss": np.nan},  # Optional on reload
                     n_data=cfg.n_data,
-                    sgld_batch=cfg.sgld_batch_size if name == "sgld" else (cfg.sghmc_batch_size if name == "sghmc" else None),
+                    sgld_batch=cfg.sgld_batch_size
+                    if name == "sgld"
+                    else (cfg.sghmc_batch_size if name == "sghmc" else None),
                 )
                 # Merge metrics and continue to next sampler
                 for k2, v in {**m_core, **m_eff}.items():
@@ -302,7 +304,11 @@ def run_one(
             timings=res.timings,
             work=res.work,
             n_data=cfg.n_data,
-            sgld_batch=(cfg.sgld_batch_size if name == "sgld" else (cfg.sghmc_batch_size if name == "sghmc" else None)),
+            sgld_batch=(
+                cfg.sgld_batch_size
+                if name == "sgld"
+                else (cfg.sghmc_batch_size if name == "sghmc" else None)
+            ),
         )
 
         logger.info(
@@ -316,7 +322,9 @@ def run_one(
                     np.nanmean([a.mean() for a in res.acceptance if a.size])
                 )
                 m_eff["mean_acceptance"] = acc_scalar
-                logger.info(f"HMC acceptance rate (mean over chains/draws): {acc_scalar:.3f}")
+                logger.info(
+                    f"HMC acceptance rate (mean over chains/draws): {acc_scalar:.3f}"
+                )
             except Exception:
                 pass
 

@@ -6,25 +6,19 @@ Python hooks; all diagnostics flow via `extras` and `L_hist`.
 """
 
 from __future__ import annotations
-import time
 
 import jax
 import jax.numpy as jnp
 import blackjax
 
 from .base import (
-    drive_chains_batched,
-    BatchedResult,
     SamplerSpec,
-    DiagPrecondState,
     precond_update,
 )
 
 Array = jnp.ndarray
 
 # ---------- SGLD (BlackJAX 1.2.5 returns new_position only) ----------
-
-
 
 
 def sgld_spec(
@@ -97,8 +91,6 @@ def sgld_spec(
 # ---------- SGHMC (Stochastic Gradient Hamiltonian Monte Carlo) ----------
 
 
-
-
 def sghmc_spec(
     *,
     grad_logpost_minibatch,
@@ -138,14 +130,13 @@ def sghmc_spec(
 # ---------- HMC (with window adaptation) ----------
 
 
-
-
 def hmc_spec(
     *,
     logpost_and_grad,
     L: int,
 ) -> SamplerSpec:
     """Create SamplerSpec for HMC. Adaptation handled separately."""
+
     def logdensity(theta):
         val, _ = logpost_and_grad(theta)
         return val
@@ -180,8 +171,6 @@ def hmc_spec(
 
 
 # ---------- MCLMC (unadjusted; tuned L & step_size) ----------
-
-
 
 
 def mclmc_spec(
