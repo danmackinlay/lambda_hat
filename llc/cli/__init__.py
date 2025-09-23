@@ -26,7 +26,8 @@ from llc.util.logging_setup import setup_logging
 @click.group()
 @click.option("-v", "--verbose", count=True, help="Increase verbosity (repeatable).")
 @click.option("-q", "--quiet", count=True, help="Decrease verbosity.")
-def cli(verbose: int, quiet: int):
+@click.option("--debug-thirdparty", is_flag=True, help="Include third-party DEBUG logs (matplotlib, PIL, etc.).")
+def cli(verbose: int, quiet: int, debug_thirdparty: bool):
     """LLC command-line interface (Click)."""
     # Configure JAX and matplotlib environment for CLI usage
     os.environ.setdefault("JAX_ENABLE_X64", "true")
@@ -35,7 +36,7 @@ def cli(verbose: int, quiet: int):
     )  # headless backend for server environments
 
     # Centralized logging setup with third-party noise control
-    setup_logging(verbose, quiet)
+    setup_logging(verbose, quiet, debug_thirdparty=debug_thirdparty)
 
 
 # ----- Commands -----
