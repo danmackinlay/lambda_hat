@@ -22,9 +22,11 @@ def run_experiment_task(payload: Dict[str, Any]) -> Dict[str, Any]:
     import os
     import sys
     import platform
+    import traceback
     from dataclasses import fields
     from llc.config import Config, config_schema_hash
     from llc.pipeline import run_one
+    from llc.util.json_safe import json_safe
 
     # Track stage for better error reporting
     stage = "init"
@@ -134,25 +136,31 @@ def run_experiment_task(payload: Dict[str, Any]) -> Dict[str, Any]:
             "cfg": cfg_dict,
             "run_dir": out.run_dir or "",
             "run_id": computed_run_id,  # Always include for better tracking
+            "status": "ok",
         }
         for s in ("sgld", "sghmc", "hmc", "mclmc"):
             k = f"{s}_llc_mean"
             if k in out.metrics:
                 result[f"llc_{s}"] = float(out.metrics[k])
 
+        # Ensure JSON-safe result
+        result_safe = json_safe(result)
+        result_safe.setdefault("meta", json_safe(meta))
+
         print(f"[llc worker] complete", file=sys.stdout, flush=True)
-        return result
+        return result_safe
 
     except Exception as e:
         # Enhanced error reporting with stage and run_id
-        import traceback
+        tb = traceback.format_exc()
         error_dict = {
             "status": "error",
             "stage": stage,
             "run_id": locals().get("computed_run_id", "unknown"),
             "error": str(e),
             "error_type": type(e).__name__,
-            "traceback": traceback.format_exc(),
+            "traceback": tb,
+            "meta": json_safe(payload.get("meta", {})),
         }
         print(f"[llc worker] error at stage={stage}: {e}", file=sys.stderr, flush=True)
-        raise  # Re-raise to let wrapper handle it
+        return error_dict

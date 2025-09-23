@@ -5,9 +5,16 @@ from pathlib import Path
 from typing import List, Tuple
 
 
-# Which files to copy (source key -> stable asset name).
-# We prefer exact filename matches; else substring fallback.
-DEFAULT_SELECTION = [
+# Only copy the three images actually linked from the README.
+# README shows: SGLD, HMC, MCLMC running LLC plots only.
+README_PLOTS = [
+    ("sgld_running_llc.png", "sgld_llc_running.png"),
+    ("hmc_running_llc.png", "hmc_llc_running.png"),
+    ("mclmc_running_llc.png", "mclmc_llc_running.png"),
+]
+
+# Legacy selection with all plots (unused by default)
+FULL_SELECTION = [
     ("sgld_running_llc.png", "sgld_llc_running.png"),
     ("sghmc_running_llc.png", "sghmc_llc_running.png"),
     ("hmc_running_llc.png", "hmc_llc_running.png"),
@@ -25,6 +32,8 @@ DEFAULT_SELECTION = [
     ("sgld_theta_trace.png", "sgld_theta_trace.png"),
     ("mclmc_theta_trace.png", "mclmc_theta_trace.png"),
 ]
+
+DEFAULT_SELECTION = README_PLOTS
 
 
 def latest_run_dir(root_dir: Path, selection: List[Tuple[str, str]] = None) -> Path:

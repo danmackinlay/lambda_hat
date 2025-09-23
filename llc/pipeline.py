@@ -72,6 +72,10 @@ def run_one(
 
     # Compute deterministic run ID and family ID
     rid = run_id(cfg)
+
+    # Log sampler and run ID for debugging
+    sampler_name = cfg.samplers[0]
+    logger.info("Running atomic run sampler=%s rid=%s", sampler_name, rid)
     fid = run_family_id(cfg)
     # Use canonical runs/ directory everywhere (local and Modal)
     if hasattr(cfg, "runs_dir") and cfg.runs_dir.endswith("/runs"):

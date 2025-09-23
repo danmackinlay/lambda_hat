@@ -8,6 +8,7 @@ from llc.commands.analyze_cmd import analyze_entry
 from llc.commands.promote_cmd import promote_readme_images_entry
 from dataclasses import replace
 import logging
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -78,9 +79,40 @@ def showcase_readme_entry(**kwargs):
     results = run_jobs(cfg_payloads=payloads, opts=opts, task_fn=run_experiment_task)
 
     # 4) Check for errors in any result
+    verbose = logger.isEnabledFor(logging.DEBUG) or logging.getLogger().isEnabledFor(logging.DEBUG)
     for i, res in enumerate(results):
         if res.get("status") == "error":
-            raise SystemExit(f"showcase: job {i+1}/{len(results)} failed with error: {res.get('error', 'unknown')}")
+            # Collect details
+            etype = res.get("error_type", "Error")
+            msg = res.get("error", "unknown")
+            tb = res.get("traceback", "")
+            job = res.get("_job", {}) or {}
+            stderr_path = job.get("stderr")
+            stdout_path = job.get("stdout")
+            jid = job.get("id")
+            details = []
+            details.append(f"showcase: job {i+1}/{len(results)} FAILED [{etype}] {msg}")
+            if jid:
+                details.append(f"  submitit job_id: {jid}")
+            if stdout_path:
+                details.append(f"  stdout: {stdout_path}")
+            if stderr_path:
+                details.append(f"  stderr: {stderr_path}")
+                # Tail last ~200 lines if verbose and file exists
+                if verbose and isinstance(stderr_path, str) and os.path.exists(stderr_path):
+                    try:
+                        with open(stderr_path, "rb") as fh:
+                            tail = fh.read()[-20000:]  # ~20KB
+                        details.append("  --- stderr tail ---")
+                        details.append(tail.decode(errors="replace"))
+                        details.append("  --- end stderr tail ---")
+                    except Exception:
+                        pass
+            if verbose and tb:
+                details.append("  --- traceback ---")
+                details.append(tb)
+                details.append("  --- end traceback ---")
+            raise SystemExit("\n".join(details))
 
     # 5) Analyze & promote images from all runs
     logger.info(f"All {len(results)} jobs completed successfully")
@@ -94,9 +126,9 @@ def showcase_readme_entry(**kwargs):
         sampler = res.get("meta", {}).get("sampler", "unknown")
         logger.info(f"Analyzing {sampler} run: {run_dir}")
 
-        # 6) Analyze each run
+        # 6) Analyze each run - only generate running_llc plots for README
         analyze_entry(run_dir, which="all",
-                      plots="running_llc,rank,ess_evolution,autocorr,energy,theta",
+                      plots="running_llc",
                       out=None, overwrite=True)
 
     # 7) Promote images from the first successful run (maintain backward compatibility)

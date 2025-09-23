@@ -23,8 +23,9 @@ from llc.cli.options import (
 
 
 @click.group()
-@click.option("--verbose", is_flag=True, help="Enable verbose logging.")
-def cli(verbose: bool):
+@click.option("-v", "--verbose", count=True, help="Increase verbosity (repeatable).")
+@click.option("-q", "--quiet", count=True, help="Decrease verbosity.")
+def cli(verbose: int, quiet: int):
     """LLC command-line interface (Click)."""
     # Configure JAX and matplotlib environment for CLI usage
     os.environ.setdefault("JAX_ENABLE_X64", "true")
@@ -32,10 +33,12 @@ def cli(verbose: bool):
         "MPLBACKEND", "Agg"
     )  # headless backend for server environments
 
-    logging.basicConfig(
-        level=logging.DEBUG if verbose else logging.INFO,
-        format="%(levelname)s: %(message)s",
-    )
+    # Map -v^n to levels: 0->INFO, 1->DEBUG, 2+->DEBUG (same) and add more detail via our own conditionals
+    desired = logging.INFO if verbose == 0 else logging.DEBUG
+    desired = logging.ERROR if quiet >= 1 else desired
+    logging.basicConfig(level=desired, format="%(levelname)s: %(message)s")
+    # Propagate to submitit too (it uses logging)
+    logging.getLogger("submitit").setLevel(desired)
 
 
 # ----- Commands -----

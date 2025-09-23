@@ -14,6 +14,7 @@ from llc.execution import get_executor
 from llc.util.modal_utils import extract_modal_runs_locally
 from llc.config import config_schema_hash
 import logging
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -155,6 +156,21 @@ def prepare_payloads(
     return out
 
 
+def _wrap_task(task_fn: Callable[[dict], dict]) -> Callable[[dict], dict]:
+    """Ensure any unexpected exception becomes a structured error dict (belt & braces)."""
+    def _inner(payload: dict) -> dict:
+        try:
+            res = task_fn(payload)
+            # If a task wrongly returned a non-dict, make it safe
+            if not isinstance(res, dict):
+                return {"status": "error", "error": f"Task returned non-dict: {type(res)}", "raw": str(res)}
+            return res
+        except Exception as e:
+            import traceback
+            return {"status": "error", "error_type": type(e).__name__, "error": str(e), "traceback": traceback.format_exc()}
+    return _inner
+
+
 def run_jobs(
     *,
     cfg_payloads: List[dict],
@@ -173,6 +189,7 @@ def run_jobs(
     if backend == "modal":
         from llc.modal_app import app, ping
 
+        wrapped = _wrap_task(task_fn)
         remote_fn = pick_modal_remote_fn(opts.gpu_mode)
         results: List[dict] = []
         with app.run():
@@ -199,7 +216,7 @@ def run_jobs(
                 ex = get_executor(
                     backend="modal", remote_fn=remote_fn, options=modal_opts
                 )
-                batch_results = ex.map(task_fn, batch)
+                batch_results = ex.map(wrapped, batch)
                 if opts.modal_auto_extract:
                     for r in batch_results:
                         if r.get("status") != "error":
@@ -211,11 +228,29 @@ def run_jobs(
         return results
 
     if backend == "submitit":
+        wrapped = _wrap_task(task_fn)
         ex = get_executor(backend="submitit", **_build_submitit_kwargs(opts))
-        return ex.map(task_fn, cfg_payloads)
+        results = ex.map(wrapped, cfg_payloads)
+
+        # Attach executor/job metadata when available (submitit)
+        try:
+            jobs = getattr(ex, "jobs", None)  # adapt to your executor API if different
+            if jobs and len(jobs) == len(results):
+                for r, j in zip(results, jobs):
+                    paths = getattr(j, "paths", None)
+                    if paths:
+                        # submitit JobPaths has .stdout and .stderr
+                        r.setdefault("_job", {})
+                        r["_job"]["id"] = getattr(j, "job_id", None)
+                        r["_job"]["stdout"] = getattr(paths, "stdout", None)
+                        r["_job"]["stderr"] = getattr(paths, "stderr", None)
+        except Exception:
+            pass
+        return results
 
     if backend == "local":
+        wrapped = _wrap_task(task_fn)
         ex = get_executor(backend="local", workers=opts.local_workers)
-        return ex.map(task_fn, cfg_payloads)
+        return ex.map(wrapped, cfg_payloads)
 
     raise ValueError(f"Unknown backend: {backend}")
