@@ -444,7 +444,12 @@ def run_mclmc_online_batched(
 
         # Note: BlackJAX 1.2.5 requires pre-built kernel, not logdensity_fn parameter
 
-        # Use BlackJAX 1.2.5 fractional API for tuning (correct: pass kernel, not logdensity_fn)
+        # Fail fast if someone reintroduces unsupported kwargs here
+        import inspect
+        _sig = inspect.signature(blackjax.mclmc_find_L_and_step_size)
+        assert "integrator" not in _sig.parameters, "Do not pass integrator to mclmc_find_L_and_step_size"
+
+        # Use BlackJAX 1.2.5 fractional API for tuning (pass kernel+state+rng_key)
         L_tuned, eps_tuned, _info = blackjax.mclmc_find_L_and_step_size(
             mclmc_kernel=temp_kernel,
             num_steps=num_steps,
@@ -457,7 +462,6 @@ def run_mclmc_online_batched(
             trust_in_estimate=trust_in_estimate,
             num_effective_samples=num_effective_samples,
             diagonal_preconditioning=bool(diagonal_preconditioning),
-            integrator=integrator,
         )
 
         # Save tuned parameters if tuned_path is provided
