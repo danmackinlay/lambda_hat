@@ -35,6 +35,11 @@ def run_experiment_task(payload: Dict[str, Any]) -> Dict[str, Any]:
     # Track stage for better error reporting
     stage = "init"
 
+    # Initialize variables early so they're available in exception handler
+    computed_run_id = None
+    expected_run_dir = None
+    sampler = None
+
     try:
         # Require canonical nested payload structure - fail fast on unexpected format
         if "cfg" not in payload:
@@ -195,11 +200,13 @@ def run_experiment_task(payload: Dict[str, Any]) -> Dict[str, Any]:
         error_dict = {
             "status": "error",
             "stage": stage,
-            "run_id": locals().get("computed_run_id", "unknown"),
-            "error": str(e),
             "error_type": type(e).__name__,
+            "error": str(e),
             "traceback": tb,
             "meta": json_safe(payload.get("meta", {})),
+            "sampler": sampler,
+            "rid": computed_run_id,
+            "run_dir_expected": expected_run_dir,
         }
         print(f"[llc worker] error at stage={stage}: {e}", file=sys.stderr, flush=True)
         return error_dict

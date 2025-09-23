@@ -312,20 +312,30 @@ def save_plot(fig, path: str, **kwargs) -> None:
     fig.savefig(path, **default_kwargs)
 
 
-def save_tuned_params(run_dir: str, name: str, params: Dict[str, Any]) -> str:
-    """Save tuned sampler parameters to JSON, e.g. tuned_hmc.json or tuned_mclmc.json."""
-    path = Path(run_dir) / f"tuned_{name}.json"
-    def _to_py(x):
+def _to_py(obj: Any):
+    """Convert JAX/NumPy containers to plain Python (lists/floats/ints) for JSON."""
+    # NumPy / JAX arrays (works for jax.Array, DeviceArray, np.ndarray)
+    if hasattr(obj, "shape") and hasattr(obj, "dtype"):
         try:
-            import numpy as _np
-            if isinstance(x, _np.ndarray):
-                return x.tolist()
-            if isinstance(x, (_np.integer, _np.floating)):
-                return x.item()
+            return np.asarray(obj).tolist()
         except Exception:
-            pass
-        return x
-    params_py = {k: _to_py(v) for k, v in params.items()}
+            return repr(obj)
+    # NumPy scalar
+    if type(obj).__module__ == "numpy" and hasattr(obj, "item"):
+        try:
+            return obj.item()
+        except Exception:
+            return repr(obj)
+    if isinstance(obj, dict):
+        return {str(k): _to_py(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_to_py(v) for v in obj]
+    return obj
+
+def save_tuned_params(run_dir: str, name: str, params: Dict[str, Any]) -> str:
+    """Save tuned sampler parameters to JSON (JAX/NumPy safe)."""
+    path = Path(run_dir) / f"tuned_{name}.json"
+    params_py = _to_py(params)
     path.write_text(json.dumps(params_py, indent=2))
     return str(path)
 

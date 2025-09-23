@@ -82,14 +82,12 @@ def showcase_readme_entry(**kwargs):
     verbose = logger.isEnabledFor(logging.DEBUG) or logging.getLogger().isEnabledFor(logging.DEBUG)
     good_runs = []  # list of (sampler, run_dir)
     for i, res in enumerate(results):
-        # Treat "ok/no run_dir" as an error (belt & braces)
+        # Treat "ok/no run_dir" as an error, but do NOT override real worker errors.
         if res.get("status") == "ok" and not res.get("run_dir"):
-            res = {
-                **res,
-                "status": "error",
-                "error_type": "TaskContractError",
-                "error": f"status=ok but returned no run_dir",
-            }
+            res = {**res}
+            res["status"] = "error"
+            res.setdefault("error_type", "TaskContractError")
+            res.setdefault("error", "status=ok but returned no run_dir")
 
         sampler = res.get("sampler") or (res.get("meta") or {}).get("sampler", "unknown")
         if res.get("status") == "error":
