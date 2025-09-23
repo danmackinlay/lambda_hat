@@ -221,6 +221,50 @@ uv sync --extra slurm      # SLURM support
 
 ---
 
+## Regenerating README Figures
+
+There are two ways to refresh the images under `assets/readme/`:
+
+### A) One-step (recommended)
+
+Runs a full preset, generates plots, and updates README assets:
+
+```bash
+# Choose backend/gpu flags as needed (works with local, submitit, modal)
+uv run llc showcase-readme
+
+# Examples with different backends:
+uv run llc showcase-readme --gpu-mode=vectorized  # Local GPU
+uv run llc showcase-readme --backend=submitit --gpu-mode=vectorized --slurm-partition=gpu
+uv run llc showcase-readme --backend=modal --gpu-mode=vectorized --gpu-types=H100
+```
+
+### B) Manual approach (advanced)
+
+Useful if you already have a specific run directory:
+
+1. **Analyze** an existing run to generate plots:
+   ```bash
+   uv run llc analyze runs/<run_id> --which all \
+     --plots running_llc,rank,ess_evolution,autocorr,energy,theta
+   ```
+
+2. **Promote** curated images into the README assets:
+   ```bash
+   # With a specific run dir...
+   uv run llc promote-readme-images runs/<run_id>
+
+   # ...or let it pick the newest completed run automatically
+   uv run llc promote-readme-images
+   ```
+
+**Command overview:**
+* `showcase-readme`: run (full preset) → analyze → promote (all-in-one)
+* `analyze`: only renders figures into `<run_dir>/analysis/`
+* `promote-readme-images`: only copies curated images into `assets/readme/`
+
+---
+
 ## Documentation
 
 * [Backends (Modal/SLURM setup)](docs/backends.md)

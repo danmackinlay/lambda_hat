@@ -2,6 +2,7 @@
 
 This document explains how to design experiments using the matrix approach: jobs = (problem × sampler × seed).
 
+
 ## Core Concepts
 
 **ProblemVariant**: Defines a model/data configuration (e.g., different sizes)
