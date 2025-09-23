@@ -81,13 +81,22 @@ def _submitit_safe_call(fn, item):
                 "duration_s": time.time() - t0,
             }
     except Exception as e:
-        return {
+        error_dict = {
             "status": "error",
+            "stage": stage,  # Default to our local stage
             "error_type": e.__class__.__name__,
             "error": str(e)[:2000],
             "traceback": "".join(traceback.format_exc())[-4000:],
             "duration_s": time.time() - t0,
         }
+        # If the exception came from a task that tracks its own stage, use that
+        if hasattr(e, "args") and len(e.args) > 0 and isinstance(e.args[0], dict):
+            task_error = e.args[0]
+            if "stage" in task_error:
+                error_dict["stage"] = task_error["stage"]
+            if "run_id" in task_error:
+                error_dict["run_id"] = task_error["run_id"]
+        return error_dict
 
 
 # ----------------- Local -----------------

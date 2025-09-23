@@ -51,6 +51,21 @@ class DiagPrecondState:
     t: Array  # time (Adam bias correction)
 
 
+# Register DiagPrecondState as a JAX pytree for use in lax.scan
+def _diag_precond_flatten(state):
+    return (state.m, state.v, state.t), None
+
+def _diag_precond_unflatten(aux_data, children):
+    m, v, t = children
+    return DiagPrecondState(m=m, v=v, t=t)
+
+jax.tree_util.register_pytree_node(
+    DiagPrecondState,
+    _diag_precond_flatten,
+    _diag_precond_unflatten
+)
+
+
 def precond_update(
     g: Array,
     st: DiagPrecondState,

@@ -19,7 +19,7 @@ from .samplers.adapters import (
     hmc_spec,
     mclmc_spec,
 )
-from .samplers.base import build_tiny_store, run_sampler_spec
+from .samplers.base import build_tiny_store, run_sampler_spec, DiagPrecondState
 from .types import SamplerResult
 
 if TYPE_CHECKING:
@@ -84,12 +84,27 @@ def run_sgld_online_batched(
         bias_correction=bias_correction,
     )
 
+    # Wrap initial state for preconditioning if needed
+    C, d = init_thetas.shape
+    if precond_mode != "none":
+        precond_state = DiagPrecondState(
+            m=jnp.zeros((C, d), dtype=init_thetas.dtype),
+            v=jnp.zeros((C, d), dtype=init_thetas.dtype),
+            t=jnp.zeros((C,), dtype=init_thetas.dtype),
+        )
+        init_states = (init_thetas, precond_state)
+        # Sanity check for future-proofing
+        if not isinstance(init_states, tuple):
+            raise RuntimeError("SGLD preconditioning requires tuple state: (theta, DiagPrecondState).")
+    else:
+        init_states = init_thetas
+
     # Run using unified driver
     t0 = time.perf_counter()
     result = run_sampler_spec(
         spec=spec,
         rng_key=key,
-        init_states=init_thetas,
+        init_states=init_states,
         n_steps=num_steps,
         warmup=warmup,
         eval_every=eval_every,
