@@ -29,7 +29,6 @@ def run_experiment_task(payload: Dict[str, Any]) -> Dict[str, Any]:
     from llc.pipeline import run_one
     from llc.util.json_safe import json_safe
     from llc.cache import run_id
-    from llc import paths
 
     logger = logging.getLogger(__name__)
 
@@ -55,7 +54,13 @@ def run_experiment_task(payload: Dict[str, Any]) -> Dict[str, Any]:
 
         # Compute rid & run_dir early so we can always return them
         computed_run_id = run_id(cfg_dict)
-        expected_run_dir = paths.run_dir(cfg_dict)
+        # Use same logic as pipeline.py for run_dir computation
+        if cfg_dict.get("runs_dir", "").endswith("/runs"):
+            # Modal path: cfg.runs_dir="/runs" -> run_dir="/runs/rid"
+            expected_run_dir = os.path.join(cfg_dict["runs_dir"], computed_run_id)
+        else:
+            # Default: use runs/ under current directory
+            expected_run_dir = os.path.join("runs", computed_run_id)
         logger.debug("worker: sampler=%s rid=%s run_dir=%s", sampler, computed_run_id, expected_run_dir)
 
         # Ensure worker process honors GPU intent (SLURM/Submitit)

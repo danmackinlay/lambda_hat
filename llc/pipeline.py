@@ -75,8 +75,11 @@ def run_one(
 
     # Log sampler and run ID for debugging
     sampler_name = cfg.samplers[0]
-    from llc import paths
-    run_dir_path = paths.run_dir(cfg)
+    # Use same run_dir logic as computed below
+    if hasattr(cfg, "runs_dir") and cfg.runs_dir.endswith("/runs"):
+        run_dir_path = os.path.join(cfg.runs_dir, rid)
+    else:
+        run_dir_path = os.path.join("runs", rid)
     logger.info("Running atomic run sampler=%s rid=%s dir=%s", sampler_name, rid, run_dir_path)
     fid = run_family_id(cfg)
     # Use canonical runs/ directory everywhere (local and Modal)
