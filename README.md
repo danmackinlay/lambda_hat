@@ -103,6 +103,33 @@ See [docs/backends.md](docs/backends.md) for full setup (Modal + SLURM).
 | Plot sweep results      | `uv run llc plot-sweep`                                                                   |
 | Refresh README images   | `uv run llc promote-readme-images`                                                        |
 
+
+## Debugging and Re-running Jobs
+
+Every run and sweep job saves its **exact configuration** to `config.json` in the run directory. In addition, failed jobs now dump a `<run_id>_cfg.json` next to their SLURM logs. This makes it easy to see what parameters were passed and to retry them.
+
+### Inspect config
+
+```bash
+cat runs/<run_id>/config.json         # for completed jobs
+cat slurm_logs/<jobid>_cfg.json       # for failed SLURM jobs
+```
+
+### Repeat a run
+
+You can re-run any job locally or remotely with the **same parameters**:
+
+```bash
+# From a run dir
+uv run llc repeat --from-run runs/<run_id> --backend=local --gpu-mode=off
+
+# From a dumped cfg JSON (e.g. from a failed sweep job)
+uv run llc repeat --cfg-json slurm_logs/<jobid>_cfg.json --backend=submitit --gpu-mode=vectorized --account=abc123
+```
+
+This lets you quickly rerun failed SLURM jobs on your laptop to see the error, or resubmit them to the cluster without editing YAMLs.
+
+
 ---
 
 ## Concepts

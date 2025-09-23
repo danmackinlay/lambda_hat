@@ -51,6 +51,34 @@ def run(**kwargs):
     return run_entry(kwargs)
 
 
+@cli.command("repeat")
+@click.option("--cfg-json", type=click.Path(exists=True, dir_okay=False), help="Config JSON (payload) to replay.")
+@click.option("--from-run", type=click.Path(exists=True, file_okay=False), help="Existing run dir (uses run_dir/config.json).")
+@add_run_sampler_choice
+@run_shared_options()
+def repeat_cmd(cfg_json, from_run, **kwargs):
+    """Repeat a run from a saved config JSON (or from an existing run dir)."""
+    import json
+    from llc.commands.run_cmd import run_entry
+
+    if not cfg_json and not from_run:
+        raise SystemExit("Provide --cfg-json or --from-run.")
+    if from_run:
+        cfg_json = os.path.join(from_run, "config.json")
+
+    with open(cfg_json) as f:
+        cfg = json.load(f)
+
+    # Merge backend/gpu/submitit flags from kwargs on top of saved config
+    cfg.update({k: v for k, v in kwargs.items() if v is not None})
+
+    # Enforce single-sampler, if present
+    if isinstance(cfg.get("samplers"), (list, tuple)) and len(cfg["samplers"]) == 1:
+        kwargs["sampler"] = cfg["samplers"][0]
+
+    return run_entry({**cfg, **kwargs})
+
+
 @cli.command()
 @sweep_shared_options()
 def sweep(**kwargs):

@@ -282,6 +282,33 @@ def _save_sweep_results(results):
                 for line in er["traceback"].strip().split('\n')[-30:]:
                     logger.info(f"    {line}")
 
+            # Generate replay commands using cfg_payload
+            cfg_payload = next((r.get("cfg_payload") for r in results if r.get("status")=="error" and r.get("run_id")==run_id), None)
+            if cfg_payload:
+                # Dump a temp cfg JSON right next to the stderr for convenience
+                try:
+                    stderr_path = er.get("submitit_stderr_path", "")
+                    if stderr_path:
+                        cfg_dump_path = stderr_path.replace("_log.err", "_cfg.json").replace(".err", "_cfg.json")
+                    else:
+                        cfg_dump_path = f"slurm_logs/{run_id}_cfg.json"
+
+                    import json
+                    os.makedirs(os.path.dirname(cfg_dump_path) or ".", exist_ok=True)
+                    with open(cfg_dump_path, "w") as f:
+                        json.dump(cfg_payload, f, indent=2, default=str)
+
+                    logger.info(f"  cfg dump: {cfg_dump_path}")
+                    logger.info("  Rerun locally:")
+                    logger.info(f"    uv run llc repeat --cfg-json {cfg_dump_path} --backend=local --gpu-mode=off")
+                    logger.info("  Rerun on SLURM:")
+                    account = cfg_payload.get("slurm_account", "<account>")
+                    logger.info(f"    uv run llc repeat --cfg-json {cfg_dump_path} --backend=submitit --gpu-mode=vectorized --account {account} --slurm-partition gpu")
+                except Exception as e:
+                    logger.info(f"  (Could not generate replay commands: {e})")
+            else:
+                logger.info("  (No config payload available for replay commands)")
+
         # Hint about log locations
         if any("submitit_stderr_path" in er for er in error_rows):
             logger.info(

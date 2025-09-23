@@ -82,6 +82,21 @@ def run_experiment_task(cfg_dict: Dict[str, Any]) -> Dict[str, Any]:
         from llc.cache import run_id
         computed_run_id = run_id(cfg)
 
+        # Print and persist config snapshot for debugging/reruns
+        stage = "config_snapshot"
+        import json
+        cfg_json = json.dumps(cfg.__dict__, indent=2, default=str)
+        print(f"[llc worker] cfg rid={computed_run_id}\n{cfg_json}", file=sys.stdout, flush=True)
+
+        # Also persist alongside submitit logs if path is known
+        log_dir = os.environ.get("SUBMITIT_LOGS_FOLDER") or "slurm_logs"
+        try:
+            os.makedirs(log_dir, exist_ok=True)
+            with open(os.path.join(log_dir, f"{computed_run_id}_cfg.json"), "w") as f:
+                f.write(cfg_json)
+        except Exception:
+            pass
+
         # Write worker info file if saving artifacts
         if save_artifacts:
             stage = "write_worker_info"

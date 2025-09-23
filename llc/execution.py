@@ -72,6 +72,7 @@ def _submitit_safe_call(fn, item):
         if isinstance(out, dict):
             out["status"] = "ok"
             out["duration_s"] = time.time() - t0
+            out["cfg_payload"] = item  # make reruns trivial
             return out
         else:
             # Legacy fallback for non-dict returns
@@ -79,6 +80,7 @@ def _submitit_safe_call(fn, item):
                 "status": "ok",
                 "result": out,
                 "duration_s": time.time() - t0,
+                "cfg_payload": item,
             }
     except Exception as e:
         error_dict = {
@@ -88,6 +90,7 @@ def _submitit_safe_call(fn, item):
             "error": str(e)[:2000],
             "traceback": "".join(traceback.format_exc())[-4000:],
             "duration_s": time.time() - t0,
+            "cfg_payload": item,  # include the exact payload that failed
         }
         # If the exception came from a task that tracks its own stage, use that
         if hasattr(e, "args") and len(e.args) > 0 and isinstance(e.args[0], dict):
