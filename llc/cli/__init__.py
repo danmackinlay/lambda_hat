@@ -26,7 +26,7 @@ from llc.util.logging_setup import setup_logging
 @click.group()
 @click.option("-v", "--verbose", count=True, help="Increase verbosity (repeatable).")
 @click.option("-q", "--quiet", count=True, help="Decrease verbosity.")
-@click.option("--debug-thirdparty", is_flag=True, help="Include third-party DEBUG logs (matplotlib, PIL, etc.).")
+@click.option("--debug-thirdparty", is_flag=True, help="Include third-party DEBUG logs (jax, matplotlib, PIL, etc.).")
 def cli(verbose: int, quiet: int, debug_thirdparty: bool):
     """LLC command-line interface (Click)."""
     # Configure JAX and matplotlib environment for CLI usage
