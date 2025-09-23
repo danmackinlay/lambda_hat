@@ -10,7 +10,7 @@ name = "llc"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.13"
 dependencies = [
     "arviz~=0.22.0",
     "blackjax~=1.2.5",
@@ -27,8 +27,17 @@ llc = "llc.cli:cli"
 
 [project.optional-dependencies]
 # SLURM backend
-slurm = ["submitit>=1.5"]        # Python 3.8+ and SLURM-friendly toolbox
+slurm = ["submitit>=1.5"]
+
 # Modal backend
-modal = ["modal>=0.64"]          # Modal's official SDK (Py 3.9–3.13)
-cpu = ["jax>=0.4.28"]            # CPU-only JAX
-cuda12 = ["jax[cuda12_local]>=0.4.28"]  # CUDA 12 wheels (see JAX docs)
+modal = ["modal>=0.64"]
+
+# Local / macOS / CPU (MPS or CPU-only)
+cpu = [
+  "jax>=0.4.28",               # pulls CPU/MPS wheels from PyPI
+]
+
+# CUDA 12.x wheels for Linux (bundled CUDA libs; only needs a recent NVIDIA driver)
+cuda128 = [
+  "jax[cuda12_local]>=0.4.28"
+]

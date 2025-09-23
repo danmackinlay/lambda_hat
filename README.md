@@ -4,31 +4,14 @@ In [Singular Learning Theory (SLT)](https://singularlearningtheory.com), the Loc
 
 This repo provides benchmark estimators of LLC on small but non-trivial neural networks, using standard industrial tooling: [BlackJAX](https://github.com/blackjax-devs/blackjax/tree/1.2.5) (sampling) and [ArviZ](https://python.arviz.org/) (diagnostics).
 
-## Concepts
-
-**Jobs and Families**
-A job = (problem, sampler, seed).
-A family = jobs that share (problem, seed) but differ by sampler.
-Sweeps expand into many jobs and summarize results in one CSV.
-
 ## Quick Start
 
-1. **Run** an experiment → writes `runs/<run_id>/{sgld,hmc,mclmc}.nc`, `metrics.json`, `config.json`, `L0.txt`
-2. **Analyze** saved runs → generates PNGs in `runs/<run_id>/analysis/` (default) with `llc analyze`
-3. **Promote** (optional) → copy select PNGs to `assets/readme/` for the README gallery
-
-### Unified Backend System
-
-All backends (local CPU/GPU, SLURM via Submitit, Modal serverless) are now dispatched through a single unified executor. This means:
-
-- Same flags (`--backend`, `--gpu-mode`, `--gpu-types`) across all commands
-- Automatic protections:
-  - Modal preflight to catch billing issues before submission
-  - SLURM structured error reporting
-  - Local execution with optional timeouts
-- Automatic artifact download from Modal to `./runs/<run_id>`
-
-Sweeps run **one sampler per job**. This makes runs shorter, retries independent, and results easier to analyze.
+```python
+uv venv --python 3.12 && source .venv/bin/activate
+uv sync --extra cpu   # or slurm/modal as needed
+uv run llc run --sampler sgld --preset=quick
+uv run llc analyze runs/<run_id> --which all --plots running_llc,rank,ess_evolution,autocorr,energy,theta
+```
 
 
 ![SGLD running LLC](assets/readme/sgld_llc_running.png)
@@ -45,13 +28,76 @@ Sweeps run **one sampler per job**. This makes runs shorter, retries independent
 
 More plots available via `llc analyze` (rank, ESS evolution, autocorrelation, theta traces, energy histograms).
 
-```bash
-uv sync
-uv run llc run --preset=quick --sampler sghmc
-uv run llc analyze runs/<run_id> --which all --plots running_llc,rank,ess_evolution,autocorr,energy,theta
-```
+### Unified Backend System
 
-## What's in a Run
+All backends (local CPU/GPU, SLURM via Submitit, Modal serverless) are now dispatched through a single unified executor. This means:
+
+- Same flags (`--backend`, `--gpu-mode`, `--gpu-types`) across all commands
+- Automatic protections:
+  - Modal preflight to catch billing issues before submission
+  - SLURM structured error reporting
+  - Local execution with optional timeouts
+- Automatic artifact download from Modal to `./runs/<run_id>`
+
+See **[docs/backends.md](./backends.md)** for full instructions (Modal + SLURM).
+
+
+
+> **Python versions per backend**
+> - **SLURM/submitit:** Python **3.12** (cluster standard)
+> - **Modal:** Python **3.11** (baked into the image)
+> - **Local:** Prefer **3.12** for parity with SLURM; 3.11 also works
+>
+> Create envs with uv:
+> ```bash
+> # Local/SLURM (3.12)
+> uv venv --python 3.12 && source .venv/bin/activate
+> uv sync --extra slurm
+>
+> # Modal (local CLI still uses your env version; Modal runtime is pinned to 3.11)
+> uv sync --extra modal
+> ```
+
+
+## Common Tasks
+
+| Task | Command |
+|------|---------|
+| Single SGHMC run | `uv run llc run --sampler sghmc --preset=quick` |
+| Local quick run | `uv run llc run --sampler sgld --preset=quick` |
+| Local sweep (8 workers) | `uv run llc sweep --workers=8` |
+| Sweep with study YAML | `uv run llc sweep --study study.yaml --backend=modal` |
+| Sweep samplers (JSON) | `uv run llc sweep --sampler-grid='[{"name":"sgld","overrides":{"sgld_precond":"adam"}}]'` |
+| Modal sweep | `uv run llc sweep --backend=modal` |
+| SLURM sweep | `uv run llc sweep --backend=submitit --gpu-mode=vectorized` |
+| Analyze saved run | `uv run llc analyze runs/<run_id>` |
+| Plot sweep results | `uv run llc plot-sweep` |
+| Refresh README images | `uv run llc promote-readme-images` |
+
+> **SLURM quick start (CUDA 12.8, Py 3.12)**
+>
+> ```bash
+> uv venv --python 3.12 && source .venv/bin/activate
+> uv sync --extra slurm --extra cuda128
+> uv run python -m llc run --backend=submitit --gpu-mode=vectorized --slurm-partition=gpu
+> ```
+>
+> Local/macOS: `uv sync --extra cpu` (or just `uv sync`) and run with `--backend=local --gpu-mode=off`.
+
+For backend-specific setup and configuration, see [docs/backends.md](docs/backends.md).
+
+## Concepts
+
+* A job = (problem, sampler, seed).
+* A family = jobs that share (problem, seed) but differ by sampler.
+* Sweeps = Many Runs + One CSV. Sweeps expand into many jobs and summarize results in one CSV.
+
+`uv run llc sweep` launches a grid of runs and writes `llc_sweep_results.csv` summarizing each run (with a `run_dir` back-pointer to analyze individual runs).
+
+Sweeps always run one sampler per job.
+This makes jobs shorter, retries independent, and analysis cleaner. Results include a `family_id` column to group related per-sampler runs.
+
+### What's in a Run
 
 ```text
 runs/<run_id>/
@@ -82,29 +128,6 @@ runs/<run_id>/
   "mclmc_llc_mean": 131.7
 }
 ```
-
-## Common Tasks
-
-| Task | Command |
-|------|---------|
-| Single SGHMC run | `uv run llc run --sampler sghmc --preset=quick` |
-| Local quick run | `uv run llc run --sampler sgld --preset=quick` |
-| Local sweep (8 workers) | `uv run llc sweep --workers=8` |
-| Sweep with study YAML | `uv run llc sweep --study study.yaml --backend=modal` |
-| Sweep samplers (JSON) | `uv run llc sweep --sampler-grid='[{"name":"sgld","overrides":{"sgld_precond":"adam"}}]'` |
-| Modal sweep | `uv run llc sweep --backend=modal` |
-| SLURM sweep | `uv run llc sweep --backend=submitit --gpu-mode=vectorized` |
-| Analyze saved run | `uv run llc analyze runs/<run_id>` |
-| Plot sweep results | `uv run llc plot-sweep` |
-| Refresh README images | `uv run llc promote-readme-images` |
-
-For backend-specific setup and configuration, see [docs/backends.md](docs/backends.md).
-
-## Sweeps = Many Runs + One CSV
-
-`uv run llc sweep` launches a grid of runs and writes `llc_sweep_results.csv` summarizing each run (with a `run_dir` back-pointer to analyze individual runs).
-
-Sweeps always run one sampler per job (default). This makes jobs shorter, retries independent, and analysis cleaner. Results include a `family_id` column to group related per-sampler runs.
 
 ### YAML Study Files
 
@@ -142,6 +165,7 @@ uv run llc sweep --sampler-grid='[{"name":"sgld","overrides":{"sgld_precond":"ad
 ```
 
 Plot medians via `uv run llc plot-sweep --size-col target_params` and filter via `--filters "activation=relu,x_dist=gauss_iso"`.
+
 
 ## Efficiency Metrics
 

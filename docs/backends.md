@@ -17,6 +17,9 @@ The legacy `backend_bootstrap` module remains for helper functions but new code 
 
 ## Modal Serverless
 
+**Python:** The Modal image is pinned to Python **3.11** in `llc/modal_app.py`.
+Local env can be 3.11 or 3.12; the remote runtime remains 3.11.
+
 ### One-time Setup
 
 ```bash
@@ -160,6 +163,36 @@ Control SLURM job parameters via CLI flags:
 ```
 
 **GPU handling:** Use `--gpu-mode=vectorized` or `--gpu-mode=sequential` to automatically request 1 GPU per job. Use `--gpu-mode=off` for CPU-only jobs.
+
+### SLURM with CUDA 12.8 (Python 3.12)
+
+**Python:** Use Python **3.12** on the cluster.
+
+**One-time on the login node (per venv):**
+```bash
+# Create/activate your environment
+uv venv --python 3.12
+source .venv/bin/activate
+
+# Install base project + SLURM extras + CUDA wheels for JAX
+uv sync --extra slurm --extra cuda128
+```
+
+**Run (GPU on SLURM):**
+
+```bash
+# vectorized = 1 GPU per job, multiple chains batched
+uv run python -m llc run --backend=submitit \
+  --gpu-mode=vectorized \
+  --slurm-partition=gpu \
+  --timeout-min=180 --cpus=4 --mem-gb=16
+```
+
+**Notes**
+
+* `--gpu-mode=vectorized` or `sequential` requests 1 GPU/job automatically. `off` uses CPU.
+* JAX CUDA wheels (`jax[cuda12_local]`) bundle CUDA libs; cluster nodes still need an NVIDIA driver new enough for CUDA-12.x.
+* Local/macOS and Modal remain unchanged: mac uses CPU/MPS wheels; Modal GPU image already installs CUDA wheels.
 
 ### Error Handling
 
