@@ -176,10 +176,17 @@ def hmc_spec(
 def mclmc_spec(
     *,
     logdensity_fn,
-    integrator_name="isokinetic_mclachlan",
+    integrator_name: str = "isokinetic_mclachlan",
+    # Accept (and currently ignore) tuning knobs so callers don't explode
+    tuner_steps: int | None = None,
+    diagonal_preconditioning: bool | None = None,
+    desired_energy_var: float | None = None,
 ) -> SamplerSpec:
     """Create SamplerSpec for MCLMC. Tuning handled separately."""
-    integrator = getattr(blackjax.mcmc.integrators, integrator_name)
+    try:
+        integrator = getattr(blackjax.mcmc.integrators, integrator_name)
+    except AttributeError:
+        raise ValueError(f"Unknown MCLMC integrator '{integrator_name}'")
 
     # For SamplerSpec, we need a concrete step function, but MCLMC needs tuning first
     # This is a placeholder that will be replaced after tuning
@@ -192,7 +199,7 @@ def mclmc_spec(
     return SamplerSpec(
         name="mclmc",
         step_vmapped=placeholder_step,  # Will be replaced after tuning
-        position_fn=lambda st: st.position,
+        position_fn=lambda st: st,  # For now, assume states are just positions (placeholder)
         info_extractors=info_extractors,
         grads_per_step=1.0,  # MCLMC does one gradient-like step per iteration
     )

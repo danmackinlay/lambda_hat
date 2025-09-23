@@ -44,7 +44,7 @@ from .artifacts import (
 
 
 def run_one(
-    cfg: Config, *, save_artifacts: bool = True, skip_if_exists: bool = True
+    cfg: Config, *, save_artifacts: bool = True, skip_if_exists: bool = True, stage_callback=None
 ) -> RunOutputs:
     """
     Run one complete experiment: build data → train ERM → run all samplers → compute metrics.
@@ -96,6 +96,8 @@ def run_one(
         run_dir = ""  # Don't save if not requested
 
     logger.info("Building target")
+    if stage_callback:
+        stage_callback("build_target")
     key = random.PRNGKey(cfg.seed)
 
     # Build a self-contained target (NN, quadratic, …)
@@ -254,6 +256,9 @@ def run_one(
         if name not in SAMPLERS:
             continue
 
+        if stage_callback:
+            stage_callback(f"run_sampler {name.upper()}")
+
         # Optional: Skip if already completed (micro-resume for partial runs)
         nc_path = f"{run_dir}/{name}.nc" if run_dir else None
         if save_artifacts and nc_path and os.path.exists(nc_path):
@@ -351,6 +356,8 @@ def run_one(
 
     # Save final artifacts if requested
     if save_artifacts and run_dir:
+        if stage_callback:
+            stage_callback("save_artifacts")
         logger.info("Saving final run outputs")
         save_L0(run_dir, L0)
         all_metrics_out = dict(all_metrics)

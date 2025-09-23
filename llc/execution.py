@@ -7,17 +7,25 @@ import os
 import time
 
 
-def _attach_submitit_logs(job, result: dict, tail_lines: int = 80) -> dict:
-    """Attach stdout/stderr paths and a short tail from stderr to a result dict."""
+def _attach_submitit_logs(job, result: dict, tail_lines: int = 200) -> dict:
+    """Attach stdout/stderr paths and a short tail from both to a result dict."""
     try:
         out_path = str(job.paths.stdout) if getattr(job, "paths", None) else ""
         err_path = str(job.paths.stderr) if getattr(job, "paths", None) else ""
         result["submitit_stdout_path"] = out_path
         result["submitit_stderr_path"] = err_path
+
+        # Capture stderr tail
         if err_path and os.path.exists(err_path):
             with open(err_path, "r", errors="ignore") as f:
                 lines = f.readlines()[-tail_lines:]
             result["submitit_stderr_tail"] = "".join(lines)[-4000:]
+
+        # Capture stdout tail (new)
+        if out_path and os.path.exists(out_path):
+            with open(out_path, "r", errors="ignore") as f:
+                lines = f.readlines()[-tail_lines:]
+            result["submitit_stdout_tail"] = "".join(lines)[-4000:]
     except Exception:
         # never crash error handling
         pass
@@ -188,7 +196,7 @@ class SubmititExecutor(BaseExecutor):
             r = j.result()  # {"status": "ok"|"error", ...} from _submitit_safe_call
             # On failure, attach Submitit/SLURM log locations (and a small tail)
             if isinstance(r, dict) and r.get("status") == "error":
-                r = _attach_submitit_logs(j, r, tail_lines=80)
+                r = _attach_submitit_logs(j, r, tail_lines=200)
             results.append(r)
         return results
 

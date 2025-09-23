@@ -255,15 +255,32 @@ def _save_sweep_results(results):
 
         # Surface Submitit logs for easier debugging
         for er in error_rows:
+            run_id = er.get('run_id', 'unknown')
+            logger.info(f"\n[Error] Job {run_id} failed at stage: {er.get('stage', 'unknown')}")
+
+            # Show log paths
             if "submitit_stderr_path" in er:
-                logger.info(f"\n[Submitit Error] Job {er.get('run_id', 'unknown')}")
                 logger.info(f"  stderr log: {er['submitit_stderr_path']}")
-                if "submitit_stdout_path" in er:
-                    logger.info(f"  stdout log: {er['submitit_stdout_path']}")
-                if "submitit_stderr_tail" in er and er["submitit_stderr_tail"].strip():
-                    logger.info("  Last lines of stderr:")
-                    for line in er["submitit_stderr_tail"].strip().split('\n')[-10:]:
-                        logger.info(f"    {line}")
+            if "submitit_stdout_path" in er:
+                logger.info(f"  stdout log: {er['submitit_stdout_path']}")
+
+            # Show stdout tail to see stage markers
+            if "submitit_stdout_tail" in er and er["submitit_stdout_tail"].strip():
+                logger.info("  Last lines of stdout (shows stages reached):")
+                for line in er["submitit_stdout_tail"].strip().split('\n')[-10:]:
+                    logger.info(f"    {line}")
+
+            # Show stderr tail
+            if "submitit_stderr_tail" in er and er["submitit_stderr_tail"].strip():
+                logger.info("  Last lines of stderr:")
+                for line in er["submitit_stderr_tail"].strip().split('\n')[-10:]:
+                    logger.info(f"    {line}")
+
+            # Show traceback if available
+            if "traceback" in er and er["traceback"]:
+                logger.info("  Traceback (last 30 lines):")
+                for line in er["traceback"].strip().split('\n')[-30:]:
+                    logger.info(f"    {line}")
 
         # Hint about log locations
         if any("submitit_stderr_path" in er for er in error_rows):

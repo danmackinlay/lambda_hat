@@ -18,55 +18,111 @@ def run_experiment_task(cfg_dict: Dict[str, Any]) -> Dict[str, Any]:
     Returns uniform shape with cfg, run_dir, and llc_{sampler} values.
     """
     import os
+    import sys
+    import platform
     from dataclasses import fields
     from llc.config import Config, config_schema_hash
     from llc.pipeline import run_one
 
-    # Ensure worker process honors GPU intent (SLURM/Submitit)
-    gpu_mode = cfg_dict.get("gpu_mode", "off")
-    if gpu_mode != "off":
-        os.environ.setdefault("JAX_PLATFORMS", "cuda")
-    else:
-        os.environ.setdefault("JAX_PLATFORMS", "cpu")
+    # Track stage for better error reporting
+    stage = "init"
 
-    cfg_dict_clean = dict(cfg_dict)
-    # control flags (not part of Config)
-    save_artifacts = bool(cfg_dict_clean.pop("save_artifacts", False))
-    skip_if_exists = bool(cfg_dict_clean.pop("skip_if_exists", True))
-    provided_schema = cfg_dict_clean.pop("config_schema", None)
+    try:
+        # Ensure worker process honors GPU intent (SLURM/Submitit)
+        gpu_mode = cfg_dict.get("gpu_mode", "off")
+        if gpu_mode != "off":
+            os.environ.setdefault("JAX_PLATFORMS", "cuda")
+        else:
+            os.environ.setdefault("JAX_PLATFORMS", "cpu")
 
-    # Drop unknown keys to tolerate remote/client skew (but be loud).
-    allowed = {f.name for f in fields(Config)}
-    dropped = sorted(set(cfg_dict_clean) - allowed)
-    cfg_kwargs = {k: v for k, v in cfg_dict_clean.items() if k in allowed}
+        # Print startup banner with device info
+        import jax
+        banner_info = {
+            "python": platform.python_version(),
+            "jax": jax.__version__,
+            "jax_platforms": os.environ.get("JAX_PLATFORMS"),
+            "devices": [str(d) for d in jax.devices()],
+            "cuda_visible": os.environ.get("CUDA_VISIBLE_DEVICES"),
+            "slurm_job": os.environ.get("SLURM_JOB_ID"),
+            "host": os.uname().nodename,
+        }
+        banner_text = f"[llc worker] start {banner_info}"
+        print(banner_text, file=sys.stdout, flush=True)
 
-    # Schema handshake: if provided, must match.
-    local_schema = config_schema_hash()
-    if provided_schema and provided_schema != local_schema:
-        raise RuntimeError(
-            "Config schema mismatch between client and worker.\n"
-            f"  client schema: {provided_schema}\n"
-            f"  worker schema: {local_schema}\n"
-            "Redeploy the Modal app or use object-based remote function to auto-deploy."
-        )
-    if dropped:
-        import logging
+        stage = "config"
+        cfg_dict_clean = dict(cfg_dict)
+        # control flags (not part of Config)
+        save_artifacts = bool(cfg_dict_clean.pop("save_artifacts", False))
+        skip_if_exists = bool(cfg_dict_clean.pop("skip_if_exists", True))
+        provided_schema = cfg_dict_clean.pop("config_schema", None)
 
-        logger = logging.getLogger(__name__)
-        logger.warning(f"[llc] dropping unknown config keys: {dropped}")
+        # Drop unknown keys to tolerate remote/client skew (but be loud).
+        allowed = {f.name for f in fields(Config)}
+        dropped = sorted(set(cfg_dict_clean) - allowed)
+        cfg_kwargs = {k: v for k, v in cfg_dict_clean.items() if k in allowed}
 
-    cfg = Config(**cfg_kwargs)
+        # Schema handshake: if provided, must match.
+        local_schema = config_schema_hash()
+        if provided_schema and provided_schema != local_schema:
+            raise RuntimeError(
+                f"[stage={stage}] Config schema mismatch between client and worker.\n"
+                f"  client schema: {provided_schema}\n"
+                f"  worker schema: {local_schema}\n"
+                "Redeploy the Modal app or use object-based remote function to auto-deploy."
+            )
+        if dropped:
+            import logging
 
-    # Single path: pipeline is source of truth. save_artifacts governs I/O.
-    out = run_one(cfg, save_artifacts=save_artifacts, skip_if_exists=skip_if_exists)
+            logger = logging.getLogger(__name__)
+            logger.warning(f"[llc] dropping unknown config keys: {dropped}")
 
-    # Uniform, JSON-serializable result shape.
-    result: Dict[str, Any] = {
-        "cfg": cfg_dict,
-        "run_dir": out.run_dir or "",
-    }
-    for s in ("sgld", "sghmc", "hmc", "mclmc"):
-        k = f"{s}_llc_mean"
-        if k in out.metrics:
-            result[f"llc_{s}"] = float(out.metrics[k])
-    return result
+        cfg = Config(**cfg_kwargs)
+
+        # Compute run_id early for error reporting
+        from llc.cache import run_id
+        computed_run_id = run_id(cfg)
+
+        # Write worker info file if saving artifacts
+        if save_artifacts:
+            stage = "write_worker_info"
+            from pathlib import Path
+            run_dir = f"runs/{computed_run_id}"
+            try:
+                Path(run_dir).mkdir(parents=True, exist_ok=True)
+                (Path(run_dir) / "worker_info.txt").write_text(banner_text)
+            except Exception:
+                pass  # Non-critical, don't fail
+
+        # Single path: pipeline is source of truth. save_artifacts governs I/O.
+        stage = "pipeline"
+        print(f"STAGE: pipeline.run_one", file=sys.stdout, flush=True)
+        out = run_one(cfg, save_artifacts=save_artifacts, skip_if_exists=skip_if_exists, stage_callback=lambda s: print(f"STAGE: {s}", file=sys.stdout, flush=True))
+
+        stage = "prepare_result"
+        # Uniform, JSON-serializable result shape.
+        result: Dict[str, Any] = {
+            "cfg": cfg_dict,
+            "run_dir": out.run_dir or "",
+            "run_id": computed_run_id,  # Always include for better tracking
+        }
+        for s in ("sgld", "sghmc", "hmc", "mclmc"):
+            k = f"{s}_llc_mean"
+            if k in out.metrics:
+                result[f"llc_{s}"] = float(out.metrics[k])
+
+        print(f"[llc worker] complete", file=sys.stdout, flush=True)
+        return result
+
+    except Exception as e:
+        # Enhanced error reporting with stage and run_id
+        import traceback
+        error_dict = {
+            "status": "error",
+            "stage": stage,
+            "run_id": locals().get("computed_run_id", "unknown"),
+            "error": str(e),
+            "error_type": type(e).__name__,
+            "traceback": traceback.format_exc(),
+        }
+        print(f"[llc worker] error at stage={stage}: {e}", file=sys.stderr, flush=True)
+        raise  # Re-raise to let wrapper handle it
