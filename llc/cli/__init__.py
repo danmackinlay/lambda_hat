@@ -17,6 +17,7 @@ from llc.cli.options import (
     sweep_shared_options,
     analyze_shared_options,
 )
+from llc.util.logging_setup import setup_logging
 
 
 # ---------- Click CLI ----------
@@ -33,12 +34,8 @@ def cli(verbose: int, quiet: int):
         "MPLBACKEND", "Agg"
     )  # headless backend for server environments
 
-    # Map -v^n to levels: 0->INFO, 1->DEBUG, 2+->DEBUG (same) and add more detail via our own conditionals
-    desired = logging.INFO if verbose == 0 else logging.DEBUG
-    desired = logging.ERROR if quiet >= 1 else desired
-    logging.basicConfig(level=desired, format="%(levelname)s: %(message)s")
-    # Propagate to submitit too (it uses logging)
-    logging.getLogger("submitit").setLevel(desired)
+    # Centralized logging setup with third-party noise control
+    setup_logging(verbose, quiet)
 
 
 # ----- Commands -----

@@ -11,6 +11,19 @@ import numpy as np
 import matplotlib.pyplot as plt
 from pathlib import Path
 import arviz as az
+import logging
+
+# Context manager to quiet matplotlib during plot generation
+_mpl_logger = logging.getLogger("matplotlib")
+
+class _QuietMatplotlib:
+    def __enter__(self):
+        self._old = _mpl_logger.level
+        # Clamp to WARNING during plotting to avoid transient DEBUG from extensions/plugins
+        _mpl_logger.setLevel(max(_mpl_logger.level, logging.WARNING))
+        return self
+    def __exit__(self, exc_type, exc, tb):
+        _mpl_logger.setLevel(self._old)
 
 
 # ---------- Data Conversion ----------
@@ -261,62 +274,63 @@ def generate_diagnostics(
     beta = float(idata.attrs.get("beta", 1.0))
     L0 = float(idata.attrs.get("L0", 0.0))
 
-    # Generate figures with error handling
-    figs = []
-    try:
-        figs.append(
+    # Generate figures with error handling (quiet matplotlib during plotting)
+    with _QuietMatplotlib():
+        figs = []
+        try:
+            figs.append(
             (
                 f"{sampler_name}_running_llc.png",
                 fig_running_llc(idata, n, beta, L0, f"{sampler_name} Running LLC"),
             )
         )
-    except Exception:
-        pass
-    try:
-        figs.append((f"{sampler_name}_llc_rank.png", fig_rank_llc(idata)))
-    except Exception:
-        pass
-    try:
-        figs.append((f"{sampler_name}_llc_ess_evolution.png", fig_ess_evolution(idata)))
-    except Exception:
-        pass
-    try:
-        figs.append((f"{sampler_name}_llc_ess_quantile.png", fig_ess_quantile(idata)))
-    except Exception:
-        pass
-    try:
-        figs.append((f"{sampler_name}_llc_autocorr.png", fig_autocorr_llc(idata)))
-    except Exception:
-        pass
-    try:
-        figs.append((f"{sampler_name}_energy.png", fig_energy(idata)))
-    except Exception:
-        pass
-    try:
-        # Check for scalar theta variables first
-        theta_scalar = [v for v in idata.posterior.data_vars if v.startswith("theta_")]
-        if theta_scalar:
-            theta_dims = min(max_theta_dims, len(theta_scalar))
-        elif "theta" in idata.posterior:
-            theta_dims = min(
-                max_theta_dims, int(idata.posterior["theta"].sizes.get("theta_dim", 0))
-            )
-        else:
-            theta_dims = 0
-
-        if theta_dims > 0:
-            figs.append(
-                (
-                    f"{sampler_name}_theta_trace.png",
-                    fig_theta_trace(idata, dims=theta_dims),
+        except Exception:
+            pass
+        try:
+            figs.append((f"{sampler_name}_llc_rank.png", fig_rank_llc(idata)))
+        except Exception:
+            pass
+        try:
+            figs.append((f"{sampler_name}_llc_ess_evolution.png", fig_ess_evolution(idata)))
+        except Exception:
+            pass
+        try:
+            figs.append((f"{sampler_name}_llc_ess_quantile.png", fig_ess_quantile(idata)))
+        except Exception:
+            pass
+        try:
+            figs.append((f"{sampler_name}_llc_autocorr.png", fig_autocorr_llc(idata)))
+        except Exception:
+            pass
+        try:
+            figs.append((f"{sampler_name}_energy.png", fig_energy(idata)))
+        except Exception:
+            pass
+        try:
+            # Check for scalar theta variables first
+            theta_scalar = [v for v in idata.posterior.data_vars if v.startswith("theta_")]
+            if theta_scalar:
+                theta_dims = min(max_theta_dims, len(theta_scalar))
+            elif "theta" in idata.posterior:
+                theta_dims = min(
+                    max_theta_dims, int(idata.posterior["theta"].sizes.get("theta_dim", 0))
                 )
-            )
-    except Exception:
-        pass
+            else:
+                theta_dims = 0
 
-    # Save figures
-    for name, fig in figs:
-        p = out / name
-        if (not p.exists()) or overwrite:
-            fig.savefig(p, dpi=150, bbox_inches="tight", facecolor="white")
-        plt.close(fig)
+            if theta_dims > 0:
+                figs.append(
+                    (
+                        f"{sampler_name}_theta_trace.png",
+                        fig_theta_trace(idata, dims=theta_dims),
+                    )
+                )
+        except Exception:
+            pass
+
+        # Save figures
+        for name, fig in figs:
+            p = out / name
+            if (not p.exists()) or overwrite:
+                fig.savefig(p, dpi=150, bbox_inches="tight", facecolor="white")
+            plt.close(fig)

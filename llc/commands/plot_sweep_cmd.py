@@ -6,6 +6,9 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from pathlib import Path
 
+# Import quiet matplotlib context from analysis module
+from llc.analysis import _QuietMatplotlib
+
 logger = logging.getLogger(__name__)
 
 
@@ -79,64 +82,66 @@ def plot_sweep_entry(
             logger.info(f"[plot-sweep] saved: {path.name}")
         plt.close(fig)
 
-    # 1) ESS/sec vs size
-    for s in agg["sampler"].unique():
-        d = agg[(agg["sampler"] == s) & np.isfinite(agg["ess_per_sec"])]
-        if d.empty:
-            continue
-        fig, ax = plt.subplots(figsize=(6, 4))
-        ax.plot(d[size_col], d["ess_per_sec"], marker="o")
-        ax.set_xlabel(size_col)
-        ax.set_ylabel("ESS/sec")
-        ax.set_title(f"{s.upper()}: ESS/sec vs {size_col}")
-        if logx:
-            ax.set_xscale("log")
-        ax.grid(True, alpha=0.3)
-        save_fig(fig, out / f"{s}_ess_per_sec_vs_{size_col}.png")
+    # Generate all plots with quiet matplotlib
+    with _QuietMatplotlib():
+        # 1) ESS/sec vs size
+        for s in agg["sampler"].unique():
+            d = agg[(agg["sampler"] == s) & np.isfinite(agg["ess_per_sec"])]
+            if d.empty:
+                continue
+            fig, ax = plt.subplots(figsize=(6, 4))
+            ax.plot(d[size_col], d["ess_per_sec"], marker="o")
+            ax.set_xlabel(size_col)
+            ax.set_ylabel("ESS/sec")
+            ax.set_title(f"{s.upper()}: ESS/sec vs {size_col}")
+            if logx:
+                ax.set_xscale("log")
+            ax.grid(True, alpha=0.3)
+            save_fig(fig, out / f"{s}_ess_per_sec_vs_{size_col}.png")
 
-    # 2) WNV (time) vs size
-    for s in agg["sampler"].unique():
-        d = agg[(agg["sampler"] == s) & np.isfinite(agg["wnv_time"])]
-        if d.empty:
-            continue
-        fig, ax = plt.subplots(figsize=(6, 4))
-        ax.plot(d[size_col], d["wnv_time"], marker="o")
-        ax.set_xlabel(size_col)
-        ax.set_ylabel("WNV (Var × seconds)")
-        ax.set_title(f"{s.upper()}: WNV_time vs {size_col}")
-        if logx:
-            ax.set_xscale("log")
-        ax.grid(True, alpha=0.3)
-        save_fig(fig, out / f"{s}_wnv_time_vs_{size_col}.png")
+        # 2) WNV (time) vs size
+        for s in agg["sampler"].unique():
+            d = agg[(agg["sampler"] == s) & np.isfinite(agg["wnv_time"])]
+            if d.empty:
+                continue
+            fig, ax = plt.subplots(figsize=(6, 4))
+            ax.plot(d[size_col], d["wnv_time"], marker="o")
+            ax.set_xlabel(size_col)
+            ax.set_ylabel("WNV (Var × seconds)")
+            ax.set_title(f"{s.upper()}: WNV_time vs {size_col}")
+            if logx:
+                ax.set_xscale("log")
+            ax.grid(True, alpha=0.3)
+            save_fig(fig, out / f"{s}_wnv_time_vs_{size_col}.png")
 
-    # 3) WNV (FDE) vs size
-    for s in agg["sampler"].unique():
-        d = agg[(agg["sampler"] == s) & np.isfinite(agg["wnv_fde"])]
-        if d.empty:
-            continue
-        fig, ax = plt.subplots(figsize=(6, 4))
-        ax.plot(d[size_col], d["wnv_fde"], marker="o")
-        ax.set_xlabel(size_col)
-        ax.set_ylabel("WNV (Var × FDE)")
-        ax.set_title(f"{s.upper()}: WNV_FDE vs {size_col}")
-        if logx:
-            ax.set_xscale("log")
-        ax.grid(True, alpha=0.3)
-        save_fig(fig, out / f"{s}_wnv_fde_vs_{size_col}.png")
+        # 3) WNV (FDE) vs size
+        for s in agg["sampler"].unique():
+            d = agg[(agg["sampler"] == s) & np.isfinite(agg["wnv_fde"])]
+            if d.empty:
+                continue
+            fig, ax = plt.subplots(figsize=(6, 4))
+            ax.plot(d[size_col], d["wnv_fde"], marker="o")
+            ax.set_xlabel(size_col)
+            ax.set_ylabel("WNV (Var × FDE)")
+            ax.set_title(f"{s.upper()}: WNV_FDE vs {size_col}")
+            if logx:
+                ax.set_xscale("log")
+            ax.grid(True, alpha=0.3)
+            save_fig(fig, out / f"{s}_wnv_fde_vs_{size_col}.png")
 
-    # 4) Frontier: SE vs size colored by WNV_FDE
-    for s in agg["sampler"].unique():
-        d = agg[(agg["sampler"] == s) & np.isfinite(agg["se"])]
-        if d.empty:
-            continue
-        fig, ax = plt.subplots(figsize=(6, 4))
-        sc = ax.scatter(d[size_col], d["se"], c=d["wnv_fde"], cmap="viridis")
-        ax.set_xlabel(size_col)
-        ax.set_ylabel("SE(LLC)")
-        ax.set_title(f"{s.upper()}: SE vs {size_col} (color=WNV_FDE)")
-        if logx:
-            ax.set_xscale("log")
-        ax.grid(True, alpha=0.3)
-        cbar = fig.colorbar(sc, ax=ax)
-        cbar.set_label("WNV_FDE")
-        save_fig(fig, out / f"{s}_se_vs_{size_col}_colored_by_wnv_fde.png")
+        # 4) Frontier: SE vs size colored by WNV_FDE
+        for s in agg["sampler"].unique():
+            d = agg[(agg["sampler"] == s) & np.isfinite(agg["se"])]
+            if d.empty:
+                continue
+            fig, ax = plt.subplots(figsize=(6, 4))
+            sc = ax.scatter(d[size_col], d["se"], c=d["wnv_fde"], cmap="viridis")
+            ax.set_xlabel(size_col)
+            ax.set_ylabel("SE(LLC)")
+            ax.set_title(f"{s.upper()}: SE vs {size_col} (color=WNV_FDE)")
+            if logx:
+                ax.set_xscale("log")
+            ax.grid(True, alpha=0.3)
+            cbar = fig.colorbar(sc, ax=ax)
+            cbar.set_label("WNV_FDE")
+            save_fig(fig, out / f"{s}_se_vs_{size_col}_colored_by_wnv_fde.png")
