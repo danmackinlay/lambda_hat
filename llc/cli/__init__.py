@@ -194,10 +194,13 @@ def plot_sweep_cmd(csv_path, out_dir, size_col, samplers, filters, logx, overwri
 
 
 @cli.command("showcase-readme")
-@click.option("--sampler", type=click.Choice(["sgld", "sghmc", "hmc", "mclmc"]), help="Run only this sampler instead of all.")
+@add_run_sampler_choice  # Use the same sampler option decorator as other commands
 @run_shared_options()  # inherits backend/gpu/slurm/modal flags
 def showcase_readme_cmd(**kwargs):
-    """Run 'full' preset on chosen backend, generate plots, and refresh README images."""
+    """Run 'full' preset on chosen backend, generate plots, and refresh README images.
+
+    Respects the same shared CLI options as `llc run` (sampler, backend, gpu, etc).
+    """
     from llc.commands.showcase_cmd import showcase_readme_entry
     return showcase_readme_entry(**kwargs)
 
