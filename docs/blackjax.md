@@ -19,12 +19,15 @@ This repo is pinned to BlackJAX 1.2.5. Here are the key API details to prevent c
 * **Usage:** See [Sampling Book MCLMC example](https://blackjax-devs.github.io/sampling-book/algorithms/mclmc.html)
 * **Tuning API (BlackJAX 1.2.5):** Use fractional parameters with `blackjax.mclmc_find_L_and_step_size`:
   ```python
+  # Build kernel first (required for 1.2.5)
+  mclmc_kernel = blackjax.mclmc(logdensity_fn)
+  init_state = mclmc_kernel.init(initial_position)
+
   L, step_size, info = blackjax.mclmc_find_L_and_step_size(
-      mclmc_kernel=None,  # computed internally
+      mclmc_kernel=mclmc_kernel,  # pre-built kernel required
       num_steps=total_adaptation_steps,
-      state=initial_position,
+      state=init_state,  # initialized state
       rng_key=rng_key,
-      logdensity_fn=logdensity_fn,
       frac_tune1=0.1,  # fraction for phase 1
       frac_tune2=0.1,  # fraction for phase 2
       frac_tune3=0.1,  # fraction for phase 3

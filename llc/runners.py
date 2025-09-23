@@ -433,13 +433,23 @@ def run_mclmc_online_batched(
         key_tune, key_run = jax.random.split(key)
         x0 = init_thetas[0]
         integrator = getattr(blackjax.mcmc.integrators, integrator_name)
-        # Use BlackJAX 1.2.5 fractional API for tuning
+
+        # For tuning, we need to build a temporary kernel to get the proper state structure
+        # BlackJAX 1.2.5 requires the kernel for the adaptation function
+        temp_kernel = blackjax.mclmc(logdensity_fn, L=1, step_size=0.1, integrator=integrator)
+
+        # Initialize state for tuning (requires rng_key)
+        key_init, key_tune_actual = jax.random.split(key_tune)
+        init_state = temp_kernel.init(x0, rng_key=key_init)
+
+        # Note: BlackJAX 1.2.5 requires pre-built kernel, not logdensity_fn parameter
+
+        # Use BlackJAX 1.2.5 fractional API for tuning (correct: pass kernel, not logdensity_fn)
         L_tuned, eps_tuned, _info = blackjax.mclmc_find_L_and_step_size(
-            mclmc_kernel=None,  # Will be computed internally
+            mclmc_kernel=temp_kernel,
             num_steps=num_steps,
-            state=x0,
-            rng_key=key_tune,
-            logdensity_fn=logdensity_fn,
+            state=init_state,
+            rng_key=key_tune_actual,
             frac_tune1=frac_tune1,
             frac_tune2=frac_tune2,
             frac_tune3=frac_tune3,
@@ -465,11 +475,12 @@ def run_mclmc_online_batched(
         # Using cached parameters, split key for run only
         key_run = key
 
+    # Build final kernel with tuned parameters for sampling
     integrator = getattr(blackjax.mcmc.integrators, integrator_name)
-    mclmc_kernel = blackjax.mclmc(
+    final_mclmc_kernel = blackjax.mclmc(
         logdensity_fn, L=int(L_tuned), step_size=float(eps_tuned), integrator=integrator
     )
-    step_single = jax.jit(mclmc_kernel.step)
+    step_single = jax.jit(final_mclmc_kernel.step)
 
     # Build a concrete SamplerSpec with vmapped step
     from llc.samplers.base import SamplerSpec
