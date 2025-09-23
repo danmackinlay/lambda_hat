@@ -9,13 +9,15 @@ from typing import Dict, Any
 
 
 # IMPORTANT: keep imports inside the function if you want to minimize process import overhead
-def run_experiment_task(cfg_dict: Dict[str, Any]) -> Dict[str, Any]:
+def run_experiment_task(payload: Dict[str, Any]) -> Dict[str, Any]:
     """
     Run one experiment config and return a small, JSON-serializable result.
     Safe to pickle (top-level def) and safe to import on cluster/cloud.
 
     Always delegates to pipeline.run_one with save_artifacts controlling I/O.
     Returns uniform shape with cfg, run_dir, and llc_{sampler} values.
+
+    Expects canonical nested payload: {"cfg": {...}, "meta": {...}, ...}
     """
     import os
     import sys
@@ -28,8 +30,18 @@ def run_experiment_task(cfg_dict: Dict[str, Any]) -> Dict[str, Any]:
     stage = "init"
 
     try:
+        # Require canonical nested payload structure - fail fast on unexpected format
+        if "cfg" not in payload:
+            raise ValueError(
+                f"Invalid payload structure: missing 'cfg' key. "
+                f"Expected nested payload {{'cfg': {{...}}, 'meta': {{...}}, ...}}, "
+                f"got keys: {list(payload.keys())}"
+            )
+        cfg_dict = payload["cfg"]
+        meta = payload.get("meta", {})
+
         # Ensure worker process honors GPU intent (SLURM/Submitit)
-        gpu_mode = cfg_dict.get("gpu_mode", "off")
+        gpu_mode = meta.get("gpu_mode", cfg_dict.get("gpu_mode", "off"))
         if gpu_mode != "off":
             os.environ.setdefault("JAX_PLATFORMS", "cuda")
         else:
@@ -51,9 +63,12 @@ def run_experiment_task(cfg_dict: Dict[str, Any]) -> Dict[str, Any]:
 
         stage = "config"
         cfg_dict_clean = dict(cfg_dict)
-        # control flags (not part of Config)
-        save_artifacts = bool(cfg_dict_clean.pop("save_artifacts", False))
-        skip_if_exists = bool(cfg_dict_clean.pop("skip_if_exists", True))
+        # control flags must be at payload root level (strict enforcement)
+        save_artifacts = bool(payload.get("save_artifacts", False))
+        skip_if_exists = bool(payload.get("skip_if_exists", True))
+        # Remove any control flags that leaked into config
+        cfg_dict_clean.pop("save_artifacts", None)
+        cfg_dict_clean.pop("skip_if_exists", None)
         provided_schema = cfg_dict_clean.pop("config_schema", None)
 
         # Drop unknown keys to tolerate remote/client skew (but be loud).

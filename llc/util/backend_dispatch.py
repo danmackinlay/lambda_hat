@@ -1,7 +1,8 @@
 # llc/util/backend_dispatch.py
 from __future__ import annotations
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 from typing import Any, Callable, Dict, List, Optional, Sequence
+import copy
 
 from llc.util.backend_bootstrap import (
     select_jax_platform,
@@ -11,6 +12,7 @@ from llc.util.backend_bootstrap import (
 )
 from llc.execution import get_executor
 from llc.util.modal_utils import extract_modal_runs_locally
+from llc.config import config_schema_hash
 import logging
 
 logger = logging.getLogger(__name__)
@@ -61,10 +63,96 @@ def _build_modal_options(n_jobs: int, cap: int) -> Dict[str, int]:
     }
 
 
+def _atomic_payload(
+    cfg_dict: Dict[str, Any],
+    *,
+    sampler: Optional[str],
+    save_artifacts: bool,
+    skip_if_exists: bool,
+    gpu_mode: Optional[str]
+) -> dict:
+    """Produce a canonical nested payload with exactly one sampler."""
+    cfg_dict = copy.deepcopy(cfg_dict)
+    # Ensure we don't leak backend opts into experiment config
+    cfg_dict.pop("gpu_mode", None)
+    # Force single sampler if provided
+    if sampler is not None:
+        # Support both tuple and list conventions downstream
+        cfg_dict["samplers"] = (sampler,)
+    # Add config schema for validation
+    cfg_dict["config_schema"] = config_schema_hash()
+    # Canonical nested payload shape
+    p = {
+        "cfg": cfg_dict,
+        "meta": {},
+        "save_artifacts": save_artifacts,
+        "skip_if_exists": skip_if_exists,
+    }
+    if gpu_mode is not None:
+        p["meta"]["gpu_mode"] = gpu_mode
+    if sampler is not None:
+        p["meta"]["sampler"] = sampler
+    return p
+
+
 def prepare_payloads(
-    cfgs: Sequence, *, save_artifacts: bool, skip_if_exists: bool, gpu_mode: str
+    cfgs: Sequence,
+    *,
+    save_artifacts: bool,
+    skip_if_exists: bool,
+    gpu_mode: Optional[str] = None,
+    explode_samplers: bool = True,
 ) -> List[dict]:
-    return [schema_stamp(cfg, save_artifacts, skip_if_exists, gpu_mode) for cfg in cfgs]
+    """
+    Canonical payload preparer.
+    - ALWAYS returns nested payloads: {"cfg": {...}, "meta": {...}, ...}
+    - If explode_samplers=True and cfg.samplers contains multiple entries,
+      fan-out into one payload per sampler (atomic).
+    - Strips backend keys (e.g., gpu_mode) out of the config dict.
+    """
+    out: List[dict] = []
+    for cfg in cfgs:
+        # Convert config to dict
+        if hasattr(cfg, "__dict__"):
+            cfg_dict = cfg.__dict__.copy()
+        else:
+            cfg_dict = dict(cfg)
+
+        # Get samplers from cfg dict (tuple/list/str tolerant)
+        samplers = cfg_dict.get("samplers")
+        if isinstance(samplers, str):
+            samplers = (samplers,)
+        elif samplers is None:
+            samplers = ()
+        samplers = tuple(samplers)
+
+        if explode_samplers and len(samplers) > 1:
+            for s in samplers:
+                out.append(_atomic_payload(
+                    cfg_dict,
+                    sampler=s,
+                    save_artifacts=save_artifacts,
+                    skip_if_exists=skip_if_exists,
+                    gpu_mode=gpu_mode
+                ))
+        else:
+            # Either zero or one sampler declared; pass through
+            only = samplers[0] if len(samplers) == 1 else None
+            out.append(_atomic_payload(
+                cfg_dict,
+                sampler=only,
+                save_artifacts=save_artifacts,
+                skip_if_exists=skip_if_exists,
+                gpu_mode=gpu_mode
+            ))
+
+    if len(out) > 1:
+        try:
+            ss = [p["meta"].get("sampler", "?") for p in out]
+            logger.info("prepare_payloads: dispatching %d atomic jobs; samplers=%s", len(out), ",".join(map(str, ss)))
+        except Exception:
+            logger.info("prepare_payloads: dispatching %d atomic jobs", len(out))
+    return out
 
 
 def run_jobs(
@@ -74,15 +162,6 @@ def run_jobs(
     task_fn: Callable[[dict], dict],  # usually llc.tasks.run_experiment_task
 ) -> List[dict]:
     backend = (opts.backend or "local").lower()
-
-    # Log dispatch information for multiple payloads
-    if len(cfg_payloads) > 1:
-        try:
-            # Best-effort sampler summary for visibility
-            ss = [p.get("cfg", {}).get("samplers", ("?",))[0] for p in cfg_payloads]
-            logger.info("Dispatching %d jobs; samplers=%s", len(cfg_payloads), ",".join(map(str, ss)))
-        except Exception:
-            logger.info("Dispatching %d jobs", len(cfg_payloads))
 
     # Configure platform/env locally; remote backends do it server-side
     if backend == "local":

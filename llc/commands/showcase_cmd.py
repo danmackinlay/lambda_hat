@@ -7,47 +7,9 @@ from llc.tasks import run_experiment_task
 from llc.commands.analyze_cmd import analyze_entry
 from llc.commands.promote_cmd import promote_readme_images_entry
 from dataclasses import replace
-import copy
 import logging
 
 logger = logging.getLogger(__name__)
-
-
-def _explode_samplers(payload):
-    """
-    Given a payload with possibly multiple samplers in payload["samplers"],
-    return a list of payloads each with exactly one sampler.
-    If samplers is missing or already length==1, return [payload].
-    """
-    # Handle both flat payload (from schema_stamp) and nested payload (from task processing)
-    if "cfg" in payload:
-        # Nested structure: payload["cfg"]["samplers"]
-        cfg = payload["cfg"]
-        samplers = list(cfg.get("samplers") or [])
-        if len(samplers) <= 1:
-            return [payload]
-        out = []
-        for s in samplers:
-            p = copy.deepcopy(payload)
-            p["cfg"]["samplers"] = (s,)
-            # Optional: help operators by surfacing the sampler choice in metadata/logs
-            meta = p.setdefault("meta", {})
-            meta["sampler"] = s
-            out.append(p)
-        return out
-    else:
-        # Flat structure: payload["samplers"] (from schema_stamp)
-        samplers = list(payload.get("samplers") or [])
-        if len(samplers) <= 1:
-            return [payload]
-        out = []
-        for s in samplers:
-            p = copy.deepcopy(payload)
-            p["samplers"] = (s,)
-            # Optional: help operators by surfacing the sampler choice in metadata/logs
-            p["_sampler"] = s  # Add a marker for logging
-            out.append(p)
-        return out
 
 
 def showcase_readme_entry(**kwargs):
@@ -82,27 +44,16 @@ def showcase_readme_entry(**kwargs):
     elif gpu_mode == "sequential":
         cfg = replace(cfg, use_batched_chains=False)
 
-    # 2) Prepare one job payload using the shared schema stamper
+    # 2) Prepare payloads with automatic fan-out for multi-sampler configs
     save_artifacts = True
     skip_if_exists = False
-    [payload] = prepare_payloads([cfg], save_artifacts=save_artifacts,
-                                 skip_if_exists=skip_if_exists, gpu_mode=gpu_mode)
-
-    # 2.5) Explode multi-sampler payload into atomic runs (one per sampler)
-    original_samplers = payload.get("cfg", {}).get("samplers") or payload.get("samplers")
-    logger.debug("Original payload samplers: %s", original_samplers)
-    payloads = _explode_samplers(payload)
-    logger.debug("After explosion, %d payloads", len(payloads))
-    if len(payloads) > 1:
-        # Handle both flat and nested structures for logging
-        samplers_list = []
-        for p in payloads:
-            if "cfg" in p:
-                samplers_list.append(p["cfg"]["samplers"][0])
-            else:
-                samplers_list.append(p["samplers"][0])
-        samplers_str = ", ".join(samplers_list)
-        logger.info("Showcase will run %d atomic jobs (samplers: %s)", len(payloads), samplers_str)
+    payloads = prepare_payloads(
+        [cfg],
+        save_artifacts=save_artifacts,
+        skip_if_exists=skip_if_exists,
+        gpu_mode=gpu_mode,
+        explode_samplers=True,  # Fan-out happens centrally in prepare_payloads
+    )
 
     # 3) Run via the unified dispatcher (local / submitit / modal)
     opts = BackendOptions(
