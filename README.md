@@ -4,6 +4,22 @@ In [Singular Learning Theory (SLT)](https://singularlearningtheory.com), the **L
 
 This repo provides benchmark estimators of LLC on small but non-trivial neural networks, using standard industrial tooling: [BlackJAX](https://github.com/blackjax-devs/blackjax/tree/1.2.5) for sampling and [ArviZ](https://python.arviz.org/) for diagnostics.
 
+## Local Learning Coefficient (LLC)
+
+The **Local Learning Coefficient (LLC)** quantifies the effective dimensionality of a model around an optimum $w_0$.
+We estimate it via the *local posterior*:
+$$
+\pi(w) \propto \exp\{-n \beta L_n(w)\} \,\exp\{-\tfrac{\gamma}{2}\|w - w_0\|^2\}.
+$$
+
+Our estimator is
+$$
+\hat\lambda = n \beta \big(\,\mathbb{E}[L_n(w)] - L_n(w_0)\big),
+$$
+computed from MCMC samples. This repository compares several samplers (SGLD, SGNHT, HMC, MCLMC) across simple synthetic targets.
+
+*See [docs/llc.md](docs/llc.md) for a more detailed introduction and references.*
+
 ---
 
 ## Prerequisites
@@ -70,8 +86,10 @@ uv run llc sweep --study study_small.yaml               # CPU sweep
 
 ```bash
 uv run llc run --sampler sgld --preset=quick
+uv run llc run --sampler sgnht --preset=quick
 uv run llc run --sampler hmc --preset=quick
 uv run llc run --sampler mclmc --preset=quick
+uv run llc run --sampler sgld --target=dln --preset=quick  # DLN target
 ```
 
 ---
@@ -81,6 +99,7 @@ uv run llc run --sampler mclmc --preset=quick
 | Task                    | Command                                                     |
 | ----------------------- | ----------------------------------------------------------- |
 | Single SGLD run         | `uv run llc run --sampler sgld --preset=quick`             |
+| Single SGNHT run        | `uv run llc run --sampler sgnht --preset=quick`            |
 | Single HMC run          | `uv run llc run --sampler hmc --preset=quick`              |
 | Single MCLMC run        | `uv run llc run --sampler mclmc --preset=quick`            |
 | Local GPU sweep         | `uv run llc sweep --study study_default.yaml --gpus 0,1`   |
@@ -205,9 +224,9 @@ uv sync --extra slurm      # SLURM support
 ## Features
 
 * Unified CLI for end-to-end LLC estimation
-* Three samplers: SGLD, HMC, MCLMC
+* Four samplers: SGLD, SGNHT, HMC, MCLMC
 * Local parallel execution with GPU isolation
-* Configurable targets: ReLU MLPs, analytical quadratic
+* Configurable targets: ReLU MLPs, analytical quadratic, Deep Linear Networks (DLN)
 * Full ArviZ diagnostics (ESS, R̂, autocorrelation, rank plots)
 * Deterministic caching (reuses runs by config+code hash)
 

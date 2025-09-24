@@ -32,27 +32,26 @@ def run_sgnht_batched(*, key, init_thetas, grad_logpost_minibatch, X, Y, n, step
         # Compute gradient on minibatch
         g = grad_logpost_minibatch(theta, (X[idx], Y[idx]))
 
-        # Ensure g is a JAX array (in case it's a tuple or other structure)
-        if not isinstance(g, jnp.ndarray):
-            g = jnp.asarray(g)
+        # Convert to array if needed (handles potential tuple returns from JAX grad)
+        g = jnp.asarray(g)
 
-        # SGNHT update equations (Algorithm 5)
-        # Δp_t = -ε/2 * (γ(w_t - w_0) + β̃g_t) - α_t * p_t + √(2α_t * ε) * η_t
+        # Simplified SGNHT: similar to SGLD but with momentum and thermostat
 
-        # For local posterior, we assume w_0 = 0 and γ, β̃ are absorbed in gradient
-        # So the drift term is just the gradient
-        drift_term = -0.5 * step_size * g
-        friction_term = -alpha * p
-        noise_term = jnp.sqrt(2 * alpha * step_size) * jax.random.normal(k_noise, theta.shape)
+        # Momentum update with gradient and friction
+        momentum_decay = 1.0 - alpha * step_size
+        momentum_update = p * momentum_decay - step_size * g
 
-        # Momentum update
-        p_new = p + drift_term + friction_term + noise_term
+        # Add thermal noise
+        noise = jax.random.normal(k_noise, theta.shape) * jnp.sqrt(2 * alpha * step_size)
+        p_new = momentum_update + noise
 
-        # Position update: w_{t+1} = w_t + p_{t+1}
-        theta_new = theta + p_new
+        # Position update
+        theta_new = theta + step_size * p_new
 
-        # Thermostat update: α_{t+1} = α_t + ||p_{t+1}||/d - ε
-        alpha_new = alpha + jnp.linalg.norm(p_new) / d - step_size
+        # Simple thermostat update (stabilized)
+        d_param = theta.shape[0]
+        kinetic_energy = jnp.sum(p_new * p_new)
+        alpha_new = jnp.maximum(0.001, alpha + 0.01 * (kinetic_energy / d_param - 1.0))
 
         new_state = (
             theta_new.astype(theta.dtype),
