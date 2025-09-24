@@ -1,7 +1,7 @@
 """Test preconditioning update functions."""
 
 import jax.numpy as jnp
-from llc.samplers.base import precond_update, DiagPrecondState
+from llc.samplers.utils import precond_update, DiagPrecondState
 
 
 def test_adam_returns_mhat_for_drift():
