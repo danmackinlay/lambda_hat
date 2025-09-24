@@ -7,14 +7,14 @@ This repository provides a streamlined framework for estimating the Local Learni
 Requires Python 3.11+.
 
 ```bash
-# Setup Python environment (e.g., using uv, venv, or conda)
+# Using uv (recommended):
+uv venv --python 3.12 && source .venv/bin/activate
+uv sync --extra cpu   # For CPU/macOS
+uv sync --extra cuda12  # For CUDA 12 (Linux)
 
-# Install dependencies
-# For CPU/macOS:
-pip install .[cpu]
-
-# For CUDA 12 (Linux):
-pip install .[cuda12]
+# Or using pip:
+pip install .[cpu]     # For CPU/macOS
+pip install .[cuda12]  # For CUDA 12 (Linux)
 ```
 
 ## Running Experiments
