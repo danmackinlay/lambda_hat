@@ -154,12 +154,10 @@ def run_mclmc_batched(*, key, init_thetas, logdensity_fn, draws, eval_every, thi
 
     # Timing and work
     M = result.L_hist.shape[1]
-    eval_time_estimate = M * 0.001
-    sampling_time = max(0.0, total_time - eval_time_estimate)
 
     timings = {
         "warmup": float(warmup_time),
-        "sampling": float(sampling_time),
+        "sampling": float(total_time),
     }
 
     work = {

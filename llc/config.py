@@ -3,6 +3,7 @@ from typing import Optional, Literal, List
 import yaml
 import json
 import hashlib
+import logging
 
 @dataclass
 class Config:
@@ -132,6 +133,13 @@ def coerce_types(cfg_dict: dict) -> dict:
     return result
 
 def override_config(cfg: Config, overrides: dict) -> Config:
-    """Apply dictionary overrides to config."""
-    overrides = coerce_types(overrides)
-    return replace(cfg, **overrides)
+    """Apply dictionary overrides to config, ignoring unknown keys."""
+    allowed = {f.name for f in fields(Config)}
+    unknown = set(overrides) - allowed
+    if unknown:
+        logging.getLogger(__name__).warning(
+            "Ignoring unknown config keys: %s", sorted(unknown)
+        )
+    known = {k: overrides[k] for k in overrides if k in allowed}
+    known = coerce_types(known)
+    return replace(cfg, **known)

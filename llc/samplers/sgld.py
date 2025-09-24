@@ -89,13 +89,9 @@ def run_sgld_batched(*, key, init_thetas, grad_logpost_minibatch, X, Y, n, step_
     # Timing and work statistics
     M = result.L_hist.shape[1]  # number of evaluations
 
-    # Estimate time spent on full evaluations vs sampling
-    eval_time_estimate = M * 0.001  # rough estimate
-    sampling_time = max(0.0, total_time - eval_time_estimate)
-
     timings = {
         "warmup": float(result.warmup_time_seconds),
-        "sampling": float(sampling_time),
+        "sampling": float(total_time),
     }
 
     work = {

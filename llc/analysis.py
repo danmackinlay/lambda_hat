@@ -217,3 +217,53 @@ def fig_running_llc(idata, n, beta, L0, title):
     ax.grid(True, alpha=0.3)
     ax.legend()
     return fig
+
+def fig_rank_llc(idata):
+    """LLC rank plot."""
+    axes = az.plot_rank(idata, var_names=["llc"], combined=True, kind="bars")
+    if hasattr(axes, 'fig'):
+        return axes.fig
+    elif isinstance(axes, (list, tuple, np.ndarray)):
+        return axes.flat[0].figure
+    else:
+        return axes.figure
+
+def fig_autocorr_llc(idata):
+    """LLC autocorrelation plot."""
+    axes = az.plot_autocorr(idata, var_names=["llc"])
+    return (
+        axes[0].figure if isinstance(axes, (list, tuple, np.ndarray)) else axes.figure
+    )
+
+def fig_energy(idata):
+    """Energy plot if available."""
+    if "energy" not in idata.sample_stats:
+        return None
+    E = idata.sample_stats["energy"].values
+    fig, ax = plt.subplots(1, 1, figsize=(6, 3))
+    ax.plot(E.mean(axis=0))
+    ax.set_title("Energy (mean over chains)")
+    ax.set_xlabel("draw")
+    ax.set_ylabel("energy")
+    ax.grid(True, alpha=0.3)
+    return fig
+
+def fig_theta_trace(idata, dims=4):
+    """Theta trace plots."""
+    # Check if we have scalar theta variables
+    theta_vars = [v for v in idata.posterior.data_vars if v.startswith("theta_")]
+
+    if theta_vars:
+        # Use scalar theta variables
+        theta_vars_sorted = sorted(theta_vars, key=lambda x: int(x.split("_")[1]))
+        n_vars = min(dims, len(theta_vars_sorted))
+        var_names = theta_vars_sorted[:n_vars]
+        axes = az.plot_trace(
+            idata, var_names=var_names, backend_kwargs={"constrained_layout": True}
+        )
+        if isinstance(axes, (list, tuple, np.ndarray)):
+            return axes.flat[0].figure
+        return axes.figure
+    else:
+        # No theta variables available
+        return None

@@ -44,8 +44,9 @@ def run_one(cfg: Config, *, save_artifacts=True, skip_if_exists=True):
     logdensity_mclmc = make_logdensity_for_mclmc(bundle.loss_full_f64, bundle.theta0_f64, cfg.n_data, beta, gamma)
     Ln_full64_vmapped = jax.jit(jax.vmap(bundle.loss_full_f64))
 
-    # tiny-store diagnostics (subset/projection) — keep simple: no projection for now
-    tiny = build_tiny_store(None, None)
+    # tiny-store diagnostics: first k dimensions for theta traces
+    k = min(8, bundle.d)
+    tiny = build_tiny_store(diag_dims=list(range(k)), Rproj=None)
 
     sampler = cfg.samplers[0]
     if sampler == "sgld":
