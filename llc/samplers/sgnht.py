@@ -22,46 +22,34 @@ def run_sgnht_batched(*, key, init_thetas, grad_logpost_minibatch, X, Y, n, step
 
     @jax.jit
     def sgnht_step_single(key, state):
-        """Single SGNHT step for one chain following Algorithm 5."""
         theta, p, alpha = state
-
         k_noise, k_batch = jax.random.split(key)
-        # Sample minibatch
+
+        # minibatch
         idx = jax.random.randint(k_batch, (batch_size,), 0, n)
+        g = grad_logpost_minibatch(theta, (X[idx], Y[idx]))  # ∇ log π(θ)
 
-        # Compute gradient on minibatch
-        g = grad_logpost_minibatch(theta, (X[idx], Y[idx]))
+        # momentum: p ← p + ε*(g − α p) + √(2 α ε) ξ
+        eps = jnp.asarray(step_size, dtype=theta.dtype)
+        # for stability, only clip the α used in noise std, not alpha itself
+        alpha_noise = jnp.clip(alpha, 1e-8, None)
+        noise = jax.random.normal(k_noise, theta.shape) * jnp.sqrt(2.0 * alpha_noise * eps)
+        p_new = p + eps * (g - alpha[:, None] * p) + noise
 
-        # Convert to array if needed (handles potential tuple returns from JAX grad)
-        g = jnp.asarray(g)
+        # position: θ ← θ + ε p
+        theta_new = theta + eps * p_new
 
-        # Simplified SGNHT: similar to SGLD but with momentum and thermostat
+        # thermostat: α ← α + ε*(||p||^2/d − 1)
+        d_param = theta.shape[-1]
+        kinetic_mean = jnp.mean(p_new * p_new, axis=-1)  # == ||p||^2/d
+        alpha_new = alpha + eps * (kinetic_mean - 1.0)
 
-        # Momentum update with gradient and friction
-        momentum_decay = 1.0 - alpha * step_size
-        momentum_update = p * momentum_decay - step_size * g
+        new_state = (theta_new, p_new, alpha_new)
 
-        # Add thermal noise
-        noise = jax.random.normal(k_noise, theta.shape) * jnp.sqrt(2 * alpha * step_size)
-        p_new = momentum_update + noise
-
-        # Position update
-        theta_new = theta + step_size * p_new
-
-        # Simple thermostat update (stabilized)
-        d_param = theta.shape[0]
-        kinetic_energy = jnp.sum(p_new * p_new)
-        alpha_new = jnp.maximum(0.001, alpha + 0.01 * (kinetic_energy / d_param - 1.0))
-
-        new_state = (
-            theta_new.astype(theta.dtype),
-            p_new.astype(theta.dtype),
-            alpha_new.astype(theta.dtype)
-        )
-
-        # Return extras for diagnostics (optional)
-        extras = {"alpha_mean": jnp.mean(alpha_new), "momentum_norm": jnp.linalg.norm(p_new)}
-
+        extras = {
+            "alpha_mean": jnp.mean(alpha_new),
+            "momentum_norm": jnp.linalg.norm(p_new)
+        }
         return new_state, extras
 
     step_vmapped = jax.jit(jax.vmap(sgnht_step_single, in_axes=(0, 0)))
