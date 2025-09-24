@@ -23,7 +23,7 @@ from omegaconf import DictConfig, OmegaConf
 
 from llc.config import Config, setup_config
 from llc.targets import build_target
-from llc.posterior import make_logpost_and_score, make_logdensity_for_mclmc, compute_beta_gamma
+from llc.posterior import make_logpost, make_grad_loss_minibatch, compute_beta_gamma, make_logpost_and_score, make_logdensity_for_mclmc
 from llc.sampling import run_hmc, run_sgld, run_mclmc
 from llc.analysis import compute_llc_metrics
 from llc.artifacts import save_run_artifacts
@@ -54,8 +54,8 @@ def run_sampler(
     """Run a specific sampler and return results"""
     log.info(f"Running {sampler_name} sampler...")
 
-    # Compute beta and gamma
-    beta, gamma = compute_beta_gamma(cfg.posterior, target.d)
+    # Compute beta and gamma (Updated signature)
+    beta, gamma = compute_beta_gamma(cfg.posterior, target.d, cfg.data.n_data)
     log.info(f"Using beta={beta:.6f}, gamma={gamma:.6f}")
 
     if sampler_name == "hmc":
@@ -83,26 +83,25 @@ def run_sampler(
         )
 
     elif sampler_name == "sgld":
-        # Setup SGLD
-        loss_full = target.loss_full_f32
+        # Setup SGLD/pSGLD
         loss_mini = target.loss_minibatch_f32
-        params0 = target.params0_f32
+        params0 = target.params0_f32 # Center for localization (w_0)
+        initial_params = params0     # Start sampling near w_0
 
-        _, grad_logpost_fn = make_logpost_and_score(
-            loss_full, loss_mini, params0,
-            cfg.data.n_data, beta, gamma
-        )
+        # Use the new make_grad_loss_minibatch
+        grad_loss_fn = make_grad_loss_minibatch(loss_mini)
 
-        # Run SGLD
+        # Run SGLD (Updated signature)
         traces = run_sgld(
             key,
-            grad_logpost_fn,
-            params0,
+            grad_loss_fn,
+            initial_params=initial_params,
+            params0=params0,
             data=(target.X_f32, target.Y_f32),
-            num_samples=cfg.sampler.sgld.steps,
+            config=cfg.sampler.sgld,
             num_chains=cfg.sampler.chains,
-            step_size=cfg.sampler.sgld.step_size,
-            batch_size=cfg.sampler.sgld.batch_size,
+            beta=beta,
+            gamma=gamma,
         )
 
     elif sampler_name == "mclmc":
@@ -189,10 +188,18 @@ def main(cfg: DictConfig) -> None:
             traces = sampler_data["traces"]
             loss_full = target.loss_full_f64 if sampler_name in ["hmc", "mclmc"] else target.loss_full_f32
 
-            metrics = compute_llc_metrics(traces, loss_full, target.L0)
+            # Updated call to compute_llc_metrics
+            metrics = compute_llc_metrics(
+                traces,
+                loss_full,
+                target.L0,
+                n_data=cfg.data.n_data,
+                beta=sampler_data["beta"]
+            )
             analysis_results[sampler_name] = metrics
 
-            log.info(f"{sampler_name} LLC metrics:")
+            # Update logging terminology
+            log.info(f"{sampler_name} LLC (hat{{lambda}}) metrics:")
             log.info(f"  Mean: {metrics['llc_mean']:.6f}")
             log.info(f"  Std: {metrics['llc_std']:.6f}")
             if 'ess' in metrics:
