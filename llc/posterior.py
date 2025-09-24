@@ -3,54 +3,92 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
+import jax
 import jax.numpy as jnp
 from jax import grad, value_and_grad, jit
 
 if TYPE_CHECKING:
-    from .config import Config
+    # Update TYPE_CHECKING imports
+    from .config import PosteriorConfig
 
 
-def compute_beta_gamma(cfg: Config, d: int) -> tuple[float, float]:
+# Updated signature to take PosteriorConfig and n_data explicitly
+def compute_beta_gamma(cfg: PosteriorConfig, d: int, n_data: int) -> tuple[float, float]:
     """Compute beta and gamma from config and dimension"""
-    n_eff = max(3, int(cfg.n_data))
+    n_eff = max(3, int(n_data))
     beta = cfg.beta0 / jnp.log(n_eff) if cfg.beta_mode == "1_over_log_n" else cfg.beta0
     gamma = (d / (cfg.prior_radius**2)) if (cfg.prior_radius is not None) else cfg.gamma
     return float(beta), float(gamma)
 
 
-def make_logpost_and_score(loss_full, loss_minibatch, params0, n, beta, gamma):
-    """Create log posterior using flexible loss functions for Haiku params"""
-    # Flatten params for prior computation
-    leaves, tree_def = jax.tree_util.tree_flatten(params0)
+# Unified function for HMC/MCLMC log density (replaces make_logpost_and_score and make_logdensity_for_mclmc)
+def make_logpost(loss_full: Callable, params0, n: int, beta: float, gamma: float) -> Callable:
+    """Create the log posterior function: log P(w) = -n*beta*L_n(w) - gamma/2*||w-w0||^2.
+
+    This is used by HMC and MCLMC.
+    """
+    # Flatten params0 for prior computation
+    leaves, _ = jax.tree_util.tree_flatten(params0)
     theta0 = jnp.concatenate([leaf.flatten() for leaf in leaves])
 
-    # Make sure scalars match theta dtype so we don't upcast f32 paths to f64
+    # Ensure scalars match theta dtype
     beta = jnp.asarray(beta, dtype=theta0.dtype)
     gamma = jnp.asarray(gamma, dtype=theta0.dtype)
     n = jnp.asarray(n, dtype=theta0.dtype)
 
+    @jit
     def logpost(params):
         # Flatten params for prior computation
         leaves, _ = jax.tree_util.tree_flatten(params)
         theta = jnp.concatenate([leaf.flatten() for leaf in leaves])
 
         Ln = loss_full(params)
+        # Prior term: -gamma/2 * ||w-w0||^2
         lp = -0.5 * gamma * jnp.sum((theta - theta0) ** 2)
+        # Likelihood term: -n * beta * L_n(w)
         return lp - n * beta * Ln
 
+    return logpost
+
+
+# New function for SGLD adaptation
+def make_grad_loss_minibatch(loss_minibatch: Callable) -> Callable:
+    """Create a function that computes the gradient of the minibatch loss.
+    This is used for SGLD preconditioning, which should only adapt to the loss landscape.
+    """
+    @jit
+    def grad_loss_fn(params, minibatch):
+        Xb, Yb = minibatch
+        # Compute gradient of loss w.r.t. params: ∇ L_b(w)
+        g_Lb = grad(lambda p: loss_minibatch(p, Xb, Yb))(params)
+        return g_Lb
+
+    return grad_loss_fn
+
+
+# Keep backward compatibility by creating wrapper functions
+def make_logpost_and_score(loss_full, loss_minibatch, params0, n, beta, gamma):
+    """Legacy wrapper for backward compatibility"""
+    logpost = make_logpost(loss_full, params0, n, beta, gamma)
     logpost_and_grad = value_and_grad(logpost)
+    grad_loss_fn = make_grad_loss_minibatch(loss_minibatch)
+
+    # For backward compatibility, wrap grad_loss_fn to include prior term
+    leaves, tree_def = jax.tree_util.tree_flatten(params0)
+    theta0 = jnp.concatenate([leaf.flatten() for leaf in leaves])
+    beta = jnp.asarray(beta, dtype=theta0.dtype)
+    gamma = jnp.asarray(gamma, dtype=theta0.dtype)
+    n = jnp.asarray(n, dtype=theta0.dtype)
 
     @jit
-    def grad_logpost_minibatch(params, minibatch):  # <- accepts (Xb, Yb)
-        Xb, Yb = minibatch
+    def grad_logpost_minibatch(params, minibatch):
+        # Get loss gradient
+        g_Lb = grad_loss_fn(params, minibatch)
 
         # Flatten params for prior computation
         leaves, _ = jax.tree_util.tree_flatten(params)
         theta = jnp.concatenate([leaf.flatten() for leaf in leaves])
-
-        # Compute gradient of loss w.r.t. params
-        g_Lb = grad(lambda p: loss_minibatch(p, Xb, Yb))(params)
 
         # Compute prior gradient w.r.t. flattened params
         g_prior_flat = -gamma * (theta - theta0)
@@ -75,28 +113,5 @@ def make_logpost_and_score(loss_full, loss_minibatch, params0, n, beta, gamma):
 
 
 def make_logdensity_for_mclmc(loss_full64, params0_f64, n, beta, gamma):
-    """Create log-density function for MCLMC sampler (f64 precision)
-
-    MCLMC expects a pure log-density function, not a gradient closure.
-    This extracts the log posterior: log π(θ) = -nβ L_n(θ) - γ/2 ||θ-θ₀||²
-    """
-    # Flatten params for prior computation
-    leaves, _ = jax.tree_util.tree_flatten(params0_f64)
-    theta0_f64 = jnp.concatenate([leaf.flatten() for leaf in leaves])
-
-    # Ensure scalars match theta dtype for consistency
-    beta = jnp.asarray(beta, dtype=theta0_f64.dtype)
-    gamma = jnp.asarray(gamma, dtype=theta0_f64.dtype)
-    n = jnp.asarray(n, dtype=theta0_f64.dtype)
-
-    @jit
-    def logdensity(params64):
-        # Flatten params for prior computation
-        leaves, _ = jax.tree_util.tree_flatten(params64)
-        theta64 = jnp.concatenate([leaf.flatten() for leaf in leaves])
-
-        Ln = loss_full64(params64)  # already f64 X,Y inside loss_full64
-        lp = -0.5 * gamma * jnp.sum((theta64 - theta0_f64) ** 2)
-        return lp - n * beta * Ln
-
-    return logdensity
+    """Legacy wrapper for backward compatibility"""
+    return make_logpost(loss_full64, params0_f64, n, beta, gamma)

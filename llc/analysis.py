@@ -10,41 +10,57 @@ import arviz as az
 from pathlib import Path
 
 
-def compute_llc_metrics(traces: Dict[str, jnp.ndarray], loss_fn: Callable, L0: float) -> Dict[str, float]:
-    """Compute LLC metrics from sampling traces
+def compute_llc_metrics(
+    traces: Dict[str, jnp.ndarray],
+    loss_fn: Callable,
+    L0: float,
+    n_data: int,  # Added
+    beta: float   # Added
+) -> Dict[str, float]:
+    """Compute LLC metrics (lambda_hat) from sampling traces.
+
+    Implements the estimator: hat{lambda} = n * beta * (E[L_n(w)] - L0)
 
     Args:
         traces: Dictionary with 'position' key containing parameter samples
-                Shape: (chains, draws, param_structure)
         loss_fn: Loss function to evaluate on parameter samples
         L0: Reference loss value (loss at ERM solution)
+        n_data: Dataset size (n)
+        beta: Inverse temperature (beta)
 
     Returns:
-        Dictionary with LLC statistics
+        Dictionary with LLC statistics (hat{lambda})
     """
     # Extract positions
     positions = traces['position']  # (chains, draws, param_structure)
-    chains, draws = positions['position'].shape[:2] if isinstance(positions, dict) else positions.shape[:2]
+
+    # Determine chains and draws robustly
+    if isinstance(positions, dict):
+        # Handle structured params (Haiku), infer shape from the first leaf
+        first_leaf = jax.tree_util.tree_leaves(positions)[0]
+        chains, draws = first_leaf.shape[:2]
+    else:
+        # Handle flat params
+        chains, draws = positions.shape[:2]
 
     # Compute loss for all samples using vmap
     # Flatten chains and draws for batch computation
     if isinstance(positions, dict):
-        # Handle structured params (Haiku)
         flat_positions = jax.tree_map(
             lambda x: x.reshape(-1, *x.shape[2:]),
             positions
         )
         losses = jax.vmap(loss_fn)(flat_positions)
     else:
-        # Handle flat params
         flat_positions = positions.reshape(-1, *positions.shape[2:])
         losses = jax.vmap(loss_fn)(flat_positions)
 
     # Reshape back to (chains, draws)
     losses = losses.reshape(chains, draws)
 
-    # Compute LLC values: LLC = L0 - L_n(θ)
-    llc_values = L0 - losses
+    # Compute LLC values (hat{lambda}): n * beta * (L_n(w) - L0)
+    # This aligns with the definition in Hitchcock and Hoogland (Eq 3.8)
+    llc_values = float(n_data) * float(beta) * (losses - L0)
 
     # Convert to numpy for ArviZ
     llc_values_np = np.array(llc_values)
@@ -70,8 +86,14 @@ def compute_llc_metrics(traces: Dict[str, jnp.ndarray], loss_fn: Callable, L0: f
         metrics['ess_bulk'] = float(summary.get('ess_bulk', np.nan).iloc[0])
         metrics['ess_tail'] = float(summary.get('ess_tail', np.nan).iloc[0])
         metrics['r_hat'] = float(summary.get('r_hat', np.nan).iloc[0])
-        # Use minimum of bulk and tail ESS as overall ESS
-        metrics['ess'] = min(metrics['ess_bulk'], metrics['ess_tail'])
+
+        # Use minimum of bulk and tail ESS as overall ESS, handling potential NaNs
+        ess_bulk = metrics['ess_bulk']
+        ess_tail = metrics['ess_tail']
+        if np.isnan(ess_bulk) or np.isnan(ess_tail):
+            metrics['ess'] = np.nan
+        else:
+            metrics['ess'] = min(ess_bulk, ess_tail)
 
     return metrics
 
