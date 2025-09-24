@@ -257,26 +257,80 @@ sampler:
 
 Run with: `python train.py +experiment=large_scale`
 
-### SLURM Integration
+### Parallel Execution (SLURM and Local)
 
-Use Hydra's submitit launcher for cluster execution:
+Use Hydra's Submitit launcher for parallel execution, either locally or on a SLURM cluster. This allows running large parameter sweeps efficiently by dispatching each configuration as an independent job. This requires using the `--multirun` (or `-m`) flag.
+
+**SLURM Cluster Execution:**
+
+To run a sweep in parallel on SLURM, select the `submitit_slurm` launcher. You must specify your SLURM partition using the `hydra.launcher.partition` override.
 
 ```bash
-python train.py --config-path conf --config-name config \
+python train.py --multirun \
   hydra/launcher=submitit_slurm \
-  hydra.launcher.timeout_min=240 \
-  hydra.launcher.cpus_per_task=4
+  hydra.launcher.partition=YOUR_PARTITION_NAME \
+  data.n_data=1000,5000 \
+  model=small,base
+```
+
+This command launches a separate SLURM job for every combination of parameters (4 jobs in this example).
+
+**Resource Configuration:**
+
+The default resources are defined in `conf/hydra/launcher/submitit_slurm.yaml`. You can override these via the command line:
+
+```bash
+python train.py --multirun hydra/launcher=submitit_slurm \
+  hydra.launcher.partition=YOUR_PARTITION_NAME \
+  hydra.launcher.timeout_min=480 \
+  hydra.launcher.cpus_per_task=8 \
+  hydra.launcher.gpus_per_node=1 \
+  model=small,base
+```
+
+**Local Parallel Execution (Testing):**
+
+To test the parallel mechanism locally without a SLURM cluster, use the `submitit_local` launcher:
+
+```bash
+python train.py --multirun hydra/launcher=submitit_local model=small,base
+```
+
+**Output Management:**
+
+When using `--multirun`, Hydra organizes outputs in the `multirun/` directory:
+
+```
+multirun/
+└── YYYY-MM-DD/
+    └── HH-MM-SS/
+        ├── 0/               # Job 0 results (config.yaml, metrics_summary.csv, etc.)
+        ├── 1/               # Job 1 results
+        ├── ...
+        ├── .submitit_slurm/ # SLURM stdout/stderr logs
+        └── multirun.yaml    # Overview of the sweep
 ```
 
 ### Parameter Sweeps
 
-Run comprehensive parameter sweeps:
+Run comprehensive parameter sweeps across multiple dimensions:
 
 ```bash
 python train.py --multirun \
   model=small,base \
   data.noise_scale=0.01,0.1,1.0 \
   sampler.chains=2,4,8
+```
+
+For large sweeps on SLURM:
+
+```bash
+python train.py --multirun \
+  hydra/launcher=submitit_slurm \
+  hydra.launcher.partition=gpu \
+  model=small,base \
+  data.n_data=1000,5000,10000 \
+  posterior.beta0=0.5,1.0,2.0
 ```
 
 ---
