@@ -10,9 +10,7 @@ This repo provides benchmark estimators of LLC on small but non-trivial neural n
 
 * **Python versions**
 
-  * **SLURM/submitit:** Python **3.12** (cluster standard, at least on our cluster)
-  * **Modal:** Python **3.11** (baked into the Modal image)
-  * **Local:** Prefer **3.12** for parity with SLURM; 3.11 also works
+  * **Local:** Python **3.11** or **3.12**
 
 * **Package manager:** [uv](https://github.com/astral-sh/uv)
 
@@ -36,7 +34,7 @@ This repo provides benchmark estimators of LLC on small but non-trivial neural n
 3. Analyze the run:
 
    ```bash
-   uv run llc analyze runs/<run_id> --which all --plots running_llc,rank,ess_evolution,autocorr,energy,theta
+   uv run llc analyze runs/<run_id> --which all --plots running_llc,rank,autocorr,energy,theta
    ```
 
 This generates diagnostic plots such as:
@@ -58,77 +56,46 @@ More plots are available via `llc analyze` (rank, ESS, autocorrelation, theta tr
 
 ---
 
-## Running on Different Backends
+## Running Sweeps
 
-All backends share the same flags (`--backend`, `--gpu-mode`, `--gpu-types`) via a unified executor.
-
-### Local
+### Local Parallel
 
 ```bash
 uv sync --extra cpu
-uv run llc run --backend=local --sampler sgld --preset=quick
+uv run llc sweep --study study_default.yaml --gpus 0,1,2  # GPU sweep
+uv run llc sweep --study study_small.yaml               # CPU sweep
 ```
 
-### SLURM (Python 3.12 + CUDA 12)
+### Single Sampler
 
 ```bash
-uv venv --python 3.12 && source .venv/bin/activate
-uv sync --extra slurm --extra cuda12
-uv run llc run --backend=submitit --gpu-mode=vectorized \
-  --slurm-partition=gpu --account=abc123 --sampler sghmc
+uv run llc run --sampler sgld --preset=quick
+uv run llc run --sampler hmc --preset=quick
+uv run llc run --sampler mclmc --preset=quick
 ```
-
-### Modal (Python 3.11 inside image)
-
-```bash
-uv sync --extra modal
-uv run llc run --backend=modal --gpu-mode=vectorized --sampler sghmc
-```
-
-See [docs/backends.md](docs/backends.md) for full setup (Modal + SLURM).
 
 ---
 
 ## Common Tasks
 
-| Task                    | Command                                                                                   |
-| ----------------------- | ----------------------------------------------------------------------------------------- |
-| Single SGHMC run        | `uv run llc run --sampler sghmc --preset=quick`                                           |
-| Local sweep (8 workers) | `uv run llc sweep --workers=8`                                                            |
-| Sweep with study YAML   | `uv run llc sweep --study study.yaml --backend=modal`                                     |
-| Sweep samplers (JSON)   | `uv run llc sweep --sampler-grid='[{"name":"sgld","overrides":{"sgld_precond":"adam"}}]'` |
-| SLURM sweep             | `uv run llc sweep --backend=submitit --gpu-mode=vectorized`                               |
-| Modal sweep             | `uv run llc sweep --backend=modal`                                                        |
-| Analyze saved run       | `uv run llc analyze runs/<run_id>`                                                        |
-| Plot sweep results      | `uv run llc plot-sweep`                                                                   |
-| Refresh README images   | `uv run llc promote-readme-images`                                                        |
-| Debug with verbose mode | `uv run llc --verbose run --sampler sgld` (note: `--verbose` goes BEFORE subcommand)      |
+| Task                    | Command                                                     |
+| ----------------------- | ----------------------------------------------------------- |
+| Single SGLD run         | `uv run llc run --sampler sgld --preset=quick`             |
+| Single HMC run          | `uv run llc run --sampler hmc --preset=quick`              |
+| Single MCLMC run        | `uv run llc run --sampler mclmc --preset=quick`            |
+| Local GPU sweep         | `uv run llc sweep --study study_default.yaml --gpus 0,1`   |
+| Local CPU sweep         | `uv run llc sweep --study study_small.yaml`                |
+| Analyze saved run       | `uv run llc analyze runs/<run_id>`                         |
+| Debug with verbose mode | `uv run llc --verbose run --sampler sgld`                  |
 
 
-## Debugging and Re-running Jobs
+## Configuration
 
-Every run and sweep job saves its **exact configuration** to `config.json` in the run directory. In addition, failed jobs now dump a `<run_id>_cfg.json` next to their SLURM logs. This makes it easy to see what parameters were passed and to retry them.
-
-### Inspect config
+Every run saves its exact configuration to `config.json` in the run directory:
 
 ```bash
-cat runs/<run_id>/config.json         # for completed jobs
-cat slurm_logs/<jobid>_cfg.json       # for failed SLURM jobs
+cat runs/<run_id>/config.json
 ```
-
-### Repeat a run
-
-You can re-run any job locally or remotely with the **same parameters**:
-
-```bash
-# From a run dir
-uv run llc repeat --from-run runs/<run_id> --backend=local --gpu-mode=off
-
-# From a dumped cfg JSON (e.g. from a failed sweep job)
-uv run llc repeat --cfg-json slurm_logs/<jobid>_cfg.json --backend=submitit --gpu-mode=vectorized --account=abc123
-```
-
-This lets you quickly rerun failed SLURM jobs on your laptop to see the error, or resubmit them to the cluster without editing YAMLs.
 
 
 ---
@@ -184,37 +151,31 @@ runs/<run_id>/
 
 ## Defining Sweeps
 
-### YAML Study Files
+### Study Files
 
 ```yaml
-# study.yaml
+# study_small.yaml
 base:
   preset: quick
+  n_data: 1000
+  chains: 2
 problems:
-  - name: small
-    overrides: {target_params: 2000}
-  - name: large
-    overrides: {target_params: 10000}
+  - name: tiny
+    overrides:
+      target_params: 2000
 samplers:
   - name: sgld
-    overrides: {sgld_precond: none}
-  - name: sgld
-    overrides: {sgld_precond: adam}
+    overrides:
+      sgld_precond: adam
   - name: hmc
-    overrides: {hmc_num_integration_steps: 10}
-seeds: [0,1,2]
+    overrides: {}
+seeds: [0]
 ```
 
 Run:
 
 ```bash
-uv run llc sweep --backend=modal --study study.yaml
-```
-
-### JSON Grid Sweeps
-
-```bash
-uv run llc sweep --sampler-grid='[{"name":"sgld","overrides":{"sgld_precond":"adam"}}]'
+uv run llc sweep --study study_small.yaml
 ```
 
 ---
@@ -244,68 +205,39 @@ uv sync --extra slurm      # SLURM support
 ## Features
 
 * Unified CLI for end-to-end LLC estimation
-* Consistent sampler interface: SGLD, SGHMC, HMC, MCLMC
-* Three execution backends: Local, SLURM, Modal
-* Configurable targets: ReLU/tanh/GeLU MLPs, analytical quadratic
+* Three samplers: SGLD, HMC, MCLMC
+* Local parallel execution with GPU isolation
+* Configurable targets: ReLU MLPs, analytical quadratic
 * Full ArviZ diagnostics (ESS, R̂, autocorrelation, rank plots)
 * Deterministic caching (reuses runs by config+code hash)
 
 ---
 
-## Regenerating README Figures
+## Analysis
 
-There are two ways to refresh the images under `assets/readme/`:
-
-### A) One-step (recommended)
-
-Runs a full preset, generates plots, and updates README assets:
+Generate diagnostic plots from any completed run:
 
 ```bash
-# Choose backend/gpu flags as needed (works with local, submitit, modal)
-uv run llc showcase-readme
-
-# Examples with different backends:
-uv run llc showcase-readme --gpu-mode=vectorized  # Local GPU
-uv run llc showcase-readme --backend=submitit --gpu-mode=vectorized --slurm-partition=gpu
-uv run llc showcase-readme --backend=modal --gpu-mode=vectorized --gpu-types=H100
-
-# With verbose logging for debugging:
-uv run llc --verbose showcase-readme --backend=submitit --gpu-mode=vectorized --account=abc123
+uv run llc analyze runs/<run_id> --which all \
+  --plots running_llc,rank,autocorr,energy,theta
 ```
 
-### B) Manual approach (advanced)
-
-Useful if you already have a specific run directory:
-
-1. **Analyze** an existing run to generate plots:
-   ```bash
-   uv run llc analyze runs/<run_id> --which all \
-     --plots running_llc,rank,ess_evolution,autocorr,energy,theta
-   ```
-
-2. **Promote** curated images into the README assets:
-   ```bash
-   # With a specific run dir...
-   uv run llc promote-readme-images runs/<run_id>
-
-   # ...or let it pick the newest completed run automatically
-   uv run llc promote-readme-images
-   ```
-
-**Command overview:**
-* `showcase-readme`: run (full preset) → analyze → promote (all-in-one)
-* `analyze`: only renders figures into `<run_dir>/analysis/`
-* `promote-readme-images`: only copies curated images into `assets/readme/`
+This creates plots in `runs/<run_id>/analysis/` showing:
+- Running LLC convergence
+- Rank plots for mixing diagnostics
+- Autocorrelation functions
+- Energy diagnostics (HMC/MCLMC)
+- Parameter traces
 
 ---
 
-## Documentation
+## Implementation Notes
 
-* [Backends (Modal/SLURM setup)](docs/backends.md)
-* [Caching behavior](docs/caching.md)
-* [Preconditioned SGLD options](docs/sgld-precond.md)
-* [Target functions and data generators](docs/targets.md)
-* [BlackJAX API notes](docs/blackjax.md)
+* **SGLD**: Stochastic gradient Langevin dynamics with optional preconditioning (Adam/RMSprop)
+* **HMC**: Hamiltonian Monte Carlo via BlackJAX with window adaptation
+* **MCLMC**: Microcanonical Langevin Monte Carlo via BlackJAX 1.2.5 fractional API
+* **Targets**: MLP (ReLU activation) and analytical quadratic models
+* **Caching**: Runs are cached by config hash for identical parameter sets
 
 ---
 
