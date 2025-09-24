@@ -1,1 +1,1 @@
-"""Sampler implementations for LLC estimation"""
+"""Sampler implementations for LLC estimation."""

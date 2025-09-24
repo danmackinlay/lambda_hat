@@ -1,1 +1,2 @@
-"""LLC (Local Learning Coefficient) Sampler Package"""
+"""LLC mini — SGLD/HMC/MCLMC with ArviZ diagnostics."""
+__all__ = ["run", "sweep"]
