@@ -1,0 +1,13 @@
+# @package _global_.data
+n_data: 100
+x_dist: gauss_iso
+cov_decay: 0.95
+mixture_k: 4
+mixture_spread: 2.0
+x_dim_latent: 2
+noise_model: gauss
+noise_scale: 0.1
+hetero_scale: 0.1
+student_df: 4.0
+outlier_frac: 0.05
+outlier_scale: 2.0
