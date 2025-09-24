@@ -1,49 +1,29 @@
-# BlackJAX API Notes
+# BlackJAX Usage Notes
 
-This repo is pinned to BlackJAX 1.2.5. Here are the key API details to prevent confusion across docs vs release.
+This repository uses BlackJAX (pinned to version 1.2.5) for MCMC sampling. The implementation focuses on clean, idiomatic JAX loops using `jax.lax.scan` within `llc/sampling.py`.
 
-## SGLD
+## Implementation Overview
 
-* **Public API:** `sgld = blackjax.sgld(grad_fn)`
-* **Step signature:** `new_position = sgld.step(rng_key, position, minibatch, step_size)`
-* **Source:** [sgld.py (1.2.5)](https://github.com/blackjax-devs/blackjax/blob/1.2.5/blackjax/sgmcmc/sgld.py#L38-L47) (see `step_fn` → returns `kernel(...)` → returns `new_position`)
+### HMC (Hamiltonian Monte Carlo)
 
-## HMC
+- **Implementation:** Uses `blackjax.hmc` along with `blackjax.window_adaptation` for automatic tuning of step size and the inverse mass matrix during the warmup phase.
+- **Precision:** Runs in `float64`.
+- **Parallelism:** Chains are run in parallel using `jax.vmap`.
 
-* **Usage:** `blackjax.hmc` with `blackjax.window_adaptation`
-* **Info fields:** `HMCInfo` includes `acceptance_rate` (flat attribute)
-* **Source:** [hmc.py (1.2.5)](https://github.com/blackjax-devs/blackjax/blob/1.2.5/blackjax/mcmc/hmc.py#L330-L334)
+### SGLD (Stochastic Gradient Langevin Dynamics)
 
-## MCLMC
+- **Implementation:** A custom SGLD kernel is implemented directly in `run_sgld` to handle minibatching efficiently.
+- **Precision:** Runs in `float32`.
+- **Parallelism:** Chains are run in parallel using `jax.vmap`.
+- **Note:** The current implementation supports standard SGLD only. Preconditioning (e.g., RMSProp/Adam) is **not implemented**. See [SGLD Configuration](./sgld.md).
 
-* **Usage:** See [Sampling Book MCLMC example](https://blackjax-devs.github.io/sampling-book/algorithms/mclmc.html)
-* **Tuning API (BlackJAX 1.2.5):** Use fractional parameters with `blackjax.mclmc_find_L_and_step_size`:
-  ```python
-  # Build kernel first (required for 1.2.5)
-  mclmc_kernel = blackjax.mclmc(logdensity_fn)
-  init_state = mclmc_kernel.init(initial_position)
+### MCLMC (Microcanonical Langevin Monte Carlo)
 
-  L, step_size, info = blackjax.mclmc_find_L_and_step_size(
-      mclmc_kernel=mclmc_kernel,  # pre-built kernel required
-      num_steps=total_adaptation_steps,
-      state=init_state,  # initialized state
-      rng_key=rng_key,
-      frac_tune1=0.1,  # fraction for phase 1
-      frac_tune2=0.1,  # fraction for phase 2
-      frac_tune3=0.1,  # fraction for phase 3
-      desired_energy_var=5e-4,
-      trust_in_estimate=1.0,
-      num_effective_samples=150.0,
-      diagonal_preconditioning=False,
-      integrator=integrator_fn,
-  )
-  ```
-* **Key constraint:** `frac_tune1 + frac_tune2 + frac_tune3 ≤ 1.0`
-* **Deprecated:** `num_steps_tune1/2/3` parameters - use fractional API instead
-* **Reference:** [MCLMC adaptation docs (1.2.5)](https://blackjax-devs.github.io/blackjax/autoapi/blackjax/adaptation/mclmc_adaptation/)
-* **Integrators:** Available in [integrators module (1.2.5)](https://github.com/blackjax-devs/blackjax/tree/1.2.5/blackjax/mcmc/integrators) (e.g. `isokinetic_mclachlan`)
-* **Info fields:** `MCLMCInfo` has `energy_change` field (see [mclmc.py (1.2.5)](https://github.com/blackjax-devs/blackjax/blob/1.2.5/blackjax/mcmc/mclmc.py))
+- **Implementation:** Uses `blackjax.mclmc`.
+- **Precision:** Runs in `float64`.
+- **Parallelism:** Chains are run in parallel using `jax.vmap`.
+- **Note:** The current implementation uses fixed values for the trajectory length (`L`) and `step_size` provided in the configuration. Automatic adaptation using `blackjax.mclmc_find_L_and_step_size` is **not implemented** in the current execution path, although configuration parameters for it exist in the YAML files.
 
 ## ⚠️ Docs Drift Warning
 
-The online BlackJAX docs default to `main`. They may show `acceptance_probability` for HMC or a different SGLD step signature. Always cross-check the [1.2.5 tag source](https://github.com/blackjax-devs/blackjax/tree/1.2.5) when in doubt.
+The online BlackJAX documentation defaults to the `main` branch, which may differ from the pinned version 1.2.5 used here. When consulting BlackJAX documentation, ensure you are viewing the [1.2.5 tag source](https://github.com/blackjax-devs/blackjax/tree/1.2.5).
