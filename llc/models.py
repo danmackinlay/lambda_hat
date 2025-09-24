@@ -1,10 +1,10 @@
 # llc/models.py
-"""Model utilities for flexible MLP architectures"""
+"""Modernized model definitions using Haiku"""
 
 from typing import Optional, List
+import haiku as hk
 import jax
 import jax.numpy as jnp
-from jax import random
 
 
 def infer_widths(
@@ -31,112 +31,133 @@ def infer_widths(
     return [h] * L
 
 
-def act_fn(name: str):
-    """Activation function factory"""
-    activations = {
-        "relu": jax.nn.relu,
-        "tanh": jnp.tanh,
-        "gelu": jax.nn.gelu,
-        "identity": (lambda x: x),
-    }
-    return activations[name]
+class MLP(hk.Module):
+    """Flexible MLP architecture using Haiku"""
+
+    def __init__(
+        self,
+        widths: List[int],
+        out_dim: int,
+        activation: str = "relu",
+        bias: bool = True,
+        init: str = "he",
+        skip: bool = False,
+        residual_period: int = 2,
+        layernorm: bool = False,
+        name: Optional[str] = None,
+    ):
+        super().__init__(name=name)
+        self.widths = widths
+        self.out_dim = out_dim
+        self.activation = activation
+        self.bias = bias
+        self.init = init
+        self.skip = skip
+        self.residual_period = residual_period
+        self.layernorm = layernorm
+
+    def _get_activation(self):
+        """Get activation function"""
+        activations = {
+            "relu": jax.nn.relu,
+            "tanh": jnp.tanh,
+            "gelu": jax.nn.gelu,
+            "identity": lambda x: x,
+        }
+        return activations[self.activation]
+
+    def _get_initializer(self):
+        """Get weight initializer"""
+        if self.init == "he":
+            return hk.initializers.VarianceScaling(2.0, "fan_in", "truncated_normal")
+        elif self.init == "xavier":
+            return hk.initializers.VarianceScaling(1.0, "fan_in", "truncated_normal")
+        elif self.init == "lecun":
+            return hk.initializers.VarianceScaling(1.0, "fan_in", "truncated_normal")
+        elif self.init == "orthogonal":
+            # Use He scaling for consistency with original implementation
+            return hk.initializers.VarianceScaling(2.0, "fan_in", "truncated_normal")
+        else:
+            return hk.initializers.TruncatedNormal(stddev=1.0)
+
+    def __call__(self, x):
+        """Forward pass with optional residuals and layer norm"""
+        act = self._get_activation()
+        w_init = self._get_initializer()
+
+        h = x
+
+        # Hidden layers
+        for i, width in enumerate(self.widths):
+            linear = hk.Linear(
+                width,
+                with_bias=self.bias,
+                w_init=w_init,
+                name=f"layer_{i}"
+            )
+            z = linear(h)
+
+            if self.layernorm:
+                z = hk.LayerNorm(axis=-1, create_scale=True, create_offset=True)(z)
+
+            h_new = act(z)
+
+            # Skip connections
+            if self.skip and (i % self.residual_period == self.residual_period - 1):
+                # Project if dimensions differ
+                if h.shape[-1] != h_new.shape[-1]:
+                    d_in, d_out = h.shape[-1], h_new.shape[-1]
+                    h = h[:, :min(d_in, d_out)]
+                    if d_out > h.shape[-1]:
+                        pad = jnp.zeros((h.shape[0], d_out - h.shape[-1]), dtype=h.dtype)
+                        h = jnp.concatenate([h, pad], axis=1)
+                h = h + h_new
+            else:
+                h = h_new
+
+        # Output layer (always Xavier initialization for stability)
+        output_init = hk.initializers.VarianceScaling(1.0, "fan_in", "truncated_normal")
+        y = hk.Linear(
+            self.out_dim,
+            with_bias=self.bias,
+            w_init=output_init,
+            name="output"
+        )(h)
+
+        return y
 
 
-def fan_in_init(key, shape, scheme: str, fan_in: int):
-    """Weight initialization schemes"""
-    if scheme == "he":
-        scale = jnp.sqrt(2.0 / fan_in)
-    elif scheme == "xavier":
-        scale = jnp.sqrt(1.0 / fan_in)
-    elif scheme == "lecun":
-        scale = jnp.sqrt(1.0 / fan_in)
-    elif scheme == "orthogonal":
-        # Use He scaling instead of true orthogonal for robustness
-        scale = jnp.sqrt(2.0 / fan_in)
-        return random.normal(key, shape) * scale
-    else:
-        scale = 1.0
-    return random.normal(key, shape) * scale
-
-
-def init_mlp_params(
-    key,
+def build_mlp_forward_fn(
     in_dim: int,
     widths: List[int],
     out_dim: int,
-    activation: str,
-    bias: bool,
-    init: str,
-):
-    """Initialize MLP with arbitrary depth"""
-    keys = random.split(key, len(widths) + 1)
-    layers = []
-    prev = in_dim
-
-    for i, h in enumerate(widths):
-        W = fan_in_init(keys[i], (h, prev), init, prev)
-        b = jnp.zeros((h,)) if bias else None
-        layers.append({"W": W, "b": b})
-        prev = h
-
-    # Output layer (linear)
-    W = fan_in_init(keys[-1], (out_dim, prev), "xavier", prev)
-    b = jnp.zeros((out_dim,)) if bias else None
-    out_layer = {"W": W, "b": b}
-
-    return {"layers": layers, "out": out_layer}
-
-
-def mlp_forward(
-    params,
-    x,
     activation: str = "relu",
+    bias: bool = True,
+    init: str = "he",
     skip: bool = False,
     residual_period: int = 2,
     layernorm: bool = False,
 ):
-    """Forward pass with optional residuals and layer norm"""
-    act = act_fn(activation)
+    """Build a Haiku-transformed MLP forward function"""
 
-    h = x
-    for i, lyr in enumerate(params["layers"]):
-        z = h @ lyr["W"].T + (lyr["b"] if lyr["b"] is not None else 0.0)
+    def forward_fn(x):
+        mlp = MLP(
+            widths=widths,
+            out_dim=out_dim,
+            activation=activation,
+            bias=bias,
+            init=init,
+            skip=skip,
+            residual_period=residual_period,
+            layernorm=layernorm,
+        )
+        return mlp(x)
 
-        if layernorm:
-            mu = jnp.mean(z, axis=-1, keepdims=True)
-            sig = jnp.std(z, axis=-1, keepdims=True) + 1e-6
-            z = (z - mu) / sig
-
-        h_new = act(z)
-
-        if skip and (i % residual_period == residual_period - 1):
-            # Project if dimensions differ
-            if h.shape[-1] != h_new.shape[-1]:
-                # Truncate or pad with zeros without allocating a full eye per step
-                d_in, d_out = h.shape[-1], h_new.shape[-1]
-                h = h[:, : min(d_in, d_out)]
-                if d_out > h.shape[-1]:
-                    pad = jnp.zeros((h.shape[0], d_out - h.shape[-1]), dtype=h.dtype)
-                    h = jnp.concatenate([h, pad], axis=1)
-            h = h + h_new
-        else:
-            h = h_new
-
-    # Output layer
-    y = h @ params["out"]["W"].T + (
-        params["out"]["b"] if params["out"]["b"] is not None else 0.0
-    )
-    return y
+    # Transform to pure JAX function
+    model = hk.transform(forward_fn)
+    return model
 
 
 def count_params(params):
-    """Count total parameters in MLP"""
-    leaves = []
-    for lyr in params["layers"]:
-        leaves.append(lyr["W"])
-        if lyr["b"] is not None:
-            leaves.append(lyr["b"])
-    leaves.append(params["out"]["W"])
-    if params["out"]["b"] is not None:
-        leaves.append(params["out"]["b"])
-    return sum(p.size for p in leaves)
+    """Count total parameters in a Haiku parameter tree"""
+    return sum(p.size for p in jax.tree_util.tree_leaves(params))
