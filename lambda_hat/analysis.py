@@ -15,7 +15,8 @@ def compute_llc_metrics(
     loss_fn: Callable,
     L0: float,
     n_data: int,  # Added
-    beta: float   # Added
+    beta: float,  # Added
+    warmup: int = 0  # Add warmup parameter
 ) -> Dict[str, float]:
     """Compute LLC metrics (lambda_hat) from sampling traces.
 
@@ -27,6 +28,7 @@ def compute_llc_metrics(
         L0: Reference loss value (loss at ERM solution)
         n_data: Dataset size (n)
         beta: Inverse temperature (beta)
+        warmup: Number of warmup samples to discard from the beginning
 
     Returns:
         Dictionary with LLC statistics (hat{lambda})
@@ -42,6 +44,20 @@ def compute_llc_metrics(
     else:
         # Handle flat params
         chains, draws = positions.shape[:2]
+
+    # Apply warmup: discard initial samples efficiently
+    if warmup >= draws:
+        raise ValueError(f"Warmup ({warmup}) is greater than or equal to total draws ({draws}).")
+
+    if warmup > 0:
+        if isinstance(positions, dict):
+            # Discard warmup samples from the traces before processing
+            positions = jax.tree_map(lambda x: x[:, warmup:, ...], positions)
+        else:
+            positions = positions[:, warmup:, ...]
+
+        # Update draws count after warmup
+        draws = draws - warmup
 
     # Compute loss for all samples using vmap
     # Flatten chains and draws for batch computation

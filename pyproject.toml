@@ -3,18 +3,19 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-include = ["llc*"]
+include = ["lambda_hat*"]
 
 [project]
-name = "llc"
+name = "lambda-hat"
 version = "0.1.0"
-description = "Add your description here"
+description = "Lambda-Hat: Local Learning Coefficient (LLC) estimation via SGLD/HMC/MCLMC"
 readme = "README.md"
 requires-python = ">=3.11,<3.13"
 dependencies = [
     "arviz~=0.22.0",
     "blackjax==1.2.5",
     "dm-haiku>=0.0.10",
+    "flax>=0.11.2",
     "hydra-core>=1.3.2",
     "hydra-submitit-launcher>=1.2.0",
     "matplotlib>=3.7.0",

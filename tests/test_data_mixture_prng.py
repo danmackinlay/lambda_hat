@@ -1,7 +1,7 @@
 """Test mixture data generation PRNG coupling."""
 
-from llc.config import TEST_CFG
-from llc.data import sample_X
+from lambda_hat.config import TEST_CFG
+from lambda_hat.data import sample_X
 from jax import random
 import jax.numpy as jnp
 from dataclasses import replace

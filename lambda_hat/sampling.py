@@ -9,7 +9,7 @@ import blackjax
 from blackjax import hmc, nuts, mclmc # Removed sgld import as we implement it manually
 
 if TYPE_CHECKING:
-    from llc.config import SGLDConfig
+    from lambda_hat.config import SGLDConfig, MCLMCConfig
 
 # === Preconditioner Implementation ===
 
@@ -50,7 +50,9 @@ def update_preconditioner(
     P_t = jax.tree_map(jnp.ones_like, grad_loss)
     adapted_loss_drift = grad_loss
 
-    if config.precond == 'adam' or config.precond == 'rmsprop':
+    if config.precond == 'none':
+        pass # Vanilla SGLD
+    elif config.precond == 'adam' or config.precond == 'rmsprop':
         # Update moments
         if config.precond == 'adam':
             m = jax.tree_map(lambda m_prev, g: config.beta1 * m_prev + (1 - config.beta1) * g, m, grad_loss)
@@ -74,6 +76,9 @@ def update_preconditioner(
         if config.precond == 'adam':
             adapted_loss_drift = m_hat
         # else (rmsprop): adapted_loss_drift remains grad_loss
+    else:
+        # Raise error for unknown preconditioner
+        raise ValueError(f"Unknown SGLD preconditioner: {config.precond}. Supported: 'none', 'adam', 'rmsprop'.")
 
     new_state = PreconditionerState(t=t, m=m, v=v)
     return new_state, P_t, adapted_loss_drift
@@ -317,9 +322,7 @@ def run_mclmc(
     initial_params: Dict[str, Any],
     num_samples: int,
     num_chains: int,
-    L: float = 1.0,
-    step_size: float = 0.1,
-    sqrt_diag_cov: Optional[jnp.ndarray] = None,
+    config: 'MCLMCConfig',
 ) -> Dict[str, jnp.ndarray]:
     """Run Microcanonical Langevin Monte Carlo (MCLMC)
 
@@ -329,9 +332,7 @@ def run_mclmc(
         initial_params: Initial parameter values (Haiku params)
         num_samples: Number of samples per chain
         num_chains: Number of chains to run in parallel
-        L: Trajectory length
-        step_size: Step size
-        sqrt_diag_cov: Square root of diagonal covariance (for preconditioning)
+        config: MCLMC configuration object containing all parameters
 
     Returns:
         Dictionary with traces, shape (Chains, Draws, ...)
@@ -365,13 +366,57 @@ def run_mclmc(
         params = jax.tree_util.tree_unflatten(tree_def, params_leaves)
         return logdensity_fn(params)
 
-    # Initialize MCLMC sampler
-    mclmc_sampler = mclmc.mclmc(
-        logdensity_fn=logdensity_flat,
-        L=L,
-        step_size=step_size,
-        sqrt_diag_cov=sqrt_diag_cov if sqrt_diag_cov is not None else jnp.ones(d),
-    )
+    # --- MCLMC Adaptation Phase ---
+    key, adaptation_key = jax.random.split(key)
+
+    # Select integrator
+    import blackjax.mcmc.integrators as bj_integrators
+    integrators_map = {
+        "isokinetic_mclachlan": bj_integrators.isokinetic_mclachlan,
+        "isokinetic_velocity_verlet": bj_integrators.isokinetic_velocity_verlet,
+    }
+    integrator = integrators_map.get(config.integrator)
+    if integrator is None:
+        raise ValueError(f"Unknown MCLMC integrator: {config.integrator}. Supported: {list(integrators_map.keys())}")
+
+    # Create the kernel factory (required by the tuner in BlackJAX 1.2.5)
+    def kernel_factory(L, step_size, sqrt_diag_cov):
+        return blackjax.mclmc(
+            logdensity_fn=logdensity_flat,
+            L=L,
+            step_size=step_size,
+            sqrt_diag_cov=sqrt_diag_cov,
+            integrator=integrator
+        )
+
+    # Initialize state for the tuner (using the first chain)
+    initial_state_0 = blackjax.mcmc.mclmc.init(initial_positions[0], logdensity_flat)
+
+    if config.num_steps > 0:
+        print("Starting MCLMC adaptation...")
+        (L_adapted, step_size_adapted, sqrt_diag_cov_adapted), _ = blackjax.mclmc_find_L_and_step_size(
+            mclmc_kernel=kernel_factory,
+            num_steps=config.num_steps,
+            state=initial_state_0,
+            rng_key=adaptation_key,
+            # Pass adaptation parameters from config
+            frac_tune1=config.frac_tune1,
+            frac_tune2=config.frac_tune2,
+            frac_tune3=config.frac_tune3,
+            desired_energy_var=config.desired_energy_var,
+            trust_in_estimate=config.trust_in_estimate,
+            num_effective_samples=config.num_effective_samples,
+            diagonal_preconditioning=config.diagonal_preconditioning,
+        )
+        print(f"Adaptation complete. L: {L_adapted:.4f}, Step Size: {step_size_adapted:.4f}")
+    else:
+        # Use fixed values if adaptation is disabled (num_steps=0)
+        L_adapted = config.L
+        step_size_adapted = config.step_size
+        sqrt_diag_cov_adapted = jnp.ones(d)
+
+    # --- MCLMC Sampling Phase ---
+    mclmc_sampler = kernel_factory(L_adapted, step_size_adapted, sqrt_diag_cov_adapted)
 
     # Initialize states
     initial_states = jax.vmap(lambda pos: mclmc_sampler.init(pos))(initial_positions)

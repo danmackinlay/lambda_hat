@@ -21,12 +21,12 @@ import jax.numpy as jnp
 from hydra.core.config_store import ConfigStore
 from omegaconf import DictConfig, OmegaConf
 
-from llc.config import Config, setup_config
-from llc.targets import build_target
-from llc.posterior import make_logpost, make_grad_loss_minibatch, compute_beta_gamma, make_logpost_and_score, make_logdensity_for_mclmc
-from llc.sampling import run_hmc, run_sgld, run_mclmc
-from llc.analysis import compute_llc_metrics
-from llc.artifacts import save_run_artifacts
+from lambda_hat.config import Config, setup_config
+from lambda_hat.targets import build_target
+from lambda_hat.posterior import make_logpost, make_grad_loss_minibatch, compute_beta_gamma, make_logpost_and_score, make_logdensity_for_mclmc
+from lambda_hat.sampling import run_hmc, run_sgld, run_mclmc
+from lambda_hat.analysis import compute_llc_metrics
+from lambda_hat.artifacts import save_run_artifacts
 
 # Setup logging
 log = logging.getLogger(__name__)
@@ -114,15 +114,14 @@ def run_sampler(
             cfg.data.n_data, beta, gamma
         )
 
-        # Run MCLMC
+        # Run MCLMC (Updated signature)
         traces = run_mclmc(
             key,
             logdensity_fn,
             params0,
             num_samples=cfg.sampler.mclmc.draws,
             num_chains=cfg.sampler.chains,
-            L=cfg.sampler.mclmc.L,
-            step_size=cfg.sampler.mclmc.step_size,
+            config=cfg.sampler.mclmc,  # Pass the config object
         )
 
     else:
@@ -188,13 +187,21 @@ def main(cfg: DictConfig) -> None:
             traces = sampler_data["traces"]
             loss_full = target.loss_full_f64 if sampler_name in ["hmc", "mclmc"] else target.loss_full_f32
 
+            # Determine warmup steps
+            warmup_steps = 0
+            if sampler_name == "sgld":
+                # SGLD uses the configured warmup for burn-in
+                warmup_steps = cfg.sampler.sgld.warmup
+            # Note: HMC/MCLMC handle warmup/adaptation during the sampling phase.
+
             # Updated call to compute_llc_metrics
             metrics = compute_llc_metrics(
                 traces,
                 loss_full,
                 target.L0,
                 n_data=cfg.data.n_data,
-                beta=sampler_data["beta"]
+                beta=sampler_data["beta"],
+                warmup=warmup_steps  # Pass warmup steps
             )
             analysis_results[sampler_name] = metrics
 

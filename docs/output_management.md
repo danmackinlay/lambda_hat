@@ -11,7 +11,7 @@ By default, Hydra organizes outputs based on the date and time the experiment wa
 When running a single configuration:
 
 ```bash
-python train.py model=small
+uv run python train.py model=small
 ```
 
 The outputs are saved in the `outputs/` directory:
@@ -33,7 +33,7 @@ The application code (`llc/artifacts.py`) saves artifacts relative to the curren
 When running a parameter sweep using `--multirun` (or `-m`):
 
 ```bash
-python train.py -m model=small,base
+uv run python train.py -m model=small,base
 ```
 
 The outputs are saved in the `multirun/` directory:
@@ -54,7 +54,7 @@ You can customize the output directory structure using Hydra configuration overr
 
 ```bash
 # Example: Organize by experiment name instead of timestamp
-python train.py +experiment_name=baseline_test \
+uv run python train.py +experiment_name=baseline_test \
     hydra.run.dir=outputs/\${experiment_name}/\${now:%Y-%m-%d_%H-%M-%S}
 ```
 
@@ -67,7 +67,7 @@ To reproduce an experiment exactly, you can use the configuration saved in the o
 ```bash
 # Rerun using the configuration from a previous run
 # Note: Point config-dir to the .hydra subdirectory where the run's configs are stored
-python train.py --config-dir outputs/YYYY-MM-DD/HH-MM-SS/.hydra/
+uv run python train.py --config-dir outputs/YYYY-MM-DD/HH-MM-SS/.hydra/
 ```
 
 ## Aggregating Results

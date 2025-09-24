@@ -10,7 +10,7 @@ from jax import random
 if TYPE_CHECKING:
     from .config import Config
 
-from .models import infer_widths, init_mlp_params, mlp_forward
+from .models import infer_widths, build_mlp_forward_fn
 
 
 def sample_X(key, cfg: Config, n: int, in_dim: int):
@@ -59,20 +59,25 @@ def build_teacher(key, cfg: Config):
         )
     t_act = cfg.teacher_activation or cfg.activation
 
-    params = init_mlp_params(
-        key, cfg.in_dim, t_widths, cfg.out_dim, t_act, bias=True, init=cfg.init
+    # Build Haiku model
+    model = build_mlp_forward_fn(
+        in_dim=cfg.in_dim,
+        widths=t_widths,
+        out_dim=cfg.out_dim,
+        activation=t_act,
+        bias=True,
+        init=cfg.init,
+        skip=False,
+        residual_period=cfg.residual_period,
+        layernorm=False,
     )
 
+    # Initialize parameters
+    dummy_x = jnp.ones((1, cfg.in_dim))
+    params = model.init(key, dummy_x)
+
     def forward(X):
-        Y = mlp_forward(
-            params,
-            X,
-            t_act,
-            skip=False,
-            residual_period=cfg.residual_period,
-            layernorm=False,
-        )
-        return Y
+        return model.apply(params, X)
 
     return params, forward
 

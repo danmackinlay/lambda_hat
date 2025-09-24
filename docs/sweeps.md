@@ -16,7 +16,7 @@ You can sweep over predefined configuration groups (e.g., different model sizes 
 
 ```bash
 # Sweep over 'small' and 'base' models
-python train.py -m model=small,base
+uv run python train.py -m model=small,base
 ```
 
 This command launches two jobs.
@@ -27,7 +27,7 @@ You can sweep over individual parameters defined in your configuration using com
 
 ```bash
 # Sweep over different data sizes and noise scales
-python train.py -m data.n_data=1000,5000,10000 data.noise_scale=0.01,0.1
+uv run python train.py -m data.n_data=1000,5000,10000 data.noise_scale=0.01,0.1
 ```
 
 This command launches 3 * 2 = 6 jobs.
@@ -40,7 +40,7 @@ Hydra supports range functions for numerical sweeps.
 
 ```bash
 # Sweep seeds from 1 to 5 (inclusive)
-python train.py -m seed=range\(1,6\)
+uv run python train.py -m seed=range\(1,6\)
 ```
 
 ### Defining Sweeps in YAML (Experiments)
@@ -67,7 +67,7 @@ hydra:
 Execute the sweep using the `+experiment` syntax:
 
 ```bash
-python train.py +experiment=data_scaling_sweep
+uv run python train.py +experiment=data_scaling_sweep
 ```
 
 ## Parallel Execution
@@ -78,7 +78,7 @@ See [Parallel Execution](./parallelism.md) for details.
 
 ```bash
 # Example: Running a sweep on SLURM
-python train.py -m model=small,base \
+uv run python train.py -m model=small,base \
   hydra/launcher=submitit_slurm \
   hydra.launcher.partition=YOUR_PARTITION
 ```

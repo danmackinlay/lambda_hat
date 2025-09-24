@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
-from llc.convert import to_idata
-from llc.analysis import llc_point_se, fig_rank_llc
+from lambda_hat.convert import to_idata
+from lambda_hat.analysis import llc_point_se, fig_rank_llc
 
 
 def test_to_idata_and_metrics():
