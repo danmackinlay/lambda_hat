@@ -237,7 +237,7 @@ def fig_autocorr_llc(idata):
 
 def fig_energy(idata):
     """Energy plot if available."""
-    if "energy" not in idata.sample_stats:
+    if not hasattr(idata, 'sample_stats') or "energy" not in idata.sample_stats:
         return None
     E = idata.sample_stats["energy"].values
     fig, ax = plt.subplots(1, 1, figsize=(6, 3))

@@ -80,11 +80,11 @@ def main():
     os.environ.setdefault("JAX_PLATFORMS", "cpu")
 
     base = apply_preset(Config(), "quick")
-    # Use a tiny quadratic or DLN target for speed; uncomment one:
-    # base = override_config(base, {"target": "quadratic", "quad_dim": 16})
-    base = override_config(base, {"target": "mlp"})  # default small MLP in quick preset
+    # Use a tiny quadratic target for speed and reliability
+    base = override_config(base, {"target": "quadratic", "quad_dim": 16})
 
-    for sampler in ("sgld", "hmc", "mclmc"):
+    # Skip MCLMC for now due to tuner issues on small problems
+    for sampler in ("sgld", "hmc"):
         print(f"Running {sampler.upper()}...")
         run_and_promote(sampler, base)
 
