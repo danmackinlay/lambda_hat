@@ -34,6 +34,9 @@ class TargetBundle:
 
 def build_target(key, cfg: Config) -> TargetBundle:
     """Return a self-contained target for the pipeline to consume."""
+    m_cfg = cfg.model
+    s_cfg = cfg.sampler
+
     if (cfg.target or "mlp") == "mlp":
         # ----- MLP path with Haiku -----
         # Generate data
@@ -41,24 +44,24 @@ def build_target(key, cfg: Config) -> TargetBundle:
 
         # Build Haiku model
         key, subkey = jax.random.split(key)
-        widths = cfg.widths or infer_widths(
-            cfg.in_dim,
-            cfg.out_dim,
-            cfg.depth,
-            cfg.target_params,
-            fallback_width=cfg.hidden,
+        widths = m_cfg.widths or infer_widths(
+            m_cfg.in_dim,
+            m_cfg.out_dim,
+            m_cfg.depth,
+            m_cfg.target_params,
+            fallback_width=m_cfg.hidden,
         )
 
         model = build_mlp_forward_fn(
-            in_dim=cfg.in_dim,
+            in_dim=m_cfg.in_dim,
             widths=widths,
-            out_dim=cfg.out_dim,
-            activation=cfg.activation,
-            bias=cfg.bias,
-            init=cfg.init,
-            skip=cfg.skip_connections,
-            residual_period=cfg.residual_period,
-            layernorm=cfg.layernorm,
+            out_dim=m_cfg.out_dim,
+            activation=m_cfg.activation,
+            bias=m_cfg.bias,
+            init=m_cfg.init,
+            skip=m_cfg.skip_connections,
+            residual_period=m_cfg.residual_period,
+            layernorm=m_cfg.layernorm,
         )
 
         # Initialize parameters
@@ -66,8 +69,9 @@ def build_target(key, cfg: Config) -> TargetBundle:
         params_init = model.init(subkey, X[:1])  # Use first data point for init
 
         # Cast data to both dtypes
-        X_f32, Y_f32 = as_dtype(X, cfg.sgld_dtype), as_dtype(Y, cfg.sgld_dtype)
-        X_f64, Y_f64 = as_dtype(X, cfg.hmc_dtype), as_dtype(Y, cfg.hmc_dtype)
+        # Accessing dtypes correctly:
+        X_f32, Y_f32 = as_dtype(X, s_cfg.sgld.dtype), as_dtype(Y, s_cfg.sgld.dtype)
+        X_f64, Y_f64 = as_dtype(X, s_cfg.hmc.dtype), as_dtype(Y, s_cfg.hmc.dtype)
 
         # Create loss functions for f64 (for ERM training)
         loss_full_f64, loss_minibatch_f64 = make_loss_fns(
@@ -114,7 +118,7 @@ def build_target(key, cfg: Config) -> TargetBundle:
     elif cfg.target == "quadratic":
         # ----- Analytic diagnostic: L_n(θ) = 0.5 ||θ||^2 -----
         # For quadratic target, we'll use a dummy Haiku model structure
-        d = int(cfg.quad_dim or cfg.target_params or cfg.in_dim)
+        d = int(cfg.quad_dim or m_cfg.target_params or m_cfg.in_dim)
 
         # Create dummy params structure (single layer with d parameters)
         params0_f64 = {"quadratic": {"w": jnp.zeros((d,), dtype=jnp.float64)}}
@@ -131,7 +135,7 @@ def build_target(key, cfg: Config) -> TargetBundle:
             return _lf(params)
 
         # Provide trivial data so SGLD minibatching works
-        n = int(cfg.n_data)
+        n = int(cfg.data.n_data)
         X_f32 = jnp.zeros((n, 1), dtype=jnp.float32)
         Y_f32 = jnp.zeros((n, 1), dtype=jnp.float32)
         X_f64 = jnp.zeros((n, 1), dtype=jnp.float64)

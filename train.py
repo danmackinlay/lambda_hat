@@ -18,7 +18,6 @@ from typing import Dict, Any
 import hydra
 import jax
 import jax.numpy as jnp
-from hydra.core.config_store import ConfigStore
 from omegaconf import DictConfig, OmegaConf
 
 from lambda_hat.config import Config, setup_config
@@ -137,12 +136,13 @@ def run_sampler(
 
 
 @hydra.main(version_base=None, config_path="conf", config_name="config")
-def main(cfg: DictConfig) -> None:
+def main(cfg: Config) -> None:
     """Main training function"""
-    # Convert to structured config
-    cfg = OmegaConf.structured(cfg)
+    # REMOVE this line, cfg is already structured by Hydra:
+    # cfg = OmegaConf.structured(cfg)
 
     log.info("=== LLC Hydra Training ===")
+    # Use OmegaConf just for printing the structured config
     log.info(f"Config:\n{OmegaConf.to_yaml(cfg)}")
 
     # Setup JAX

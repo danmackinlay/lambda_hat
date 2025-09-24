@@ -163,35 +163,9 @@ def setup_config():
     """Register configuration schemas with Hydra's ConfigStore"""
     cs = ConfigStore.instance()
 
-    # Register main config
-    cs.store(name="config", node=Config)
+    # Register main config schema. Renaming avoids collision with config.yaml.
+    cs.store(name="base_config", node=Config)
 
-    # Register sampler configs
-    cs.store(group="sampler", name="base", node=SamplerConfig)
-    cs.store(group="sampler/sgld", name="base", node=SGLDConfig)
-    cs.store(group="sampler/hmc", name="base", node=HMCConfig)
-    cs.store(group="sampler/mclmc", name="base", node=MCLMCConfig)
-
-    # Register model configs
-    cs.store(group="model", name="base", node=ModelConfig)
-    cs.store(group="model", name="small", node=ModelConfig(
-        in_dim=4,
-        out_dim=1,
-        target_params=50,
-        depth=2
-    ))
-    cs.store(group="model", name="large", node=ModelConfig(
-        in_dim=64,
-        out_dim=1,
-        target_params=50_000,
-        depth=5
-    ))
-
-    # Register data configs
-    cs.store(group="data", name="base", node=DataConfig)
-    cs.store(group="data", name="small", node=DataConfig(
-        n_data=100
-    ))
-    cs.store(group="data", name="large", node=DataConfig(
-        n_data=100_000
-    ))
+    # REMOVE ALL OTHER cs.store() CALLS BELOW.
+    # Hydra validates YAML presets automatically using the type hints
+    # defined in the Config dataclass (e.g., Config.model is ModelConfig).

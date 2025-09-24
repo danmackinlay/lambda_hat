@@ -32,7 +32,10 @@ def make_loss_fns(
     Returns:
         Tuple of (full_loss_fn, minibatch_loss_fn)
     """
-    if cfg.loss == "mse":
+    p_cfg = cfg.posterior
+    d_cfg = cfg.data
+
+    if p_cfg.loss == "mse":
 
         def full(params):
             pred = model_apply(params, None, X)
@@ -42,9 +45,9 @@ def make_loss_fns(
             pred = model_apply(params, None, Xb)
             return jnp.mean((pred - Yb) ** 2)
 
-    elif cfg.loss == "t_regression":
-        s2 = cfg.noise_scale**2
-        nu = cfg.student_df
+    elif p_cfg.loss == "t_regression":
+        s2 = d_cfg.noise_scale**2
+        nu = d_cfg.student_df
 
         def neglogt(resid):
             return 0.5 * (nu + 1) * jnp.log1p((resid**2) / (nu * s2))
@@ -57,6 +60,6 @@ def make_loss_fns(
             pred = model_apply(params, None, Xb)
             return jnp.mean(neglogt(pred - Yb))
     else:
-        raise ValueError(f"Unknown loss: {cfg.loss}")
+        raise ValueError(f"Unknown loss: {p_cfg.loss}")
 
     return full, minibatch
