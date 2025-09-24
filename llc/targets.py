@@ -4,6 +4,7 @@ import jax
 import jax.numpy as jnp
 from jax import random
 from jax.flatten_util import ravel_pytree
+from jax import lax
 import optax
 
 from .config import Config
@@ -81,6 +82,55 @@ def mlp_forward(params, x, activation: str = "relu"):
     # Output layer (linear)
     y = h @ params["out"]["W"].T + params["out"]["b"]
     return y
+
+# DLN utilities
+def _xavier_normal(key, shape):
+    """Xavier normal initialization for DLN layers"""
+    fan_in, fan_out = shape[1], shape[0]
+    std = jnp.sqrt(2.0 / (fan_in + fan_out))
+    return std * random.normal(key, shape)
+
+def _maybe_rank_reduce(W, key, prob=0.5):
+    """Randomly zero a block of rows/cols to reduce rank with given probability"""
+    do = random.bernoulli(key, p=prob)
+    def reduce(w):
+        r = max(1, int(w.shape[0] * 0.8))   # keep 80% rows
+        c = max(1, int(w.shape[1] * 0.8))   # keep 80% cols
+        reduced = w.at[r:, :].set(0).at[:, c:].set(0)
+        return reduced
+    return lax.cond(do, reduce, lambda w: w, W)
+
+def _make_dln_sample(key, N, in_dim, out_dim, layers_min, layers_max, hmin, hmax,
+                     rank_reduce_prob, noise_sigma):
+    """Generate teacher DLN and synthetic data."""
+    k_arch, k_w, k_x, k_n = random.split(key, 4)
+
+    M = int(random.randint(k_arch, (), minval=layers_min, maxval=layers_max+1))
+    # widths: [in_dim, h1, ..., h_{M-1}, out_dim]
+    keys_h = random.split(k_arch, M-1)
+    hs = [int(random.randint(k, (), hmin, hmax+1)) for k in keys_h]
+    widths = [in_dim, *hs, out_dim]
+
+    # teacher weights W_l
+    keys_W = random.split(k_w, M)
+    Ws = []
+    for l in range(M):
+        W = _xavier_normal(keys_W[l], (widths[l+1], widths[l]))
+        W = _maybe_rank_reduce(W, keys_W[l], prob=rank_reduce_prob)
+        Ws.append(W)
+
+    def f_apply(Ws, X):  # (N, in) -> (N, out)
+        Z = X
+        for i, W in enumerate(Ws):
+            Z = Z @ W.T
+        return Z
+
+    # data
+    X = random.uniform(k_x, (N, in_dim), minval=-10.0, maxval=10.0)
+    Y_clean = f_apply(Ws, X)
+    Y = Y_clean + noise_sigma * random.normal(k_n, Y_clean.shape)
+
+    return Ws, X, Y, f_apply
 
 # Data generation
 def sample_X(key, cfg: Config, n: int, in_dim: int):
@@ -269,6 +319,82 @@ def build_target(key, cfg: Config) -> TargetBundle:
             Y_f32=Y_f32,
             X_f64=X_f64,
             Y_f64=Y_f64,
+            L0=L0,
+        )
+
+    elif cfg.target == "dln":
+        # Deep Linear Networks
+        in_dim = cfg.in_dim
+        out_dim = cfg.out_dim
+        # teacher + data
+        Ws, X, Y, f_apply = _make_dln_sample(
+            key, int(cfg.n_data), in_dim, out_dim,
+            cfg.dln_layers_min, cfg.dln_layers_max,
+            cfg.dln_h_min, cfg.dln_h_max,
+            cfg.dln_rank_reduce_prob, cfg.dln_noise_sigma
+        )
+
+        # parameterization: concatenate all W_l into a single vector θ
+        def pack(Ws_list):
+            flat, _ = ravel_pytree(Ws_list)
+            return flat
+        def unpack(theta):
+            # rebuild shapes
+            shapes = [(Ws[i].shape) for i in range(len(Ws))]
+            mats = []
+            off = 0
+            for (r,c) in shapes:
+                size = r * c
+                mats.append(theta[off:off+size].reshape(r, c))
+                off += size
+            return mats
+
+        theta_teacher = pack(Ws)
+        d = int(theta_teacher.shape[0])
+
+        # ERM center: start from teacher (good local center); keep as both precisions
+        theta0_f64 = theta_teacher.astype(jnp.float64)
+        theta0_f32 = theta_teacher.astype(jnp.float32)
+
+        # losses
+        def loss_full_f64(theta64):
+            mats = unpack(theta64.astype(jnp.float64))
+            pred = f_apply(mats, X.astype(jnp.float64))
+            resid = pred - Y.astype(jnp.float64)
+            return 0.5 * jnp.mean(jnp.sum(resid * resid, axis=1))
+        def loss_minibatch_f64(theta64, Xb64, Yb64):
+            mats = unpack(theta64.astype(jnp.float64))
+            pred = f_apply(mats, Xb64)
+            resid = pred - Yb64
+            return 0.5 * jnp.mean(jnp.sum(resid * resid, axis=1))
+
+        def loss_full_f32(theta32):
+            mats = unpack(theta32.astype(jnp.float32))
+            pred = f_apply(mats, X.astype(jnp.float32))
+            resid = pred - Y.astype(jnp.float32)
+            return 0.5 * jnp.mean(jnp.sum(resid * resid, axis=1))
+        def loss_minibatch_f32(theta32, Xb32, Yb32):
+            mats = unpack(theta32.astype(jnp.float32))
+            pred = f_apply(mats, Xb32)
+            resid = pred - Yb32
+            return 0.5 * jnp.mean(jnp.sum(resid * resid, axis=1))
+
+        # jit common closures
+        loss_full_f64 = jax.jit(loss_full_f64)
+        loss_minibatch_f64 = jax.jit(loss_minibatch_f64)
+        loss_full_f32 = jax.jit(loss_full_f32)
+        loss_minibatch_f32 = jax.jit(loss_minibatch_f32)
+
+        # L0 at center
+        L0 = float(loss_full_f64(theta0_f64))
+
+        return TargetBundle(
+            d=d,
+            theta0_f32=theta0_f32, theta0_f64=theta0_f64,
+            loss_full_f32=loss_full_f32, loss_minibatch_f32=loss_minibatch_f32,
+            loss_full_f64=loss_full_f64, loss_minibatch_f64=loss_minibatch_f64,
+            X_f32=X.astype(jnp.float32), Y_f32=Y.astype(jnp.float32),
+            X_f64=X.astype(jnp.float64), Y_f64=Y.astype(jnp.float64),
             L0=L0,
         )
     else:

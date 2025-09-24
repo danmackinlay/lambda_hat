@@ -12,6 +12,7 @@ from .targets import build_target
 from .posterior import compute_beta_gamma, make_logpost_and_score, make_logdensity_for_mclmc
 from .samplers.utils import build_tiny_store
 from .samplers.sgld import run_sgld_batched
+from .samplers.sgnht import run_sgnht_batched
 from .samplers.hmc import run_hmc_batched
 from .samplers.mclmc import run_mclmc_batched
 from .analysis import to_idata, llc_point_se, efficiency_metrics, fig_running_llc
@@ -59,6 +60,15 @@ def run_one(cfg: Config, *, save_artifacts=True, skip_if_exists=True):
             eval_every=cfg.sgld_eval_every, thin=cfg.sgld_thin, Ln_full64_vmapped=Ln_full64_vmapped,
             tiny_store_fn=tiny, precond_mode=cfg.sgld_precond, beta1=cfg.sgld_beta1,
             beta2=cfg.sgld_beta2, eps=cfg.sgld_eps, bias_correction=cfg.sgld_bias_correction
+        )
+    elif sampler == "sgnht":
+        init = bundle.theta0_f32 + 0.01*random.normal(key, (cfg.chains, bundle.d)).astype(jnp.float32)
+        res = run_sgnht_batched(
+            key=key, init_thetas=init, grad_logpost_minibatch=grad_minibatch_f32,
+            X=bundle.X_f32, Y=bundle.Y_f32, n=cfg.n_data, step_size=cfg.sgnht_step_size,
+            num_steps=cfg.sgnht_steps, warmup=cfg.sgnht_warmup, batch_size=cfg.sgnht_batch_size,
+            eval_every=cfg.sgnht_eval_every, thin=cfg.sgnht_thin, Ln_full64_vmapped=Ln_full64_vmapped,
+            tiny_store_fn=tiny, alpha0=cfg.sgnht_alpha0
         )
     elif sampler == "hmc":
         init = bundle.theta0_f64 + 0.01*random.normal(key, (cfg.chains, bundle.d))
@@ -108,7 +118,8 @@ def run_one(cfg: Config, *, save_artifacts=True, skip_if_exists=True):
         timings=timings,
         work=work,
         n_data=cfg.n_data,
-        sgld_batch=(cfg.sgld_batch_size if sampler == "sgld" else None)
+        sgld_batch=(cfg.sgld_batch_size if sampler == "sgld" else
+                   cfg.sgnht_batch_size if sampler == "sgnht" else None)
     )
     metrics = {f"{sampler}_{k}": v for k, v in {**core, **eff}.items()}
     metrics["family_id"] = run_family_id(cfg)

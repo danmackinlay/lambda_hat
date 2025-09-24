@@ -8,7 +8,7 @@ import logging
 @dataclass
 class Config:
     # problem / model
-    target: Literal["mlp", "quadratic"] = "mlp"
+    target: Literal["mlp", "quadratic", "dln"] = "mlp"
     quad_dim: Optional[int] = None
     in_dim: int = 32
     out_dim: int = 1
@@ -22,6 +22,14 @@ class Config:
     noise_scale: float = 0.1
     student_df: float = 4.0
     loss: Literal["mse","t_regression"] = "mse"
+
+    # DLN-specific
+    dln_layers_min: int = 2
+    dln_layers_max: int = 4
+    dln_h_min: int = 16
+    dln_h_max: int = 64
+    dln_rank_reduce_prob: float = 0.5
+    dln_noise_sigma: float = 0.5
 
     # tempered local posterior
     beta_mode: Literal["1_over_log_n","fixed"] = "1_over_log_n"
@@ -75,6 +83,16 @@ class Config:
         "isokinetic_yoshida",
         "isokinetic_omelyan"
     ] = "isokinetic_mclachlan"
+
+    # SGNHT
+    sgnht_steps: int = 16000
+    sgnht_warmup: int = 1000
+    sgnht_batch_size: int = 256
+    sgnht_step_size: float = 1e-6
+    sgnht_alpha0: float = 0.01
+    sgnht_eval_every: int = 10
+    sgnht_thin: int = 20
+    sgnht_dtype: str = "float32"
 
     # io/misc
     seed: int = 42

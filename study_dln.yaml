@@ -1,0 +1,35 @@
+# study_dln.yaml - Deep Linear Networks example study
+base:
+  preset: quick
+  target: dln
+  in_dim: 32
+  out_dim: 8
+  dln_layers_min: 2
+  dln_layers_max: 3
+  dln_h_min: 32
+  dln_h_max: 64
+  dln_rank_reduce_prob: 0.5
+  dln_noise_sigma: 0.5
+  n_data: 5000
+  chains: 4
+
+problems:
+  - name: default_dln
+    overrides: {}
+
+samplers:
+  - name: sgld
+    overrides:
+      sgld_precond: rmsprop
+      sgld_step_size: 1e-6
+  - name: sgnht
+    overrides:
+      sgnht_step_size: 1e-6
+      sgnht_alpha0: 0.01
+  - name: hmc
+    overrides: {}
+  - name: mclmc
+    overrides:
+      mclmc_integrator: isokinetic_mclachlan
+
+seeds: [0, 1]

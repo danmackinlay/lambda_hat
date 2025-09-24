@@ -27,11 +27,11 @@ def cli(verbose):
     setup_logging(verbose)
 
 @cli.command()
-@click.option("--sampler", type=click.Choice(["sgld", "hmc", "mclmc"]), required=True)
+@click.option("--sampler", type=click.Choice(["sgld", "sgnht", "hmc", "mclmc"]), required=True)
 @click.option("--preset", type=click.Choice(["quick", "full"]))
 @click.option("--gpu", type=str, help="GPU id (e.g. 0); omit for CPU")
 @click.option("--save-plots", is_flag=True, help="Save diagnostic plots")
-@click.option("--target", type=click.Choice(["mlp", "quadratic"]), help="Override target")
+@click.option("--target", type=click.Choice(["mlp", "quadratic", "dln"]), help="Override target")
 @click.option("--n-data", type=int, help="Override n_data")
 @click.option("--chains", type=int, help="Override chains")
 def run(sampler, preset, gpu, save_plots, target, n_data, chains):
