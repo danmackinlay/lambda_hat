@@ -1,37 +1,100 @@
 # llc/sampling.py
 """Clean, idiomatic JAX/BlackJAX sampling loops"""
 
-from typing import Dict, Any, Tuple, Callable, Optional
+# Updated imports
+from typing import Dict, Any, Tuple, Callable, Optional, NamedTuple, TYPE_CHECKING
 import jax
 import jax.numpy as jnp
 import blackjax
-from blackjax import hmc, nuts, sgld, mclmc
+from blackjax import hmc, nuts, mclmc # Removed sgld import as we implement it manually
 
+if TYPE_CHECKING:
+    from llc.config import SGLDConfig
 
-def simple_inference_loop(rng_key, kernel, initial_state, num_samples):
-    """Generic inference loop using jax.lax.scan
+# === Preconditioner Implementation ===
 
-    Args:
-        rng_key: JRNG key
-        kernel: BlackJAX kernel function (e.g., hmc.step)
-        initial_state: Initial sampler state
-        num_samples: Number of samples to generate
+# Define Preconditioner State structure
+class PreconditionerState(NamedTuple):
+    t: jnp.ndarray  # Timestep (scalar)
+    m: Any          # First moment estimate (PyTree)
+    v: Any          # Second moment estimate (PyTree)
 
-    Returns:
-        Dictionary of traced values with shape (num_samples, ...)
+class SGLDState(NamedTuple):
+    position: Any # Parameter PyTree
+    precond_state: PreconditionerState
+
+class SGLDInfo(NamedTuple):
+    acceptance_rate: jnp.ndarray = jnp.array(1.0)
+    energy: jnp.ndarray = jnp.nan
+    is_divergent: bool = False
+
+def initialize_preconditioner(params: Any) -> PreconditionerState:
+    """Initialize the state for the preconditioner.
+    Note: v is initialized to 1 as per Hitchcock and Hoogland Algorithms 2 and 3.
     """
+    t = jnp.array(0, dtype=jnp.int32)
+    m = jax.tree_map(jnp.zeros_like, params)
+    v = jax.tree_map(jnp.ones_like, params)
+    return PreconditionerState(t=t, m=m, v=v)
+
+def update_preconditioner(
+    config: 'SGLDConfig',
+    grad_loss: Any,
+    state: PreconditionerState
+) -> Tuple[PreconditionerState, Any, Any]:
+    """Update preconditioner state and compute adaptive tensors."""
+    t, m, v = state.t, state.m, state.v
+    t = t + 1
+
+    # Default values (Vanilla SGLD)
+    P_t = jax.tree_map(jnp.ones_like, grad_loss)
+    adapted_loss_drift = grad_loss
+
+    if config.precond == 'adam' or config.precond == 'rmsprop':
+        # Update moments
+        if config.precond == 'adam':
+            m = jax.tree_map(lambda m_prev, g: config.beta1 * m_prev + (1 - config.beta1) * g, m, grad_loss)
+
+        v = jax.tree_map(lambda v_prev, g: config.beta2 * v_prev + (1 - config.beta2) * g**2, v, grad_loss)
+
+        # Bias correction (as explicitly used in the paper's algorithms)
+        m_hat = m
+        v_hat = v
+
+        # Ensure t is cast to float for exponentiation
+        t_float = t.astype(jnp.float32)
+        if config.precond == 'adam':
+             m_hat = jax.tree_map(lambda m_val: m_val / (1 - config.beta1**t_float), m)
+        v_hat = jax.tree_map(lambda v_val: v_val / (1 - config.beta2**t_float), v)
+
+        # Compute Preconditioner Tensor P_t = 1 / (sqrt(v_hat) + eps)
+        P_t = jax.tree_map(lambda vh: 1.0 / (jnp.sqrt(vh) + config.eps), v_hat)
+
+        # Determine adapted loss drift
+        if config.precond == 'adam':
+            adapted_loss_drift = m_hat
+        # else (rmsprop): adapted_loss_drift remains grad_loss
+
+    new_state = PreconditionerState(t=t, m=m, v=v)
+    return new_state, P_t, adapted_loss_drift
+
+# === Generic Inference Loop ===
+def simple_inference_loop(rng_key, kernel, initial_state, num_samples):
+    """Generic inference loop using jax.lax.scan"""
 
     @jax.jit
     def one_step(state, rng_key):
         # Kernel step
         state, info = kernel(rng_key, state)
 
-        # Define what to trace (minimal data needed for ArviZ later)
-        # Assuming 'state.position' holds the parameters (standard BlackJAX)
-        position = state.position if hasattr(state, 'position') else state
+        # Define what to trace (Handle custom SGLDState and standard BlackJAX states)
+        if isinstance(state, SGLDState):
+             position = state.position
+        else:
+             position = state.position if hasattr(state, 'position') else state
+
         trace_data = {
             'position': position,
-            # Add sampler-specific stats if available
             'acceptance_rate': getattr(info, 'acceptance_rate', jnp.nan),
             'energy': getattr(info, 'energy', jnp.nan),
             'diverging': getattr(info, 'is_divergent', False),
@@ -43,7 +106,7 @@ def simple_inference_loop(rng_key, kernel, initial_state, num_samples):
     final_state, trace = jax.lax.scan(
         one_step, initial_state, keys
     )
-    return trace  # e.g., trace['position'] shape: (Draws, Dimensions)
+    return trace
 
 
 def run_hmc(
@@ -144,81 +207,106 @@ def run_hmc(
     return traces
 
 
+# === SGLD / pSGLD ===
 def run_sgld(
     rng_key: jax.random.PRNGKey,
-    grad_logpost_fn: Callable,
+    grad_loss_fn: Callable,
     initial_params: Dict[str, Any],
+    params0: Dict[str, Any], # ERM center for localization (w_0)
     data: Tuple[jnp.ndarray, jnp.ndarray],
-    num_samples: int,
+    config: 'SGLDConfig',
     num_chains: int,
-    step_size: float = 0.001,
-    batch_size: int = 32,
+    beta: float,
+    gamma: float,
 ) -> Dict[str, jnp.ndarray]:
-    """Run SGLD with minibatching
-
-    Args:
-        rng_key: JRNG key
-        grad_logpost_fn: Gradient of log posterior that accepts (params, minibatch)
-        initial_params: Initial parameter values (Haiku params)
-        data: Tuple of (X, Y) for minibatching
-        num_samples: Number of samples per chain
-        num_chains: Number of chains to run in parallel
-        step_size: Step size for SGLD
-        batch_size: Minibatch size
-
-    Returns:
-        Dictionary with traces, shape (Chains, Draws, ...)
-    """
+    """Run SGLD or pSGLD (AdamSGLD/RMSPropSGLD) with minibatching."""
     X, Y = data
     n_data = X.shape[0]
+    num_samples = config.steps
+    batch_size = config.batch_size
+    base_step_size = config.step_size
+
+    # Ensure scalars match the parameter dtype
+    ref_dtype = jax.tree_util.tree_leaves(initial_params)[0].dtype
+    # beta_tilde = n*beta (scaling factor for loss gradient)
+    beta_tilde = jnp.asarray(beta * n_data, dtype=ref_dtype)
+    gamma_val = jnp.asarray(gamma, dtype=ref_dtype)
 
     # Setup keys
     key, init_key, sample_key = jax.random.split(rng_key, 3)
     init_keys = jax.random.split(init_key, num_chains)
+    sample_keys = jax.random.split(sample_key, num_chains)
 
-    # Create initial states for each chain
-    def init_chain(key, params):
+    # Initialize states (position + preconditioner)
+    def init_chain(key, params_init):
+        # Perturb initial position slightly for diversity
         noise = jax.tree_map(
             lambda p: 0.01 * jax.random.normal(key, p.shape, dtype=p.dtype),
-            params
+            params_init
         )
-        return jax.tree_map(lambda p, n: p + n, params, noise)
+        position = jax.tree_map(lambda p, n: p + n, params_init, noise)
+        precond_state = initialize_preconditioner(position)
+        return SGLDState(position=position, precond_state=precond_state)
 
-    initial_positions = jax.vmap(init_chain)(init_keys, initial_params)
+    # Vmap initialization across chains
+    initial_states = jax.vmap(init_chain, in_axes=(0, None))(init_keys, initial_params)
 
-    # Build SGLD kernel with minibatching
-    def sgld_kernel(rng_key, state):
+    # Build the pSGLD kernel (defined inside to close over context)
+    def sgld_kernel(rng_key, state: SGLDState):
         key_batch, key_sgld = jax.random.split(rng_key)
+        w_t = state.position
+        precond_state = state.precond_state
 
-        # Sample minibatch
+        # 1. Sample minibatch
         indices = jax.random.choice(key_batch, n_data, shape=(batch_size,), replace=False)
         minibatch = (X[indices], Y[indices])
 
-        # SGLD update
-        grad = grad_logpost_fn(state, minibatch)
-        noise_scale = jnp.sqrt(2 * step_size)
-        noise = jax.tree_map(
-            lambda g: noise_scale * jax.random.normal(key_sgld, g.shape, dtype=g.dtype),
-            grad
-        )
-        new_state = jax.tree_map(
-            lambda p, g, n: p + step_size * g + n,
-            state, grad, noise
+        # 2. Compute loss gradient (g_t)
+        grad_loss = grad_loss_fn(w_t, minibatch)
+
+        # 3. Update preconditioner (uses only loss gradient)
+        new_precond_state, P_t, adapted_loss_drift = update_preconditioner(
+            config, grad_loss, precond_state
         )
 
-        # Create info dict (SGLD doesn't have acceptance rate)
-        info = type('Info', (), {'acceptance_rate': 1.0, 'energy': jnp.nan})()
+        # 4. Calculate localization (prior) term: γ(w_t - w_0)
+        # Note: params0 is captured by closure
+        localization_term = jax.tree_map(lambda w, w0: gamma_val * (w - w0), w_t, params0)
+
+        # 5. Calculate the total drift term
+        # Drift = localization_term + beta_tilde * adapted_loss_drift
+        total_drift = jax.tree_map(
+            lambda loc, loss_drift: loc + beta_tilde * loss_drift,
+            localization_term, adapted_loss_drift
+        )
+
+        # 6. Calculate adaptive step sizes and apply update
+        # Δw_t = -(ε_t/2) * Drift + sqrt(ε_t) * η_t, where ε_t = ε * P_t
+
+        def compute_update(P, drift, w):
+            adaptive_step = base_step_size * P
+            # Drift component
+            update = -0.5 * adaptive_step * drift
+            # Noise component
+            noise_scale = jnp.sqrt(adaptive_step)
+            noise = noise_scale * jax.random.normal(key_sgld, w.shape, dtype=w.dtype)
+            return w + update + noise
+
+        # Apply update calculation across the PyTree
+        w_next = jax.tree_map(compute_update, P_t, total_drift, w_t)
+
+        new_state = SGLDState(position=w_next, precond_state=new_precond_state)
+        info = SGLDInfo()
 
         return new_state, info
 
     # Run inference loop for each chain
-    sample_keys = jax.random.split(sample_key, num_chains)
-
     def run_chain(key, initial_state):
+        # Use the generic inference loop which handles SGLDState
         return simple_inference_loop(key, sgld_kernel, initial_state, num_samples)
 
     # Use vmap to run chains in parallel
-    traces = jax.vmap(run_chain)(sample_keys, initial_positions)
+    traces = jax.vmap(run_chain)(sample_keys, initial_states)
 
     return traces
 
