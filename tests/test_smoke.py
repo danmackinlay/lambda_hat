@@ -37,7 +37,10 @@ def test_smoke_quadratic_mclmc():
         n_data=100,
         samplers=("mclmc",),
         mclmc_draws=20,
-        mclmc_num_steps=50,
+        mclmc_num_steps=200,  # Increase to help tuner
+        mclmc_frac_tune1=0.2,  # Increase tuning fractions
+        mclmc_frac_tune2=0.2,
+        mclmc_frac_tune3=0.2,
         chains=2,
         save_plots=False
     )

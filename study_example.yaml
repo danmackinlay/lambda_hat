@@ -1,0 +1,31 @@
+base:
+  preset: quick
+  target: quadratic
+  quad_dim: 16
+  n_data: 1000
+  chains: 2
+
+problems:
+  - name: small
+    overrides:
+      quad_dim: 8
+  - name: medium
+    overrides:
+      quad_dim: 16
+  - name: large
+    overrides:
+      quad_dim: 32
+
+samplers:
+  - name: sgld
+    overrides:
+      sgld_precond: none
+      sgld_step_size: 1e-5
+  - name: hmc
+    overrides:
+      hmc_num_integration_steps: 5
+  - name: mclmc
+    overrides:
+      mclmc_integrator: isokinetic_mclachlan
+
+seeds: [0, 1, 2]
