@@ -434,13 +434,15 @@ def run_mclmc_online_batched(
         x0 = init_thetas[0]
         integrator = getattr(blackjax.mcmc.integrators, integrator_name)
 
-        # For tuning, we need to build a temporary kernel to get the proper state structure
-        # BlackJAX 1.2.5 requires the kernel for the adaptation function
-        temp_kernel = blackjax.mclmc(logdensity_fn, L=1, step_size=0.1, integrator=integrator)
-
-        # Initialize state for tuning (requires rng_key)
+        # Build integrator and kernel factory expected by the tuner.
+        # The tuner expects a function: (inverse_mass_matrix) -> kernel(rng_key, state, L, step_size)
         key_init, key_tune_actual = jax.random.split(key_tune)
-        init_state = temp_kernel.init(x0, rng_key=key_init)
+        init_state = blackjax.mclmc.init(x0, logdensity_fn, rng_key=key_init)  # IntegratorState
+        kernel_factory = lambda inv_mass: blackjax.mclmc.build_kernel(
+            logdensity_fn=logdensity_fn,
+            inverse_mass_matrix=inv_mass,
+            integrator=integrator,
+        )
 
         # Note: BlackJAX 1.2.5 requires pre-built kernel, not logdensity_fn parameter
 
@@ -449,9 +451,25 @@ def run_mclmc_online_batched(
         _sig = inspect.signature(blackjax.mclmc_find_L_and_step_size)
         assert "integrator" not in _sig.parameters, "Do not pass integrator to mclmc_find_L_and_step_size"
 
+        # Fail fast if any tuning phase would be empty; BlackJAX will choke later.
+        # At least 1 step in each of the 3 tuning phases if its fraction > 0.
+        phase_steps = (
+            int(num_steps * float(frac_tune1)),
+            int(num_steps * float(frac_tune2)),
+            int(num_steps * float(frac_tune3)),
+        )
+        bad = [i+1 for i, n in enumerate(phase_steps) if (n == 0 and [frac_tune1, frac_tune2, frac_tune3][i] > 0)]
+        if bad:
+            raise SystemExit(
+                f"MCLMC config invalid: num_steps={num_steps} too small for nonzero frac_tune{bad}."
+                " Increase num_steps or set those fractions to 0.0"
+            )
+        if num_steps <= 0:
+            raise SystemExit("MCLMC config invalid: num_steps must be > 0.")
+
         # Use BlackJAX 1.2.5 fractional API for tuning (pass kernel+state+rng_key)
-        L_tuned, eps_tuned, _info = blackjax.mclmc_find_L_and_step_size(
-            mclmc_kernel=temp_kernel,
+        state_tuned, tuned_params, _info = blackjax.mclmc_find_L_and_step_size(
+            mclmc_kernel=kernel_factory,
             num_steps=num_steps,
             state=init_state,
             rng_key=key_tune_actual,
@@ -463,28 +481,54 @@ def run_mclmc_online_batched(
             num_effective_samples=num_effective_samples,
             diagonal_preconditioning=bool(diagonal_preconditioning),
         )
+        # Unpack tuned parameters (dataclass-like)
+        try:
+            L_tuned = int(getattr(tuned_params, "L"))
+            eps_tuned = float(getattr(tuned_params, "step_size"))
+            logger.debug(f"MCLMC tuner results: L={L_tuned}, step_size={eps_tuned}")
+
+            # Fail fast on invalid tuning results
+            if L_tuned <= 0:
+                raise SystemExit(f"MCLMC tuner returned invalid L={L_tuned} (must be > 0)")
+            if eps_tuned <= 0:
+                raise SystemExit(f"MCLMC tuner returned invalid step_size={eps_tuned} (must be > 0)")
+
+        except Exception as e:
+            raise SystemExit(f"MCLMC tuner returned unexpected params type: {type(tuned_params)!r}: {tuned_params}") from e
 
         # Save tuned parameters if tuned_path is provided
         if tuned_path:
             from llc.artifacts import save_tuned_params
-            tuned_params = {
+            tuned_payload = {
                 "L": int(L_tuned),
                 "step_size": float(eps_tuned),
                 "desired_energy_var": float(desired_energy_var),
                 "integrator_name": integrator_name,
                 "diagonal_preconditioning": bool(diagonal_preconditioning),
             }
-            save_tuned_params(tuned_path, "mclmc", tuned_params)
+            save_tuned_params(tuned_path, "mclmc", tuned_payload)
     else:
         # Using cached parameters, split key for run only
         key_run = key
 
-    # Build final kernel with tuned parameters for sampling
+    # Build final SamplingAlgorithm for sampling (integrator specified here)
     integrator = getattr(blackjax.mcmc.integrators, integrator_name)
-    final_mclmc_kernel = blackjax.mclmc(
+    final_mclmc_algo = blackjax.mclmc(
         logdensity_fn, L=int(L_tuned), step_size=float(eps_tuned), integrator=integrator
     )
-    step_single = jax.jit(final_mclmc_kernel.step)
+    step_single = jax.jit(final_mclmc_algo.step)
+
+    # Prepare per-chain initial STATES (not raw arrays)
+    chains = init_thetas.shape[0]
+    keys_run = jax.random.split(key_run, chains)
+    init_states = jax.vmap(lambda theta, k: final_mclmc_algo.init(theta, rng_key=k))(init_thetas, keys_run)
+
+    # Sanity: a state must have .position (per BlackJAX IntegratorState)
+    try:
+        _ = init_states[0].position  # type: ignore[attr-defined]
+    except Exception:
+        raise SystemExit("MCLMC driver expected BlackJAX state objects. "
+                         "Did you pass raw arrays instead of algo.init(...)?)")
 
     # Build a concrete SamplerSpec with vmapped step
     from llc.samplers.base import SamplerSpec
@@ -501,7 +545,7 @@ def run_mclmc_online_batched(
     result = run_sampler_spec(
         spec=spec,
         rng_key=key_run,
-        init_states=init_thetas,
+        init_states=init_states,
         n_steps=draws,
         warmup=0,  # MCLMC uses tuner_steps, not warmup
         eval_every=eval_every,

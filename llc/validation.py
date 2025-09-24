@@ -114,6 +114,18 @@ def validate_mclmc_config(cfg_dict: Dict[str, Any]) -> None:
         if not isinstance(num_steps, int) or num_steps <= 0:
             raise ValueError(f"mclmc_num_steps must be a positive integer, got: {num_steps}")
 
+        # Validate that no nonzero fraction would yield zero steps (starvation check)
+        ns = num_steps
+        f1 = float(cfg_dict.get("mclmc_frac_tune1", 0.0))
+        f2 = float(cfg_dict.get("mclmc_frac_tune2", 0.0))
+        f3 = float(cfg_dict.get("mclmc_frac_tune3", 0.0))
+
+        # If any fraction > 0 but ns*f < 1, fail
+        starving = [i for i, f in enumerate((f1, f2, f3), start=1) if f > 0 and int(ns * f) == 0]
+        if starving:
+            raise ValueError(f"MCLMC config invalid: num_steps={ns} too small for nonzero "
+                             f"fractions in phases {starving}. Increase num_steps or zero those fractions.")
+
     logger.debug("MCLMC configuration validation passed")
 
 
