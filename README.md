@@ -1,6 +1,8 @@
-# Lambda-Hat (λ̂): Two-Stage LLC Experiments
+# Lambda-Hat (λ̂): LLC Experiments in estimating the Local Learning Coefficient
 
-Lambda-Hat provides a streamlined framework for estimating the Local Learning Coefficient (LLC) using a **two-stage workflow**. It uses JAX/BlackJAX for MCMC sampling, Hydra for configuration management, and Haiku for neural network definitions.
+
+Lambda-Hat provides a streamlined framework for estimating the Local Learning Coefficient (LLC).
+It uses JAX/BlackJAX for MCMC sampling, Hydra for configuration management, and Haiku for neural network definitions.
 
 ## Concept
 

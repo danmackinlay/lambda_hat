@@ -8,7 +8,7 @@ import jax.numpy as jnp
 from .config import Config
 from .data import make_dataset
 from .models import infer_widths, build_mlp_forward_fn, count_params
-from .losses import make_loss_fns, as_dtype
+from .losses import make_loss_fns_from_config, as_dtype
 from .training import train_erm
 
 
@@ -78,7 +78,7 @@ def build_target(key, cfg: Config) -> TargetBundle:
         X_f64, Y_f64 = as_dtype(X, s_cfg.hmc.dtype), as_dtype(Y, s_cfg.hmc.dtype)
 
         # Create loss functions for f64 (for ERM training)
-        loss_full_f64, loss_minibatch_f64 = make_loss_fns(
+        loss_full_f64, loss_minibatch_f64 = make_loss_fns_from_config(
             model.apply, cfg, X_f64, Y_f64
         )
 
@@ -91,7 +91,7 @@ def build_target(key, cfg: Config) -> TargetBundle:
         )
 
         # Create loss functions for f32
-        loss_full_f32, loss_minibatch_f32 = make_loss_fns(
+        loss_full_f32, loss_minibatch_f32 = make_loss_fns_from_config(
             model.apply, cfg, X_f32, Y_f32
         )
 

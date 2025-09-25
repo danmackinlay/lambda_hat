@@ -91,9 +91,27 @@ def run_sampling_logic(cfg: DictConfig) -> None:
     except Exception as e:
         raise RuntimeError(f"Model/params mismatch for target {cfg.target_id}: {e}")
 
-    # Create loss functions
-    loss_full_f32, loss_mini_f32 = make_loss_fns(X_f32, Y_f32, forward_fn, jnp.float32)
-    loss_full_f64, loss_mini_f64 = make_loss_fns(X_f64, Y_f64, forward_fn, jnp.float64)
+    # Determine loss type from Stage B config (if specified) or from metadata
+    loss_type = getattr(cfg.get("posterior", {}), "loss", "mse")
+
+    # Load necessary data parameters from Stage A metadata
+    data_cfg = meta.get("data_cfg", {})
+    noise_scale = data_cfg.get("noise_scale", 0.1)
+    student_df = data_cfg.get("student_df", 4.0)
+
+    # Create loss functions using the refactored signature
+    def model_apply(params, rng, x):
+        # Wrapper to match expected signature
+        return forward_fn(params, x)
+
+    loss_full_f32, loss_mini_f32 = make_loss_fns(
+        model_apply, X_f32, Y_f32, loss_type=loss_type,
+        noise_scale=noise_scale, student_df=student_df
+    )
+    loss_full_f64, loss_mini_f64 = make_loss_fns(
+        model_apply, X_f64, Y_f64, loss_type=loss_type,
+        noise_scale=noise_scale, student_df=student_df
+    )
 
     # Build target bundle for compatibility with existing code
     target = TargetBundle(

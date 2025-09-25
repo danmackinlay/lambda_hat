@@ -15,22 +15,28 @@ def as_dtype(x, dtype_str):  # 'float32' or 'float64'
     return x.astype(jnp.float32 if dtype_str == "float32" else jnp.float64)
 
 
-def make_loss_fns(model_apply: Callable, cfg: Config, X: jnp.ndarray, Y: jnp.ndarray):
+def make_loss_fns(
+    model_apply: Callable,
+    X: jnp.ndarray,
+    Y: jnp.ndarray,
+    loss_type: str = "mse",
+    noise_scale: float = 0.1,  # Required for t_regression
+    student_df: float = 4.0,  # Required for t_regression
+):
     """Create loss functions for both full data and minibatch
 
     Args:
         model_apply: Haiku model's apply function
-        cfg: Configuration object
         X: Input data
         Y: Target data
+        loss_type: Type of loss function ("mse" or "t_regression")
+        noise_scale: Noise scale for t_regression
+        student_df: Student t degrees of freedom for t_regression
 
     Returns:
         Tuple of (full_loss_fn, minibatch_loss_fn)
     """
-    p_cfg = cfg.posterior
-    d_cfg = cfg.data
-
-    if p_cfg.loss == "mse":
+    if loss_type == "mse":
 
         def full(params):
             pred = model_apply(params, None, X)
@@ -40,9 +46,9 @@ def make_loss_fns(model_apply: Callable, cfg: Config, X: jnp.ndarray, Y: jnp.nda
             pred = model_apply(params, None, Xb)
             return jnp.mean((pred - Yb) ** 2)
 
-    elif p_cfg.loss == "t_regression":
-        s2 = d_cfg.noise_scale**2
-        nu = d_cfg.student_df
+    elif loss_type == "t_regression":
+        s2 = noise_scale**2
+        nu = student_df
 
         def neglogt(resid):
             return 0.5 * (nu + 1) * jnp.log1p((resid**2) / (nu * s2))
@@ -55,6 +61,20 @@ def make_loss_fns(model_apply: Callable, cfg: Config, X: jnp.ndarray, Y: jnp.nda
             pred = model_apply(params, None, Xb)
             return jnp.mean(neglogt(pred - Yb))
     else:
-        raise ValueError(f"Unknown loss: {p_cfg.loss}")
+        raise ValueError(f"Unknown loss: {loss_type}")
 
     return full, minibatch
+
+
+def make_loss_fns_from_config(
+    model_apply: Callable, cfg: Config, X: jnp.ndarray, Y: jnp.ndarray
+):
+    """Legacy wrapper for compatibility with existing code that uses Config object"""
+    return make_loss_fns(
+        model_apply,
+        X,
+        Y,
+        loss_type=cfg.posterior.loss,
+        noise_scale=cfg.data.noise_scale,
+        student_df=cfg.data.student_df,
+    )

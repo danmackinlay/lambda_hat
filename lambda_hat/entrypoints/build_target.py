@@ -54,21 +54,31 @@ def build_target_components(key, cfg: DictConfig):
 
 @hydra.main(config_path="../conf/target", config_name="base", version_base=None)
 def main(cfg: DictConfig) -> None:
+    # Resolve the target ID immediately to catch configuration errors early
+    try:
+        # Accessing the attribute forces Hydra to resolve the interpolation
+        target_id = cfg.target.id
+    except Exception as e:
+        print(f"Critical Error: Failed to resolve target ID from configuration.")
+        # Fail immediately if the configuration itself is invalid
+        raise
+
     # --- IDEMPOTENCY CHECK ---
     try:
-        # Attempt to load the artifact
-        _, _, _, _, tdir = load_target_artifact(cfg.store.root, cfg.target.id)
+        # Attempt to load the artifact using the resolved target_id
+        _, _, _, _, tdir = load_target_artifact(cfg.store.root, target_id)
         print(
-            f"[build-target] Target {cfg.target.id} already exists at {tdir}. Skipping build."
+            f"[build-target] Target {target_id} already exists at {tdir}. Skipping build."
         )
         return  # Exit successfully
     except FileNotFoundError:
         # If not found, proceed with building
-        print(f"[build-target] Building new target {cfg.target.id}...")
+        print(f"[build-target] Building new target {target_id}...")
     except Exception as e:
-        # Handle potential corruption or other errors during load check
+        # Handle potential corruption or other I/O errors during load check
+        # We can safely print target_id here as it is already resolved.
         print(
-            f"[build-target] Error checking for existing target {cfg.target.id}: {e}. Proceeding with build."
+            f"[build-target] Error checking for existing target {target_id}: {e}. Proceeding with build."
         )
     # -------------------------
 

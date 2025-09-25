@@ -7,14 +7,20 @@ import json
 import os
 import platform
 import subprocess
-from omegaconf import OmegaConf
+from omegaconf import OmegaConf, DictConfig, ListConfig
 
 _REGISTERED = False
 
 
 def _to_canonical(obj):
     # Convert DictConfig/ListConfig and mixed types to JSON-serializable.
-    return OmegaConf.to_container(obj, resolve=True)
+
+    # FIX: Check if the object is an OmegaConf container before converting.
+    if isinstance(obj, (DictConfig, ListConfig)):
+        return OmegaConf.to_container(obj, resolve=True)
+
+    # If it's a primitive type (int, float, str, bool, None), return it directly.
+    return obj
 
 
 def _sha256_json(*parts):

@@ -54,5 +54,5 @@ training:
 
 # --- Dynamic Target ID Resolution ---
 # CRITICAL: This calculates the target_id based on the current configuration.
-# It must match the resolver used by lambda-hat-build-target.
+# Must match the definition in conf/target/base.yaml
 target_id: ${fingerprint:${model},${data},${target.seed},${jax.enable_x64},${runtime.code_sha}}
