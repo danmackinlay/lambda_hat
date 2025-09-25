@@ -16,6 +16,7 @@ from lambda_hat.target_artifacts import (
     _flatten_params_dict,
     load_target_artifact,
 )
+from lambda_hat.targets import build_target
 
 
 def _pkg_versions() -> Dict[str, str]:
@@ -34,7 +35,6 @@ def _pkg_versions() -> Dict[str, str]:
 
 def build_target_components(key, cfg: DictConfig):
     """Returns (X, Y, model, init_params, loss_fn, trained_params)."""
-    from lambda_hat.targets import build_target
 
     # Convert OmegaConf DictConfig to the project's Config class
     # For now, we'll just use the existing build_target function
@@ -58,8 +58,8 @@ def main(cfg: DictConfig) -> None:
     try:
         # Accessing the attribute forces Hydra to resolve the interpolation
         target_id = cfg.target.id
-    except Exception as e:
-        print(f"Critical Error: Failed to resolve target ID from configuration.")
+    except Exception:
+        print("Critical Error: Failed to resolve target ID from configuration.")
         # Fail immediately if the configuration itself is invalid
         raise
 

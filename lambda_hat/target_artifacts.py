@@ -7,6 +7,7 @@ from typing import Dict, Any
 
 import jax.numpy as jnp
 import numpy as np
+from hashlib import sha256
 
 # ---------- Target metadata ----------
 
@@ -65,7 +66,6 @@ def _hash_arrays(flat: Dict[str, np.ndarray]) -> str:
     # Order by key for deterministic hashing.
     items = [(k, flat[k]) for k in sorted(flat)]
     # Hash concatenated bytes with shapes/dtypes so collisions are unlikely.
-    from hashlib import sha256
 
     h = sha256()
     for k, arr in items:

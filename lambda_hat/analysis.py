@@ -9,6 +9,7 @@ import numpy as np
 import arviz as az
 from pathlib import Path
 from jax.tree_util import tree_map
+import warnings
 
 
 def compute_llc_from_Ln(
@@ -43,7 +44,6 @@ def compute_llc_from_Ln(
     # Apply warmup: discard initial samples efficiently
     if warmup >= draws:
         # If warmup is too large, use all draws but warn
-        import warnings
         warnings.warn(
             f"Warmup ({warmup}) >= total draws ({draws}). Using all samples without warmup."
         )
@@ -118,11 +118,10 @@ def compute_llc_metrics(
     Returns:
         Dictionary with LLC statistics (hat{lambda})
     """
-    import warnings
     warnings.warn(
         "compute_llc_metrics() is deprecated and memory-intensive. "
         "Use compute_llc_from_Ln() with pre-computed Ln values instead.",
-        DeprecationWarning
+        DeprecationWarning,
     )
 
     # Check if traces already contain pre-computed Ln values (efficient path)
@@ -173,7 +172,9 @@ def compute_llc_metrics(
     losses = losses.reshape(chains, draws)
 
     # Use the efficient function with computed losses
-    return compute_llc_from_Ln(losses, L0, n_data, beta, warmup=0)  # warmup already applied
+    return compute_llc_from_Ln(
+        losses, L0, n_data, beta, warmup=0
+    )  # warmup already applied
 
 
 def analyze_from_Ln_dict(
@@ -181,7 +182,7 @@ def analyze_from_Ln_dict(
     L0: float,
     n_data: int,
     beta: float,
-    warmup: int = 0
+    warmup: int = 0,
 ) -> Dict[str, Dict[str, float]]:
     """Analyze multiple samplers from their pre-computed Ln histories (MEMORY EFFICIENT).
 
@@ -246,7 +247,12 @@ def create_trace_plots_from_Ln(
 
         # Plot traces
         for chain in range(chains):
-            ax.plot(llc_values_np[chain], alpha=0.7, linewidth=0.8, label=f"Chain {chain+1}")
+            ax.plot(
+                llc_values_np[chain],
+                alpha=0.7,
+                linewidth=0.8,
+                label=f"Chain {chain + 1}",
+            )
 
         # Get metrics from analysis results
         metrics = analysis_results.get(sampler_name, {})
@@ -284,11 +290,10 @@ def create_trace_plots(
         analysis_results: Analysis results with metrics
         output_dir: Directory to save plots
     """
-    import warnings
     warnings.warn(
         "create_trace_plots() is deprecated and may be memory-intensive. "
         "Use create_trace_plots_from_Ln() with pre-computed Ln values instead.",
-        DeprecationWarning
+        DeprecationWarning,
     )
 
     if not results:

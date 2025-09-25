@@ -7,18 +7,22 @@ from dataclasses import dataclass
 import jax
 import jax.numpy as jnp
 import blackjax
+from jax.tree_util import tree_map
 
 if TYPE_CHECKING:
     from lambda_hat.config import SGLDConfig, MCLMCConfig
 
 # === TraceSpec for efficient recording ===
 
+
 @dataclass
 class TraceSpec:
     """Configuration for what to record during sampling"""
+
     aux_fn: Optional[Callable[[Any], Dict[str, Any]]] = None
     aux_every: int = 1
     theta_every: int = 0  # 0 => don't store params
+
 
 # === Preconditioner Implementation ===
 
@@ -45,7 +49,6 @@ def initialize_preconditioner(params: Any) -> PreconditionerState:
     """Initialize the state for the preconditioner.
     Note: v is initialized to 1 as per Hitchcock and Hoogland Algorithms 2 and 3.
     """
-    from jax.tree_util import tree_map
 
     t = jnp.array(0, dtype=jnp.int32)
     m = tree_map(jnp.zeros_like, params)
@@ -61,7 +64,6 @@ def update_preconditioner(
     t = t + 1
 
     # Default values (Vanilla SGLD)
-    from jax.tree_util import tree_map
 
     P_t = tree_map(jnp.ones_like, grad_loss)
     adapted_loss_drift = grad_loss
@@ -112,7 +114,11 @@ def update_preconditioner(
 
 # === Generic Inference Loop ===
 def simple_inference_loop(
-    rng_key, kernel, initial_state, num_samples, *,
+    rng_key,
+    kernel,
+    initial_state,
+    num_samples,
+    *,
     trace: TraceSpec = TraceSpec(),
 ):
     """
@@ -132,8 +138,12 @@ def simple_inference_loop(
 
     def maybe_stack_theta(theta_batch):
         nonlocal theta_hist
-        theta_hist = theta_batch if theta_hist is None else jax.tree_map(
-            lambda a, b: jnp.concatenate([a, b], axis=1), theta_hist, theta_batch
+        theta_hist = (
+            theta_batch
+            if theta_hist is None
+            else jax.tree_map(
+                lambda a, b: jnp.concatenate([a, b], axis=1), theta_hist, theta_batch
+            )
         )
 
     kept_theta_batch = None
@@ -209,7 +219,6 @@ def run_hmc(
     # Create initial states for each chain (with slight perturbation)
     def init_chain(key, params):
         # Add small noise to initial params for chain diversity
-        from jax.tree_util import tree_map
 
         noise = tree_map(
             lambda p: 0.01 * jax.random.normal(key, p.shape, dtype=p.dtype), params
@@ -265,7 +274,9 @@ def run_hmc(
                 aux_every=1,  # Record Ln for every kept draw
                 theta_every=0,  # Don't store parameters by default
             )
-            return simple_inference_loop(key, kernel, initial_state, num_samples, trace=trace_spec)
+            return simple_inference_loop(
+                key, kernel, initial_state, num_samples, trace=trace_spec
+            )
         else:
             # Fall back to legacy behavior
             return simple_inference_loop(key, kernel, initial_state, num_samples)
@@ -310,7 +321,6 @@ def run_sgld(
     # Initialize states (position + preconditioner)
     def init_chain(key, params_init):
         # Perturb initial position slightly for diversity
-        from jax.tree_util import tree_map
 
         noise = tree_map(
             lambda p: 0.01 * jax.random.normal(key, p.shape, dtype=p.dtype), params_init
@@ -344,8 +354,6 @@ def run_sgld(
 
         # 4. Calculate localization (prior) term: γ(w_t - w_0)
         # Note: params0 is captured by closure
-        from jax.tree_util import tree_map
-
         localization_term = tree_map(lambda w, w0: gamma_val * (w - w0), w_t, params0)
 
         # 5. Calculate the total drift term
@@ -381,13 +389,15 @@ def run_sgld(
         # Setup efficient tracing if loss_full is provided
         if loss_full is not None:
             # For SGLD, record every eval_every steps (for efficiency)
-            eval_every = getattr(config, 'eval_every', 10)
+            eval_every = getattr(config, "eval_every", 10)
             trace_spec = TraceSpec(
                 aux_fn=lambda st: {"Ln": loss_full(st.position)},
                 aux_every=eval_every,  # Record Ln every eval_every steps
                 theta_every=0,  # Don't store parameters by default
             )
-            return simple_inference_loop(key, sgld_kernel, initial_state, num_samples, trace=trace_spec)
+            return simple_inference_loop(
+                key, sgld_kernel, initial_state, num_samples, trace=trace_spec
+            )
         else:
             # Fall back to legacy behavior
             return simple_inference_loop(key, sgld_kernel, initial_state, num_samples)
@@ -479,9 +489,7 @@ def run_mclmc(
 
     # Initialize state for the tuner (using the first chain)
     # In BlackJAX 1.2.5, mclmc.init takes (position, logdensity_fn) - no key
-    initial_state_0 = blackjax.mcmc.mclmc.init(
-        initial_positions[0], logdensity_flat
-    )
+    initial_state_0 = blackjax.mcmc.mclmc.init(initial_positions[0], logdensity_flat)
 
     if config.num_steps > 0:
         print("Starting MCLMC adaptation...")
@@ -515,9 +523,9 @@ def run_mclmc(
 
     # Initialize states
     # Per-chain init: mclmc_sampler.init takes (position, logdensity_fn) - no key
-    initial_states = jax.vmap(
-        lambda pos: mclmc_sampler.init(pos, logdensity_flat)
-    )(initial_positions)
+    initial_states = jax.vmap(lambda pos: mclmc_sampler.init(pos, logdensity_flat))(
+        initial_positions
+    )
 
     # Run inference loop for each chain
     sample_keys = jax.random.split(sample_key, num_chains)
@@ -533,7 +541,9 @@ def run_mclmc(
                 theta = state.position
                 params_leaves = []
                 start = 0
-                for shape, size in zip([leaf.shape for leaf in leaves], [leaf.size for leaf in leaves]):
+                for shape, size in zip(
+                    [leaf.shape for leaf in leaves], [leaf.size for leaf in leaves]
+                ):
                     params_leaves.append(theta[start : start + size].reshape(shape))
                     start += size
                 params = jax.tree_util.tree_unflatten(tree_def, params_leaves)
@@ -544,7 +554,9 @@ def run_mclmc(
                 aux_every=1,  # Record Ln for every kept draw
                 theta_every=0,  # Don't store parameters by default
             )
-            return simple_inference_loop(key, kernel, initial_state, num_samples, trace=trace_spec)
+            return simple_inference_loop(
+                key, kernel, initial_state, num_samples, trace=trace_spec
+            )
         else:
             # Fall back to legacy behavior
             return simple_inference_loop(key, kernel, initial_state, num_samples)

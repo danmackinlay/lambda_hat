@@ -7,8 +7,11 @@ import json
 from omegaconf import OmegaConf
 
 from .analysis import (
-    create_trace_plots, create_comparison_plot, create_summary_table,
-    create_trace_plots_from_Ln, analyze_from_Ln_dict
+    create_trace_plots,
+    create_comparison_plot,
+    create_summary_table,
+    create_trace_plots_from_Ln,
+    analyze_from_Ln_dict,
 )
 
 
@@ -97,11 +100,11 @@ def save_run_artifacts_from_Ln(
     n_data = None
 
     # Get n_data from target or cfg
-    if hasattr(target, 'X_f32') and target.X_f32 is not None:
+    if hasattr(target, "X_f32") and target.X_f32 is not None:
         n_data = target.X_f32.shape[0]
-    elif hasattr(target, 'X_f64') and target.X_f64 is not None:
+    elif hasattr(target, "X_f64") and target.X_f64 is not None:
         n_data = target.X_f64.shape[0]
-    elif hasattr(cfg, 'data') and hasattr(cfg.data, 'n_data'):
+    elif hasattr(cfg, "data") and hasattr(cfg.data, "n_data"):
         n_data = cfg.data.n_data
     else:
         raise ValueError("Cannot determine n_data from target or configuration")
@@ -111,12 +114,12 @@ def save_run_artifacts_from_Ln(
         if isinstance(sampler_data, dict) and "Ln" in sampler_data:
             Ln_only[sampler_name] = sampler_data["Ln"]
         else:
-            raise ValueError(f"Expected dict with 'Ln' key for sampler {sampler_name}, got {type(sampler_data)}")
+            raise ValueError(
+                f"Expected dict with 'Ln' key for sampler {sampler_name}, got {type(sampler_data)}"
+            )
 
     # Run efficient analysis
-    analysis_results = analyze_from_Ln_dict(
-        Ln_only, target.L0, n_data, beta, warmup
-    )
+    analysis_results = analyze_from_Ln_dict(Ln_only, target.L0, n_data, beta, warmup)
 
     # Save configuration
     with open(output_dir / "config.yaml", "w") as f:
@@ -124,7 +127,7 @@ def save_run_artifacts_from_Ln(
 
     # Save target info
     target_info = {
-        "target_type": getattr(cfg, 'target', 'unknown'),
+        "target_type": getattr(cfg, "target", "unknown"),
         "dimension": target.d,
         "L0_reference": float(target.L0),
         "n_data": n_data,
@@ -137,8 +140,8 @@ def save_run_artifacts_from_Ln(
     # Save timing and config info
     run_info = {
         "samplers_run": list(Ln_histories.keys()),
-        "total_chains": cfg.sampler.chains if hasattr(cfg, 'sampler') else 'unknown',
-        "seed": getattr(cfg, 'seed', 'unknown'),
+        "total_chains": cfg.sampler.chains if hasattr(cfg, "sampler") else "unknown",
+        "seed": getattr(cfg, "seed", "unknown"),
         "elapsed_times": {
             name: data.get("elapsed_time", 0.0)
             for name, data in Ln_histories.items()
@@ -152,8 +155,7 @@ def save_run_artifacts_from_Ln(
     # Create plots using efficient method
     if cfg.output.save_plots and Ln_only:
         create_trace_plots_from_Ln(
-            Ln_only, analysis_results, output_dir,
-            target.L0, n_data, beta
+            Ln_only, analysis_results, output_dir, target.L0, n_data, beta
         )
         create_comparison_plot(analysis_results, output_dir)
 

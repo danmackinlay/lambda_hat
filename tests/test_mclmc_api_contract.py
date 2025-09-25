@@ -2,6 +2,7 @@
 
 import inspect
 import blackjax
+import jax.numpy as jnp
 
 
 def test_mclmc_tuner_signature_has_no_integrator():
@@ -33,7 +34,6 @@ def test_mclmc_tuner_has_required_parameters():
 
 def test_mclmc_kernel_accepts_integrator():
     """Ensure MCLMC kernel creation accepts integrator parameter."""
-    import jax.numpy as jnp
 
     def dummy_logdensity(x):
         return -0.5 * jnp.sum(x**2)

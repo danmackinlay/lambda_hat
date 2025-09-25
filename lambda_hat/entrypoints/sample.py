@@ -3,14 +3,22 @@ from __future__ import annotations
 import json
 import time
 from pathlib import Path
+from hashlib import md5
 
 import jax
 import jax.numpy as jnp
 import hydra
 from omegaconf import DictConfig, OmegaConf
+import arviz as az
 
 from lambda_hat.target_artifacts import load_target_artifact, append_sample_manifest
 from lambda_hat.sampling_runner import run_sampler  # Use extracted sampler runner
+from lambda_hat.targets import TargetBundle
+from lambda_hat.losses import make_loss_fns, as_dtype
+from lambda_hat.models import build_mlp_forward_fn
+from lambda_hat.models import infer_widths
+
+import numpy as np
 
 
 def run_sampling_logic(cfg: DictConfig) -> None:
@@ -31,9 +39,6 @@ def run_sampling_logic(cfg: DictConfig) -> None:
         )
 
     # Use the existing targets module to build a target bundle
-    from lambda_hat.targets import TargetBundle
-    from lambda_hat.losses import make_loss_fns, as_dtype
-    from lambda_hat.models import build_mlp_forward_fn
 
     # Recreate forward function from stored model config
     mcfg = meta["model_cfg"]
@@ -42,8 +47,6 @@ def run_sampling_logic(cfg: DictConfig) -> None:
     if "widths" in mcfg and mcfg["widths"] is not None:
         widths = mcfg["widths"]
     else:
-        from lambda_hat.models import infer_widths
-
         widths = infer_widths(
             in_dim=int(X.shape[-1]),
             out_dim=int(Y.shape[-1] if Y.ndim > 1 else 1),
@@ -105,12 +108,20 @@ def run_sampling_logic(cfg: DictConfig) -> None:
         return forward_fn(params, x)
 
     loss_full_f32, loss_mini_f32 = make_loss_fns(
-        model_apply, X_f32, Y_f32, loss_type=loss_type,
-        noise_scale=noise_scale, student_df=student_df
+        model_apply,
+        X_f32,
+        Y_f32,
+        loss_type=loss_type,
+        noise_scale=noise_scale,
+        student_df=student_df,
     )
     loss_full_f64, loss_mini_f64 = make_loss_fns(
-        model_apply, X_f64, Y_f64, loss_type=loss_type,
-        noise_scale=noise_scale, student_df=student_df
+        model_apply,
+        X_f64,
+        Y_f64,
+        loss_type=loss_type,
+        noise_scale=noise_scale,
+        student_df=student_df,
     )
 
     # Build target bundle for compatibility with existing code
@@ -144,8 +155,6 @@ def run_sampling_logic(cfg: DictConfig) -> None:
     sample_dir.mkdir(parents=True, exist_ok=True)
 
     # Generate unique run ID based on hyperparams
-    from hashlib import md5
-
     hp_str = json.dumps(
         OmegaConf.to_container(cfg.sampler, resolve=True), sort_keys=True
     )
@@ -154,32 +163,10 @@ def run_sampling_logic(cfg: DictConfig) -> None:
     run_dir.mkdir(exist_ok=True)
 
     # Save traces if available
-    import numpy as np
-
     traces = result.get("traces", None)
     if traces is not None:
-        # Prefer ArviZ NetCDF if available; otherwise fall back to NPZ
-        try:
-            import arviz as az
-
-            az_trace = az.from_dict(
-                posterior=jax.tree.map(lambda x: np.asarray(x), traces)
-            )
-            az.to_netcdf(az_trace, run_dir / "trace.nc")
-        except Exception:
-            # Fallback to NPZ with flattened structure
-            flat = {}
-
-            def _flatput(prefix, obj):
-                if isinstance(obj, dict):
-                    for k, v in obj.items():
-                        _flatput(f"{prefix}{k}/", v)
-                else:
-                    flat[prefix[:-1]] = np.asarray(obj)
-
-            _flatput("", traces)
-            np.savez_compressed(run_dir / "traces.npz", **flat)
-
+        az_trace = az.from_dict(posterior=jax.tree.map(lambda x: np.asarray(x), traces))
+        az.to_netcdf(az_trace, run_dir / "trace.nc")
     # Extract metrics
     metrics = {
         "elapsed_time": dt,
