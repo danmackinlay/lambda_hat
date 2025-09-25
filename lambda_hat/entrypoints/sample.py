@@ -68,12 +68,15 @@ def run_sampling_logic(cfg: DictConfig) -> None:
         layernorm=mcfg.get("layernorm", False),
     )
 
-    # Get L0 from metadata
-    L0 = float(meta.get("metrics", {}).get("L0", 0))
-    if L0 == 0:
-        # Fallback: compute L0 if not stored (compatibility)
-        logits = jnp.dot(X, jnp.ones(X.shape[-1]))  # dummy computation
-        L0 = 0.1  # placeholder - will be computed properly in target bundle
+    # Get L0 from metadata (dangerous fallback removed - fail explicitly)
+    L0 = meta.get("metrics", {}).get("L0")
+    if L0 is None or L0 == 0:
+        raise ValueError(
+            f"L0 reference loss not found or zero in target {cfg.target_id}. "
+            "Target artifact may be corrupted or from an old format. "
+            "Please rebuild the target using lambda-hat-build-target."
+        )
+    L0 = float(L0)
 
     # Convert params and data to proper dtypes
     params_f32 = as_dtype(params, jnp.float32)
