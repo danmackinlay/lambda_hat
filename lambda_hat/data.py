@@ -55,16 +55,27 @@ def sample_X(key, cfg: Config, n: int, in_dim: int):
 
 def build_teacher(key, cfg: Config):
     """Build teacher network (can differ from student)"""
-    t_cfg = cfg.teacher
     m_cfg = cfg.model
 
-    t_depth = t_cfg.depth or m_cfg.depth
-    t_widths = t_cfg.widths
-    if t_widths is None:
-        t_widths = infer_widths(
-            m_cfg.in_dim, m_cfg.out_dim, t_depth, m_cfg.target_params, m_cfg.hidden
-        )
-    t_act = t_cfg.activation or m_cfg.activation
+    # Use teacher config if present, otherwise fall back to model config
+    if hasattr(cfg, 'teacher') and cfg.teacher is not None:
+        t_cfg = cfg.teacher
+        t_depth = t_cfg.depth or m_cfg.depth
+        t_widths = t_cfg.widths
+        if t_widths is None:
+            t_widths = infer_widths(
+                m_cfg.in_dim, m_cfg.out_dim, t_depth, m_cfg.target_params, m_cfg.hidden
+            )
+        t_act = t_cfg.activation or m_cfg.activation
+    else:
+        # No teacher config - use model config directly
+        t_depth = m_cfg.depth
+        t_widths = m_cfg.widths
+        if t_widths is None:
+            t_widths = infer_widths(
+                m_cfg.in_dim, m_cfg.out_dim, t_depth, m_cfg.target_params, m_cfg.hidden
+            )
+        t_act = m_cfg.activation
 
     # Build Haiku model
     model = build_mlp_forward_fn(
@@ -128,9 +139,14 @@ def make_dataset(key, cfg: Config):
     teacher_params, teacher_forward = build_teacher(kt, cfg)
     y_clean = teacher_forward(X)
 
-    if cfg.teacher.dropout_rate > 0.0:
+    # Apply dropout if teacher config exists and specifies it
+    dropout_rate = 0.0
+    if hasattr(cfg, 'teacher') and cfg.teacher is not None and hasattr(cfg.teacher, 'dropout_rate'):
+        dropout_rate = cfg.teacher.dropout_rate
+
+    if dropout_rate > 0.0:
         kd = random.split(kt, 1)[0]
-        mask = (random.uniform(kd, y_clean.shape) > cfg.teacher.dropout_rate).astype(
+        mask = (random.uniform(kd, y_clean.shape) > dropout_rate).astype(
             y_clean.dtype
         )
         y_clean = y_clean * mask

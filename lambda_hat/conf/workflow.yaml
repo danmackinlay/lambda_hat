@@ -28,13 +28,6 @@ target:
   # Seed for data generation and NN training (Stage A Seed)
   seed: 42
 
-teacher:
-  # Teacher network config - falls back to model config
-  depth: null
-  widths: null
-  activation: null
-  dropout_rate: 0.0
-
 # --- Stage B: Sampler Configuration ---
 sampler:
   chains: 4
