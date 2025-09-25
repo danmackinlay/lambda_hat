@@ -38,9 +38,7 @@ Snakemake supports HPC execution through **profiles**. Profiles define how jobs 
 
 1. **Install snakemake-profiles** (if not already available):
 ```bash
-# Install the cookiecutter and create a SLURM profile
-pip install cookiecutter
-cookiecutter https://github.com/Snakemake-Profiles/slurm.git
+uv run cookiecutter https://github.com/Snakemake-Profiles/slurm.git
 ```
 
 2. **Configure your profile** in `~/.config/snakemake/slurm/config.yaml`:
