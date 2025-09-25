@@ -99,18 +99,9 @@ class MLP(hk.Module):
 
             h_new = act(z)
 
-            # Skip connections
+            # Skip connections (simplified - removed complex dimension handling)
             if self.skip and (i % self.residual_period == self.residual_period - 1):
-                # Project if dimensions differ
-                if h.shape[-1] != h_new.shape[-1]:
-                    d_in, d_out = h.shape[-1], h_new.shape[-1]
-                    h = h[:, : min(d_in, d_out)]
-                    if d_out > h.shape[-1]:
-                        pad = jnp.zeros(
-                            (h.shape[0], d_out - h.shape[-1]), dtype=h.dtype
-                        )
-                        h = jnp.concatenate([h, pad], axis=1)
-                h = h + h_new
+                h = h + h_new  # Standard residual addition
             else:
                 h = h_new
 
