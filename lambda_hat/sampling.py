@@ -3,7 +3,6 @@
 
 # Updated imports
 from typing import Dict, Any, Tuple, Callable, NamedTuple, TYPE_CHECKING, Optional
-from dataclasses import dataclass
 import jax
 import jax.numpy as jnp
 import blackjax
@@ -11,7 +10,7 @@ import blackjax.mcmc.integrators as bj_int
 from jax.tree_util import tree_map
 
 if TYPE_CHECKING:
-    from lambda_hat.config import SGLDConfig, MCLMCConfig
+    from lambda_hat.config import SGLDConfig
 
 # === Simplified MCMC Loop ===
 
@@ -216,7 +215,9 @@ def run_hmc(rng_key, logdensity_fn, initial_params,
     # Define the aux function for the loop (HMC state has 'position' attribute)
     # JIT the loss function for efficiency inside the scan loop
     loss_full_fn_jitted = jax.jit(loss_full_fn)
-    aux_fn = lambda st: {"Ln": loss_full_fn_jitted(st.position)}
+
+    def aux_fn(st):
+        return {"Ln": loss_full_fn_jitted(st.position)}
 
     # Use vmap with the optimized inference loop
     traces = jax.vmap(
@@ -246,7 +247,6 @@ def run_sgld(
     """Run SGLD or pSGLD (AdamSGLD/RMSPropSGLD) with minibatching."""
     X, Y = data
     n_data = X.shape[0]
-    num_samples = config.steps
     batch_size = config.batch_size
     base_step_size = config.step_size
 
@@ -337,7 +337,8 @@ def run_sgld(
     # JIT the loss function for efficiency
     loss_full_fn_jitted = jax.jit(loss_full_fn)
     # SGLDState has 'position' attribute
-    aux_fn = lambda st: {"Ln": loss_full_fn_jitted(st.position)}
+    def aux_fn(st):
+        return {"Ln": loss_full_fn_jitted(st.position)}
 
     # Use eval_every from config if available, otherwise default to 10
     # Note: Ensure 'eval_every' is defined in SGLDConfig or handled here.
@@ -422,7 +423,8 @@ def run_mclmc(rng_key, logdensity_fn, initial_params,
 
     # Define the aux function for the loop
     # MCLMC state has 'position' attribute which holds the flattened vector.
-    aux_fn = lambda st: {"Ln": loss_full_flat(st.position)}
+    def aux_fn(st):
+        return {"Ln": loss_full_flat(st.position)}
 
     key, sample_key = jax.random.split(key)
     chain_keys = jax.random.split(sample_key, num_chains)

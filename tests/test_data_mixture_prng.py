@@ -1,6 +1,6 @@
 """Test mixture data generation PRNG coupling."""
 
-from lambda_hat.config import TEST_CFG
+from lambda_hat.config import Config, DataConfig
 from lambda_hat.data import sample_X
 from jax import random
 import jax.numpy as jnp
@@ -9,7 +9,8 @@ from dataclasses import replace
 
 def test_mixture_prng_no_coupling():
     """Test that mixture PRNG uses proper key splits and gives reproducible results."""
-    cfg = replace(TEST_CFG, x_dist="mixture", mixture_k=2)
+    cfg = Config()
+    cfg.data = replace(cfg.data, x_dist="mixture", mixture_k=2)
     key = random.PRNGKey(0)
 
     # Sample twice with same key - should get identical results
@@ -21,7 +22,8 @@ def test_mixture_prng_no_coupling():
 
 def test_mixture_different_keys_different_results():
     """Test that different keys produce different mixture samples."""
-    cfg = replace(TEST_CFG, x_dist="mixture", mixture_k=2)
+    cfg = Config()
+    cfg.data = replace(cfg.data, x_dist="mixture", mixture_k=2)
     key1 = random.PRNGKey(0)
     key2 = random.PRNGKey(1)
 
@@ -34,7 +36,8 @@ def test_mixture_different_keys_different_results():
 
 def test_mixture_shape_consistency():
     """Test that mixture sampling produces correct shapes."""
-    cfg = replace(TEST_CFG, x_dist="mixture", mixture_k=3, mixture_spread=2.0)
+    cfg = Config()
+    cfg.data = replace(cfg.data, x_dist="mixture", mixture_k=3, mixture_spread=2.0)
     key = random.PRNGKey(42)
 
     n, in_dim = 32, 6
