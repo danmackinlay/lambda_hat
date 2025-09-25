@@ -68,6 +68,7 @@ def run_sampler(
             step_size=cfg.sampler.hmc.step_size,
             num_integration_steps=cfg.sampler.hmc.num_integration_steps,
             adaptation_steps=cfg.sampler.hmc.warmup,
+            loss_full=loss_full,  # Pass loss function for Ln recording
         )
 
     elif sampler_name == "sgld":
@@ -90,6 +91,7 @@ def run_sampler(
             num_chains=cfg.sampler.chains,
             beta=beta,
             gamma=gamma,
+            loss_full=target.loss_full_f32,  # Pass loss function for Ln recording
         )
 
     elif sampler_name == "mclmc":
@@ -108,6 +110,7 @@ def run_sampler(
             num_samples=cfg.sampler.mclmc.draws,
             num_chains=cfg.sampler.chains,
             config=cfg.sampler.mclmc,  # Pass the config object
+            loss_full=loss_full,  # Pass loss function for Ln recording
         )
 
     else:
