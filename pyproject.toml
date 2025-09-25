@@ -40,14 +40,13 @@ cuda12 = [
   "jax[cuda12_local]>=0.4.28"
 ]
 
-[project.scripts]
-lambda-hat-promote = "lambda_hat.cli_promote:main"
-lambda-hat = "lambda_hat.cli_main:main"
-
-[dependency-groups]
 dev = [
     "files-to-prompt>=0.6",
     "marimo>=0.15.2",
     "pytest>=8.4.2",
     "ruff>=0.13.1",
 ]
+
+[project.scripts]
+lambda-hat-promote = "lambda_hat.cli_promote:main"
+lambda-hat = "lambda_hat.cli_main:main"

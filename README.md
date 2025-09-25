@@ -28,9 +28,6 @@ Run the default configuration (MLP target, all samplers):
 ```bash
 # Console script (recommended)
 uv run lambda-hat
-
-# Module entry
-uv run python -m lambda_hat
 ```
 
 Outputs (logs, plots, metrics) are automatically saved in a timestamped directory under `outputs/`.
@@ -66,17 +63,17 @@ Hydra allows running sweeps over parameters using the `--multirun` (or `-m`) fla
 
 ```bash
 # Sweep over different model sizes
-uv run lambda-hat -m model.target_params=1000,5000,10000
+uv run lambda-hat --multirun model.target_params=1000,5000,10000
 
 # Compare base vs fast sampler settings
-uv run lambda-hat -m sampler=base,fast
+uv run lambda-hat --multirun sampler=base,fast
 ```
 
 Combine sweeps (Cartesian product):
 
 ```bash
 # 2 sizes x 2 sampler configs = 4 runs
-uv run lambda-hat -m model.target_params=1000,5000 sampler=base,fast
+uv run lambda-hat --multirun model.target_params=1000,5000 sampler=base,fast
 ```
 
 Multi-run outputs are saved under `multirun/`.

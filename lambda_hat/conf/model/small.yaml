@@ -1,0 +1,13 @@
+# @package _global_.model
+in_dim: 4
+out_dim: 1
+depth: 2
+widths: null
+activation: relu
+bias: true
+skip_connections: false
+residual_period: 2
+layernorm: false
+init: he
+target_params: 50
+hidden: 32

@@ -24,7 +24,7 @@ To dispatch jobs to a SLURM cluster, select the `submitit_slurm` launcher.
 **Important:** You must specify the SLURM partition required by your cluster using the `hydra.launcher.partition` override.
 
 ```bash
-uv run lambda-hat--multirun \
+uv run lambda-hat --multirun \
   hydra/launcher=submitit_slurm \
   hydra.launcher.partition=YOUR_PARTITION_NAME \
   data.n_data=1000,5000 \
@@ -38,7 +38,7 @@ This command submits 4 independent jobs to the specified SLURM partition.
 The default resources requested per job are defined in the `submitit_slurm.yaml` configuration file. You can override these settings via the command line:
 
 ```bash
-uv run lambda-hat -m hydra/launcher=submitit_slurm \
+uv run lambda-hat --multirun hydra/launcher=submitit_slurm \
   hydra.launcher.partition=YOUR_PARTITION_NAME \
   hydra.launcher.timeout_min=480 \
   hydra.launcher.cpus_per_task=8 \
@@ -57,7 +57,7 @@ If your cluster requires an account, use `hydra.launcher.account=YOUR_ACCOUNT`.
 Example with GPU on a cluster that needs `--gpus=1`:
 
 ```bash
-uv run lambda-hat -m  sampler=hmc \
+uv run lambda-hat --multirun  sampler=hmc \
   hydra/launcher=submitit_slurm \
   hydra.launcher.gpus_per_node=1 \
   +hydra.launcher.additional_parameters.gpus=1 \
@@ -95,7 +95,7 @@ uv run lambda-hat-build-target hydra/launcher=submitit_slurm,hydra/launcher=slur
 To run jobs in parallel locally (e.g., utilizing multiple cores on a workstation), use the `submitit_local` launcher.
 
 ```bash
-uv run lambda-hat--multirun hydra/launcher=submitit_local model=small,base
+uv run lambda-hat --multirun hydra/launcher=submitit_local model=small,base
 ```
 
 This runs the jobs concurrently using local processes.
