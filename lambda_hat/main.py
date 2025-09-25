@@ -20,7 +20,7 @@ from lambda_hat.posterior import (
     make_logpost,
 )
 from lambda_hat.sampling import run_hmc, run_sgld, run_mclmc
-from lambda_hat.analysis import compute_llc_metrics
+from lambda_hat.analysis import analyze_traces
 from lambda_hat.artifacts import save_run_artifacts
 
 # Setup logging
@@ -174,28 +174,33 @@ def main(cfg: Config) -> None:
     # Analyze results
     log.info("Analyzing results...")
     analysis_results = {}
+    inference_data = {} # Store InferenceData objects
 
     for sampler_name, sampler_data in results.items():
         try:
-            # Compute LLC metrics
             traces = sampler_data["traces"]
 
-            # Determine warmup steps
-            warmup_steps = 0
+            # Determine warmup draws to discard (burn-in)
+            # HMC/MCLMC handle adaptation during sampling (warmup=0 for analysis).
+            warmup_draws = 0
             if sampler_name == "sgld":
-                # SGLD uses the configured warmup for burn-in
-                warmup_steps = cfg.sampler.sgld.warmup
-            # Note: HMC/MCLMC handle warmup/adaptation during the sampling phase.
+                # SGLD requires explicit burn-in. Convert warmup steps to recorded draws based on thinning.
+                # Access eval_every from config, defaulting to 10 (matches config.py)
+                eval_every = getattr(cfg.sampler.sgld, 'eval_every', 10)
+                if eval_every > 0:
+                    # cfg.sampler.sgld.warmup is the number of steps to discard.
+                    warmup_draws = cfg.sampler.sgld.warmup // eval_every
 
-            # Updated call to compute_llc_metrics
-            metrics = compute_llc_metrics(
+            # Use the new centralized analysis function
+            metrics, idata = analyze_traces(
                 traces,
                 target.L0,
                 n_data=cfg.data.n_data,
                 beta=sampler_data["beta"],
-                warmup=warmup_steps,  # Pass warmup steps
+                warmup=warmup_draws,
             )
             analysis_results[sampler_name] = metrics
+            inference_data[sampler_name] = idata # Store idata
 
             # Update logging terminology
             log.info(f"{sampler_name} LLC (hat{{lambda}}) metrics:")
@@ -211,12 +216,14 @@ def main(cfg: Config) -> None:
     # Save artifacts
     if cfg.output.save_plots:
         log.info("Saving artifacts...")
-        # Use Hydra's recorded output dir rather than assuming CWD
+        # Use Hydra's recorded output dir
         hydra_output_dir = Path(HydraConfig.get().run.dir)
 
+        # Updated call to save_run_artifacts
         save_run_artifacts(
             results=results,
             analysis_results=analysis_results,
+            inference_data=inference_data, # Pass the new inference_data
             target=target,
             cfg=cfg,
             output_dir=hydra_output_dir,

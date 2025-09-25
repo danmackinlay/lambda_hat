@@ -1,189 +1,217 @@
 # llc/analysis.py
-"""Simplified analysis functions for Hydra-based LLC experiments"""
+"""Enhanced analysis functions for Hydra-based LLC experiments with proper visualization"""
 
 from __future__ import annotations
-from typing import Dict, Any
+from typing import Dict, Any, Tuple
 import jax.numpy as jnp
 import numpy as np
 import arviz as az
 from pathlib import Path
 import warnings
 import pandas as pd
+import matplotlib.pyplot as plt
 
 
-def compute_llc_metrics_from_Ln(
-    Ln_values: jnp.ndarray,
+def analyze_traces(
+    traces: Dict[str, jnp.ndarray],
     L0: float,
     n_data: int,
     beta: float,
     warmup: int = 0,
-) -> Dict[str, float]:
-    """Compute LLC metrics from precomputed Ln values.
-
-    Implements the estimator: hat{lambda} = n * beta * (E[L_n(w)] - L0)
+) -> Tuple[Dict[str, float], az.InferenceData]:
+    """Analyze sampling traces, compute LLC metrics, and create InferenceData.
 
     Args:
-        Ln_values: Precomputed loss values with shape (chains, draws) or (draws,)
-        L0: Reference loss value (loss at ERM solution)
-        n_data: Dataset size (n)
-        beta: Inverse temperature (beta)
-        warmup: Number of warmup samples to discard from the beginning
+        traces: Dictionary of traces (vmapped: C, T).
+        L0, n_data, beta: Parameters for LLC calculation.
+        warmup: Number of recorded draws to discard (burn-in).
 
     Returns:
-        Dictionary with LLC statistics (hat{lambda})
+        Tuple of (metrics dictionary, ArviZ InferenceData).
     """
-    # Handle different input shapes
-    if Ln_values.ndim == 1:
-        # Single chain case: (draws,) -> (1, draws)
-        Ln_values = Ln_values[None, :]
+    if "Ln" not in traces:
+        raise ValueError("Traces must contain 'Ln' key.")
 
+    # Handle input shapes (Ensure C, T)
+    Ln_values = traces["Ln"]
+    if Ln_values.ndim == 1:
+        Ln_values = Ln_values[None, :]
     chains, draws = Ln_values.shape
 
-    # Apply warmup: discard initial samples
+    # Validate and apply warmup (burn-in)
     if warmup >= draws:
-        warnings.warn(
-            f"Warmup ({warmup}) >= total draws ({draws}). Using all samples without warmup."
-        )
+        warnings.warn(f"Warmup draws ({warmup}) >= total draws ({draws}). Using all samples.")
         warmup = 0
 
-    if warmup > 0:
-        Ln_values = Ln_values[:, warmup:]
-        draws = draws - warmup
+    # Select post-warmup data
+    Ln_post_warmup = Ln_values[:, warmup:]
+    draws_post_warmup = draws - warmup
 
     # Compute LLC values: n * beta * (L_n(w) - L0)
-    llc_values = float(n_data) * float(beta) * (Ln_values - L0)
-
-    # Convert to numpy for ArviZ
+    llc_values = float(n_data) * float(beta) * (Ln_post_warmup - L0)
     llc_values_np = np.array(llc_values)
 
-    # Create ArviZ InferenceData for ESS computation
-    idata = az.convert_to_inference_data(
-        {
-            "llc": llc_values_np[..., None]  # Add dummy dimension for ArviZ
-        }
-    )
+    # Prepare posterior data
+    posterior_data = {"llc": llc_values_np, "L": np.array(Ln_post_warmup)}
 
-    # Compute summary statistics
-    summary = az.summary(idata, var_names=["llc"])
+    # Handle sample statistics (FGEs, acceptance, etc.)
+    sample_stats_data = {}
 
-    # Extract metrics
+    # Extract FGEs (tracked during sampling)
+    if "cumulative_fge" in traces:
+        # Ensure FGE data is extracted as float64 numpy array
+        fge_post_warmup = traces["cumulative_fge"][:, warmup:]
+        sample_stats_data["cumulative_fge"] = np.array(fge_post_warmup, dtype=np.float64)
+
+    # Extract other diagnostics
+    for key in ["acceptance_rate", "energy", "is_divergent"]:
+        if key in traces:
+            stat_trace = traces[key]
+            # Ensure trace length matches total draws before applying warmup slicing
+            if stat_trace.shape[1] == draws:
+                # Standardize key for ArviZ if necessary
+                output_key = "diverging" if key == "is_divergent" else key
+                sample_stats_data[output_key] = np.array(stat_trace[:, warmup:])
+
+    # Create ArviZ InferenceData (contains only post-warmup data)
+    data = {
+        "posterior": posterior_data,
+        "sample_stats": sample_stats_data if sample_stats_data else None,
+        "coords": {"chain": np.arange(chains), "draw": np.arange(draws_post_warmup)},
+        "dims": {"llc": ["chain", "draw"], "L": ["chain", "draw"]},
+    }
+    idata = az.from_dict(**data)
+
+    # Compute metrics
+    metrics = _compute_metrics_from_idata(idata, llc_values_np)
+    return metrics, idata
+
+def _compute_metrics_from_idata(idata: az.InferenceData, llc_values_np: np.ndarray) -> Dict[str, float]:
+    """Helper to compute metrics from InferenceData."""
     metrics = {
         "llc_mean": float(llc_values_np.mean()),
         "llc_std": float(llc_values_np.std()),
         "llc_min": float(llc_values_np.min()),
         "llc_max": float(llc_values_np.max()),
     }
-
-    # Add ESS and R-hat if available
+    # Use ArviZ summary for diagnostics
+    summary = az.summary(idata, var_names=["llc"])
     if not summary.empty:
         metrics["ess_bulk"] = float(summary.get("ess_bulk", np.nan).iloc[0])
         metrics["ess_tail"] = float(summary.get("ess_tail", np.nan).iloc[0])
         metrics["r_hat"] = float(summary.get("r_hat", np.nan).iloc[0])
-
-        # Use minimum of bulk and tail ESS as overall ESS
-        ess_bulk = metrics["ess_bulk"]
-        ess_tail = metrics["ess_tail"]
-        if np.isnan(ess_bulk) or np.isnan(ess_tail):
-            metrics["ess"] = np.nan
-        else:
-            metrics["ess"] = min(ess_bulk, ess_tail)
-
+        # Use minimum of bulk and tail ESS
+        ess = min(metrics.get("ess_bulk", np.nan), metrics.get("ess_tail", np.nan))
+        metrics["ess"] = ess if not np.isnan(ess) else np.nan
     return metrics
 
 
-def compute_llc_metrics(
-    traces: Dict[str, jnp.ndarray],
-    L0: float,
-    n_data: int,
-    beta: float,
-    warmup: int = 0,
-) -> Dict[str, float]:
-    """Compute LLC metrics (lambda_hat) from sampling traces.
-
-    Implements the estimator: hat{lambda} = n * beta * (E[L_n(w)] - L0)
-
-    Args:
-        traces: Dictionary with 'Ln' key containing precomputed loss values
-        L0: Reference loss value (loss at ERM solution)
-        n_data: Dataset size (n)
-        beta: Inverse temperature (beta)
-        warmup: Number of warmup samples to discard from the beginning
-
-    Returns:
-        Dictionary with LLC statistics (hat{lambda})
-    """
-    # Require precomputed Ln values - no more position-based analysis
-    if "Ln" not in traces:
-        raise ValueError(
-            "compute_llc_metrics now requires traces with 'Ln' key. "
-            "Memory-intensive position-based analysis has been removed. "
-            "Use sampling functions with loss_full_fn parameter to record Ln values."
-        )
-
-    return compute_llc_metrics_from_Ln(traces["Ln"], L0, n_data, beta, warmup)
-
-
-def create_trace_plots(
-    results: Dict[str, Any], analysis_results: Dict[str, Dict], output_dir: Path
+def create_arviz_diagnostics(
+    inference_data: Dict[str, az.InferenceData], output_dir: Path
 ) -> None:
-    """Create trace plots for LLC values
+    """Create ArviZ diagnostic plots (Trace, Rank, Energy)."""
+    # Create a subdirectory for detailed plots
+    diag_dir = output_dir / "diagnostics"
+    diag_dir.mkdir(exist_ok=True)
 
-    Args:
-        results: Raw sampling results
-        analysis_results: Analysis results with metrics
-        output_dir: Directory to save plots
-    """
-    if not results:
+    for sampler_name, idata in inference_data.items():
+        # 1. Trace Plot (Trace + Posterior Density)
+        try:
+            az.plot_trace(idata, var_names=["llc", "L"], figsize=(12, 8), compact=False)
+            plt.suptitle(f"{sampler_name.upper()} Trace Plot", y=1.02)
+            plt.tight_layout()
+            plt.savefig(diag_dir / f"{sampler_name}_trace.png", dpi=150, bbox_inches="tight")
+            plt.close()
+        except Exception:
+            warnings.warn(f"Failed to create trace plot for {sampler_name}")
+
+        # 2. Rank Plot (Convergence check)
+        try:
+            az.plot_rank(idata, var_names=["llc"], figsize=(12, 5))
+            plt.suptitle(f"{sampler_name.upper()} Rank Plot", y=1.02)
+            plt.tight_layout()
+            plt.savefig(diag_dir / f"{sampler_name}_rank.png", dpi=150, bbox_inches="tight")
+            plt.close()
+        except Exception:
+             warnings.warn(f"Failed to create rank plot for {sampler_name}")
+
+        # 3. Energy Plot (if available, useful for HMC/MCLMC)
+        if hasattr(idata, 'sample_stats') and 'energy' in idata.sample_stats:
+            try:
+                az.plot_energy(idata, figsize=(12, 6))
+                plt.suptitle(f"{sampler_name.upper()} Energy Plot", y=1.02)
+                plt.tight_layout()
+                plt.savefig(diag_dir / f"{sampler_name}_energy.png", dpi=150, bbox_inches="tight")
+                plt.close()
+            except Exception:
+                warnings.warn(f"Failed to create energy plot for {sampler_name}")
+
+def create_convergence_plots(
+    inference_data: Dict[str, az.InferenceData], output_dir: Path
+) -> None:
+    """Create LLC convergence plots (Running Mean) vs FGEs."""
+    num_samplers = len(inference_data)
+    if num_samplers == 0:
         return
 
-    import matplotlib.pyplot as plt
+    # Create a combined figure
+    fig, axes = plt.subplots(num_samplers, 1, figsize=(12, 4 * num_samplers), squeeze=False)
+    axes = axes.flatten()
 
-    fig, axes = plt.subplots(len(results), 1, figsize=(10, 3 * len(results)))
-    if len(results) == 1:
-        axes = [axes]
-
-    for i, (sampler_name, sampler_data) in enumerate(results.items()):
+    for i, (sampler_name, idata) in enumerate(inference_data.items()):
         ax = axes[i]
+        llc_traces = idata.posterior["llc"].values # (C, T)
+        T = llc_traces.shape[1]
 
-        # Get LLC metrics
-        metrics = analysis_results.get(sampler_name, {})
-        llc_mean = metrics.get("llc_mean", 0.0)
-        ess = metrics.get("ess", 0.0)
+        # Calculate running mean for each chain
+        running_means = np.cumsum(llc_traces, axis=1) / np.arange(1, T + 1)
 
-        # sampler_data["traces"] is vmapped over chains: {"Ln": (C, T')}
-        if "traces" in sampler_data and "Ln" in sampler_data["traces"]:
-            Ln = np.array(sampler_data["traces"]["Ln"])
-            if Ln.ndim == 2:
-                chains, draws = Ln.shape
-            else:  # if your scan returns time-first, fix order
-                draws, chains = Ln.shape[0], 1
-                Ln = Ln[None, :]
-
-            for c in range(chains):
-                ax.plot(Ln[c], alpha=0.7, linewidth=0.8)
+        # Determine X-axis (FGEs or Draws)
+        # FGEs are stored in sample_stats, shape (C, T)
+        if hasattr(idata, 'sample_stats') and 'cumulative_fge' in idata.sample_stats:
+            fges = idata.sample_stats["cumulative_fge"].values
+            xlabel = "Full-Data Gradient Evaluations (FGEs)"
+            use_fge = True
         else:
-            # Fallback to dummy data if no traces available
-            chains, draws = 2, 100  # Placeholder
-            trace_data = np.random.normal(llc_mean, 0.1, (chains, draws))
-            for chain in range(chains):
-                ax.plot(trace_data[chain], alpha=0.7, linewidth=0.8)
+            x_axis_draws = np.arange(1, T + 1)
+            xlabel = "Draws"
+            use_fge = False
 
-        ax.axhline(
-            llc_mean,
-            color="red",
-            linestyle="--",
-            alpha=0.8,
-            label=f"Mean: {llc_mean:.4f}",
-        )
-        ax.set_title(f"{sampler_name.upper()} LLC Traces (ESS: {ess:.1f})")
-        ax.set_xlabel("Draw")
-        ax.set_ylabel("LLC")
+        # Plot running means
+        for chain_idx in range(running_means.shape[0]):
+            if use_fge:
+                # Ensure shapes match if using FGEs (they should)
+                if fges.shape[1] == T:
+                    ax.plot(fges[chain_idx], running_means[chain_idx], alpha=0.7)
+                else:
+                     warnings.warn(f"FGE shape mismatch for {sampler_name}. Falling back to Draws.")
+                     ax.plot(x_axis_draws, running_means[chain_idx], alpha=0.7)
+                     xlabel = "Draws"
+            else:
+                ax.plot(x_axis_draws, running_means[chain_idx], alpha=0.7)
+
+
+        # Plot the final mean (the target)
+        final_mean = llc_traces.mean()
+        ax.axhline(final_mean, color='k', linestyle='--', label=f"Target (Final Mean): {final_mean:.4f}")
+
+        ax.set_title(f"{sampler_name.upper()} LLC Convergence")
+        ax.set_xlabel(xlabel)
+        ax.set_ylabel("LLC Estimate (Running Mean)")
         ax.legend()
         ax.grid(True, alpha=0.3)
 
+        # Use log scale for X axis if the range is large
+        # Check the last value of the first chain (or the draws axis)
+        if use_fge and fges.shape[1] > 0 and fges[0, -1] > 5000:
+            ax.set_xscale('log')
+        elif not use_fge and T > 5000:
+            ax.set_xscale('log')
+
     plt.tight_layout()
-    plt.savefig(output_dir / "llc_traces.png", dpi=150, bbox_inches="tight")
-    plt.close()
+    # Save the combined convergence plot (replaces the old uninformative llc_traces.png)
+    plt.savefig(output_dir / "llc_convergence.png", dpi=150, bbox_inches="tight")
+    plt.close(fig)
 
 
 def create_comparison_plot(analysis_results: Dict[str, Dict], output_dir: Path) -> None:
@@ -193,8 +221,6 @@ def create_comparison_plot(analysis_results: Dict[str, Dict], output_dir: Path) 
         analysis_results: Analysis results with metrics
         output_dir: Directory to save plots
     """
-    import matplotlib.pyplot as plt
-
     samplers = list(analysis_results.keys())
     if not samplers:
         return

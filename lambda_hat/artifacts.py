@@ -6,12 +6,16 @@ from pathlib import Path
 import json
 from omegaconf import OmegaConf
 
-from .analysis import create_trace_plots, create_comparison_plot, create_summary_table
+from .analysis import (
+    create_arviz_diagnostics, create_convergence_plots,
+    create_comparison_plot, create_summary_table
+)
 
 
 def save_run_artifacts(
     results: Dict[str, Any],
     analysis_results: Dict[str, Dict],
+    inference_data: Dict[str, Any], # Added parameter (use Any for flexible type hinting)
     target: Any,
     cfg: Any,
     output_dir: Path,
@@ -58,9 +62,15 @@ def save_run_artifacts(
         json.dump(run_info, f, indent=2)
 
     # Create plots
-    if cfg.output.save_plots and results:
-        create_trace_plots(results, analysis_results, output_dir)
-        create_comparison_plot(analysis_results, output_dir)
+    if cfg.output.save_plots:
+        # Use the new plotting functions if InferenceData is available
+        if inference_data:
+            create_convergence_plots(inference_data, output_dir)
+            create_arviz_diagnostics(inference_data, output_dir)
+
+        # Keep the comparison plot (it uses analysis_results)
+        if analysis_results:
+            create_comparison_plot(analysis_results, output_dir)
 
     # Save summary table and metrics
     create_summary_table(analysis_results, output_dir)

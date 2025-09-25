@@ -104,44 +104,49 @@ def update_preconditioner(
 
 
 # === Optimized Inference Loop ===
-def inference_loop_ln_only(
-    rng_key, kernel, initial_state, num_samples, aux_fn, aux_every=1
-):
+def inference_loop_extended(rng_key, kernel, initial_state, num_samples, aux_fn, aux_every=1, work_per_step=1.0):
     """
-    Efficient inference loop using jax.lax.scan that records Ln and diagnostics.
+    Efficient inference loop using jax.lax.scan that records Ln, diagnostics, and cumulative work (FGEs).
 
     Args:
         aux_fn: A function that takes the state and returns a dict {"Ln": val}.
         aux_every: Thinning factor for the trace.
+        work_per_step: The amount of work (in FGEs) performed by one call to the kernel.
     """
-
     @jax.jit
-    def one_step(state, rng_key):
+    def one_step(carry, rng_key):
+        state, cumulative_work = carry
         new_state, info = kernel(rng_key, state)
 
-        # Compute Aux data (e.g., Ln) at every step.
-        aux_data = aux_fn(new_state)  # Returns {"Ln": val}
+        # Update cumulative work (ensure dtype consistency)
+        current_work = jnp.asarray(work_per_step, dtype=cumulative_work.dtype)
+        new_cumulative_work = cumulative_work + current_work
 
-        # Combine aux data with standard diagnostics
+        # Compute Aux data (e.g., Ln)
+        aux_data = aux_fn(new_state)
+
+        # Combine data for trace
         trace_data = aux_data.copy()
+        trace_data["cumulative_fge"] = new_cumulative_work
 
         # Extract diagnostics robustly
         trace_data["acceptance_rate"] = getattr(info, "acceptance_rate", jnp.nan)
         trace_data["energy"] = getattr(info, "energy", jnp.nan)
         # Standardize divergence key (handle both 'is_divergent' and 'diverging')
-        trace_data["is_divergent"] = getattr(
-            info, "is_divergent", getattr(info, "diverging", False)
-        )
+        trace_data["is_divergent"] = getattr(info, "is_divergent", getattr(info, "diverging", False))
 
-        return new_state, trace_data
+        return (new_state, new_cumulative_work), trace_data
 
     keys = jax.random.split(rng_key, num_samples)
-    # Run the scan for all steps (no manual blocking needed)
-    _, trace = jax.lax.scan(one_step, initial_state, keys)
+    # Initialize work accumulation with high precision (float64)
+    initial_work = jnp.array(0.0, dtype=jnp.float64)
+
+    # Run the scan
+    # The carry tuple is (state, cumulative_work)
+    _, trace = jax.lax.scan(one_step, (initial_state, initial_work), keys)
 
     # Apply thinning AFTER the scan (efficient JAX pattern)
     if aux_every > 1:
-        # Use jax.tree_util.tree_map for PyTree compatibility
         trace = tree_map(lambda x: x[::aux_every], trace)
 
     return trace
@@ -231,15 +236,19 @@ def run_hmc(
     def aux_fn(st):
         return {"Ln": loss_full_fn_jitted(st.position)}
 
+    # Calculate work per step (FGEs): HMC uses full gradients.
+    work_per_step = float(num_integration_steps)
+
     # Use vmap with the optimized inference loop
     traces = jax.vmap(
-        lambda k, s: inference_loop_ln_only(
+        lambda k, s: inference_loop_extended(
             k,
             hmc.step,
             s,
             num_samples=num_samples,
             aux_fn=aux_fn,
             aux_every=1,  # HMC records every step
+            work_per_step=work_per_step,  # Pass work
         )
     )(chain_keys, init_states)
     return traces
@@ -357,19 +366,23 @@ def run_sgld(
     def aux_fn(st):
         return {"Ln": loss_full_fn_jitted(st.position)}
 
+    # Calculate work per step (FGEs): SGLD uses minibatch.
+    work_per_step = float(batch_size) / float(n_data)
+
     # Use eval_every from config if available, otherwise default to 10
     # Note: Ensure 'eval_every' is defined in SGLDConfig or handled here.
     eval_every = config.eval_every
 
     # Use vmap with the optimized inference loop
     traces = jax.vmap(
-        lambda k, s: inference_loop_ln_only(
+        lambda k, s: inference_loop_extended(
             k,
             sgld_kernel,
             s,
             num_samples=config.steps,
             aux_fn=aux_fn,
             aux_every=eval_every,
+            work_per_step=work_per_step,  # Pass work
         )
     )(sample_keys, initial_states)
 
@@ -447,6 +460,12 @@ def run_mclmc(
     init_keys = jax.random.split(init_key, num_chains)
     init_states = jax.vmap(mclmc.init)(init_thetas, init_keys)
 
+    # Calculate work per step (FGEs): MCLMC uses full gradients.
+    # Number of integration steps is approximately L / step_size.
+    # Use jnp.ceil to ensure it's an integer count of steps
+    num_integration_steps = jnp.ceil(config.L / config.step_size)
+    work_per_step = float(num_integration_steps)
+
     # Define the aux function for the loop
     # MCLMC state has 'position' attribute which holds the flattened vector.
     def aux_fn(st):
@@ -455,15 +474,16 @@ def run_mclmc(
     key, sample_key = jax.random.split(key)
     chain_keys = jax.random.split(sample_key, num_chains)
 
-    # Use vmap with the optimized loop (Replace lines 478-486)
+    # Use vmap with the optimized loop
     traces = jax.vmap(
-        lambda k, s: inference_loop_ln_only(
+        lambda k, s: inference_loop_extended(
             k,
             mclmc.step,
             s,
             num_samples=num_samples,
             aux_fn=aux_fn,
             aux_every=1,
+            work_per_step=work_per_step,  # Pass work
         )
     )(chain_keys, init_states)
 
