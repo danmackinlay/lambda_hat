@@ -96,7 +96,7 @@ def build_target(key, cfg: Config) -> TargetBundle:
         params_star_f64, metrics = train_erm(loss_full_f64, params_init, cfg, key)
 
         # Convert to f32
-        params_star_f32 = jax.tree_util.tree_map(
+        params_star_f32 = jax.tree.map(
             lambda a: a.astype(jnp.float32), params_star_f64
         )
 

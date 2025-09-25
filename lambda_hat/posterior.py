@@ -32,9 +32,8 @@ def make_logpost(
 
     This is used by HMC and MCLMC.
     """
-    # Flatten params0 for prior computation
-    leaves, _ = jax.tree_util.tree_flatten(params0)
-    theta0 = jnp.concatenate([leaf.flatten() for leaf in leaves])
+    # Flatten params0 for prior computation (modernized with ravel_pytree)
+    theta0, _ = jax.flatten_util.ravel_pytree(params0)
 
     # Ensure scalars match theta dtype
     beta = jnp.asarray(beta, dtype=theta0.dtype)
@@ -43,9 +42,8 @@ def make_logpost(
 
     @jit
     def logpost(params):
-        # Flatten params for prior computation
-        leaves, _ = jax.tree_util.tree_flatten(params)
-        theta = jnp.concatenate([leaf.flatten() for leaf in leaves])
+        # Flatten params for prior computation (modernized with ravel_pytree)
+        theta, _ = jax.flatten_util.ravel_pytree(params)
 
         Ln = loss_full(params)
         # Prior term: -gamma/2 * ||w-w0||^2

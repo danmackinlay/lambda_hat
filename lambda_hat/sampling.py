@@ -380,9 +380,8 @@ def run_mclmc(
     key, init_key, sample_key = jax.random.split(rng_key, 3)
     init_keys = jax.random.split(init_key, num_chains)
 
-    # Flatten initial params for MCLMC (it works with vectors)
-    leaves, tree_def = jax.tree_util.tree_flatten(initial_params)
-    initial_flat = jnp.concatenate([leaf.flatten() for leaf in leaves])
+    # Flatten initial params for MCLMC (modernized with ravel_pytree)
+    initial_flat, unflatten_fn = jax.flatten_util.ravel_pytree(initial_params)
     d = initial_flat.size
 
     # Create initial states for each chain
@@ -394,17 +393,9 @@ def run_mclmc(
 
     initial_positions = jax.vmap(init_chain)(init_keys)
 
-    # Adapt logdensity to work with flattened params
+    # Adapt logdensity to work with flattened params (modernized with unflatten_fn)
     def logdensity_flat(theta):
-        # Unflatten theta back to params structure
-        shapes = [leaf.shape for leaf in leaves]
-        sizes = [leaf.size for leaf in leaves]
-        params_leaves = []
-        start = 0
-        for shape, size in zip(shapes, sizes):
-            params_leaves.append(theta[start : start + size].reshape(shape))
-            start += size
-        params = jax.tree_util.tree_unflatten(tree_def, params_leaves)
+        params = unflatten_fn(theta)
         return logdensity_fn(params)
 
     # --- MCLMC Adaptation Phase ---
@@ -479,16 +470,9 @@ def run_mclmc(
     def run_chain(key, initial_state):
         kernel = mclmc_sampler.step
 
-        # Define the loss function that unflattens the parameters first
+        # Define the loss function that unflattens the parameters first (modernized)
         def loss_fn_for_loop(theta_flat):
-            # Unflatten theta back to params structure for loss computation
-            # (Logic adapted from Doc 17 L681-689)
-            params_leaves = []
-            start = 0
-            for shape, size in zip([leaf.shape for leaf in leaves], [leaf.size for leaf in leaves]):
-                params_leaves.append(theta_flat[start : start + size].reshape(shape))
-                start += size
-            params = jax.tree_util.tree_unflatten(tree_def, params_leaves)
+            params = unflatten_fn(theta_flat)
             return loss_full(params)
 
         # Use the efficient loop, removing the if/else trace_spec logic.
