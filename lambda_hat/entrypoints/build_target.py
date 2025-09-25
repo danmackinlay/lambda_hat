@@ -9,7 +9,7 @@ import hydra
 
 # Ensure resolvers are registered before Hydra composes config.
 from lambda_hat import hydra_support  # noqa: F401
-from lambda_hat.target_artifacts import TargetMeta, save_target_artifact, _hash_arrays, _flatten_params_dict
+from lambda_hat.target_artifacts import TargetMeta, save_target_artifact, _hash_arrays, _flatten_params_dict, load_target_artifact
 
 def _pkg_versions() -> Dict[str, str]:
     import haiku as hk, jax, blackjax, numpy as np
@@ -42,6 +42,20 @@ def build_target_components(key, cfg: DictConfig):
 
 @hydra.main(config_path="../conf/target", config_name="base", version_base=None)
 def main(cfg: DictConfig) -> None:
+    # --- IDEMPOTENCY CHECK ---
+    try:
+        # Attempt to load the artifact
+        _, _, _, _, tdir = load_target_artifact(cfg.store.root, cfg.target.id)
+        print(f"[build-target] Target {cfg.target.id} already exists at {tdir}. Skipping build.")
+        return # Exit successfully
+    except FileNotFoundError:
+        # If not found, proceed with building
+        print(f"[build-target] Building new target {cfg.target.id}...")
+    except Exception as e:
+        # Handle potential corruption or other errors during load check
+        print(f"[build-target] Error checking for existing target {cfg.target.id}: {e}. Proceeding with build.")
+    # -------------------------
+
     # Precision
     if cfg.jax.enable_x64:
         jax.config.update("jax_enable_x64", True)
