@@ -25,7 +25,3 @@ posterior:
   sigma_w: 1.0
   sigma_b: 1.0
   temp: 1.0
-
-# Will be filled from target metadata at runtime
-data:
-  n_data: ???  # This gets filled from loaded target

@@ -14,8 +14,8 @@ from lambda_hat.target_artifacts import load_target_artifact, append_sample_mani
 from lambda_hat.sampling_runner import run_sampler  # Use extracted sampler runner
 from lambda_hat.config import Config
 
-@hydra.main(config_path="../conf/sample", config_name="base", version_base=None)
-def main(cfg: DictConfig) -> None:
+def run_sampling_logic(cfg: DictConfig) -> None:
+    """Executes the sampling logic. Reusable by different entry points."""
     if cfg.jax.enable_x64:
         jax.config.update("jax_enable_x64", True)
 
@@ -110,18 +110,12 @@ def main(cfg: DictConfig) -> None:
         model={"forward": forward_fn}
     )
 
-    # Create Config-like object from cfg
-    import copy
-    config = copy.deepcopy(cfg)
-
-    # Fill in n_data from loaded target
-    config.data.n_data = int(X.shape[0])
-
     # Run the selected sampler using existing machinery
     key = jax.random.PRNGKey(cfg.runtime.seed)
     t0 = time.time()
 
-    result = run_sampler(cfg.sampler.name, config, target, key)
+    # Pass the original cfg object
+    result = run_sampler(cfg.sampler.name, cfg, target, key)
 
     dt = time.time() - t0
 
@@ -197,6 +191,10 @@ def main(cfg: DictConfig) -> None:
     append_sample_manifest(cfg.store.root, cfg.target_id, record)
 
     print(f"[sample] done in {dt:.2f}s → {run_dir}")
+
+@hydra.main(config_path="../conf/sample", config_name="base", version_base=None)
+def main(cfg: DictConfig) -> None:
+    run_sampling_logic(cfg)
 
 if __name__ == "__main__":
     main()

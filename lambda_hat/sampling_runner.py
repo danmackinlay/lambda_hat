@@ -13,8 +13,7 @@ from omegaconf import DictConfig
 from lambda_hat.posterior import (
     make_grad_loss_minibatch,
     compute_beta_gamma,
-    make_logpost_and_score,
-    make_logdensity_for_mclmc,
+    make_logpost,
 )
 from lambda_hat.sampling import run_hmc, run_sgld, run_mclmc
 
@@ -37,20 +36,27 @@ def run_sampler(
     """
     log.info(f"Running {sampler_name} sampler...")
 
-    # Compute beta and gamma from sample config
-    beta, gamma = compute_beta_gamma(cfg.posterior, target.d, cfg.data.n_data)
-    log.info(f"Using beta={beta:.6f}, gamma={gamma:.6f}")
+    # Derive n_data robustly from the TargetBundle
+    if hasattr(target, 'X_f64') and target.X_f64 is not None:
+        n_data = target.X_f64.shape[0]
+    elif hasattr(target, 'X_f32') and target.X_f32 is not None:
+        n_data = target.X_f32.shape[0]
+    else:
+        raise ValueError("TargetBundle must contain data (X_f64 or X_f32) to determine n_data.")
+
+    # Compute beta and gamma using explicit n_data (removes cfg.data.n_data dependency)
+    beta, gamma = compute_beta_gamma(cfg.posterior, target.d, n_data)
+    log.info(f"Using beta={beta:.6f}, gamma={gamma:.6f} (n={n_data})")
 
     if sampler_name == "hmc":
         # Setup HMC
         loss_full = target.loss_full_f64
-        loss_mini = target.loss_minibatch_f64
         params0 = target.params0_f64
 
-        logpost_and_grad, _ = make_logpost_and_score(
-            loss_full, loss_mini, params0, cfg.data.n_data, beta, gamma
+        # Use the modern make_logpost function
+        logdensity_fn = make_logpost(
+            loss_full, params0, n_data, beta, gamma
         )
-        logdensity_fn = lambda params: logpost_and_grad(params)[0]
 
         # Run HMC
         traces = run_hmc(
@@ -91,8 +97,9 @@ def run_sampler(
         loss_full = target.loss_full_f64
         params0 = target.params0_f64
 
-        logdensity_fn = make_logdensity_for_mclmc(
-            loss_full, params0, cfg.data.n_data, beta, gamma
+        # Use the modern make_logpost function
+        logdensity_fn = make_logpost(
+            loss_full, params0, n_data, beta, gamma
         )
 
         # Run MCLMC
