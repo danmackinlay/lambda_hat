@@ -1,11 +1,18 @@
 sampler:
   name: mclmc
   mclmc:
+    # Reduced draws to reach ~10k FGEs (1000 draws * (1.0/0.1) = 10000 FGEs)
     draws: 1000
-    warmup: 500
     L: 1.0
     step_size: 0.1
-    num_steps: 100
-    desired_energy_var: 5e-4
     dtype: float64
+    diagonal_preconditioning: false
+    # Reduced adaptation steps slightly
+    num_steps: 500
+    frac_tune1: 0.1
+    frac_tune2: 0.1
+    frac_tune3: 0.1
+    desired_energy_var: 0.0005
+    trust_in_estimate: 1.0
+    num_effective_samples: 150.0
     integrator: isokinetic_mclachlan

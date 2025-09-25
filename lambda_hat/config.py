@@ -88,7 +88,7 @@ class SGLDConfig:
     beta2: float = 0.999
     eps: float = 1e-8
     bias_correction: bool = True
-    eval_every: int = 10  # Record loss every N steps
+    eval_every: int = 100  # Updated default: compute full-data loss every k kept draws
 
 
 @dataclass

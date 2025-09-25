@@ -1,10 +1,11 @@
 sampler:
   name: hmc
   hmc:
+    # Reduced draws to reach ~10k FGEs (1000 draws * 10 steps = 10000 FGEs)
     draws: 1000
-    warmup: 500
-    step_size: 0.01
+    warmup: 200
     num_integration_steps: 10
+    step_size: 0.01
+    dtype: float64
     adapt_step_size: true
     target_acceptance: 0.8
-    dtype: float64
