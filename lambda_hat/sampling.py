@@ -173,43 +173,37 @@ def run_hmc(rng_key, logdensity_fn, initial_params,
     inv_mass = jnp.ones(D, dtype=ref_dtype)
 
     if adaptation_steps > 0:
-        # Setup adaptation (works with Structured PyTree)
+        # 2) warmup on one chain to get step size + inv_mass
         wa = blackjax.window_adaptation(
-            blackjax.hmc,
-            logdensity_fn,
+            blackjax.hmc,            # algorithm
+            logdensity_fn,           # target log-density
             target_acceptance_rate=0.8,
+            # BIND the trajectory length HERE (constructor), NOT in .run()
+            num_integration_steps=num_integration_steps,
         )
 
         one_pos = jax.tree.map(lambda x: x[0], init_positions)
 
-        # Kernel arguments for HMC used during adaptation
-        hmc_args = {"num_integration_steps": num_integration_steps}
+        # PASS ONLY num_steps (the warmup length) to .run()
+        warmup_result = wa.run(
+            k_warm,
+            one_pos,
+            num_steps=adaptation_steps,
+        )
+        # Unpack the result - BlackJAX returns ((state, params), info)
+        (final_state, params), _ = warmup_result
 
-        # Run adaptation
-        try:
-            # BlackJAX API returns: ((final_state, adapted_params_dict), trace)
-            (warm_state, adapted_params), _ = wa.run(
-                k_warm, one_pos,
-                num_steps=adaptation_steps,
-                **hmc_args
-            )
-
-            # Robustly extract adapted parameters from the dictionary
-            step_size_adapted = adapted_params.get("step_size", step_size_adapted)
-            inv_mass_adapted = adapted_params.get("inverse_mass_matrix", inv_mass)
-
-            # Validation: Ensure the mass matrix is correctly shaped (1D or 2D array)
+        # Handle different BlackJAX return formats robustly
+        if isinstance(params, dict):
+            step_size_adapted = params.get("step_size", step_size_adapted)
+            inv_mass_adapted = params.get("inverse_mass_matrix", inv_mass)
             if hasattr(inv_mass_adapted, 'ndim') and inv_mass_adapted.ndim in [1, 2]:
-                 inv_mass = inv_mass_adapted
-            else:
-                 # This handles the case where it might return a scalar (0 dim) or PyTree
-                 print(f"[HMC WARNING] Adapted mass matrix has unexpected structure (Dims: {getattr(inv_mass_adapted, 'ndim', 'N/A')}). Defaulting to identity.")
-                 # inv_mass remains the default identity matrix (jnp.ones(D))
-
-        except Exception as e:
-            # This catches errors during the adaptation process itself
-            print(f"[HMC WARNING] Window adaptation failed during execution: {e}. Defaulting to fixed parameters.")
-            # step_size_adapted and inv_mass remain their defaults.
+                inv_mass = inv_mass_adapted
+        elif isinstance(params, (tuple, list)) and len(params) >= 2:
+            step_size_adapted, inv_mass = params[:2]
+        else:
+            # Keep defaults if params structure is unexpected
+            print(f"[HMC WARNING] Unexpected params format: {type(params)}. Using defaults.")
 
 
     # 3) build kernel and init all chains
