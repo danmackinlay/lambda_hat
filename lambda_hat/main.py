@@ -17,8 +17,7 @@ from lambda_hat.targets import build_target, make_loss_full
 from lambda_hat.posterior import (
     make_grad_loss_minibatch,
     compute_beta_gamma,
-    make_logpost_and_score,
-    make_logdensity_for_mclmc,
+    make_logpost,
 )
 from lambda_hat.sampling import run_hmc, run_sgld, run_mclmc
 from lambda_hat.analysis import compute_llc_metrics
@@ -56,10 +55,9 @@ def run_sampler(
         loss_mini = target.loss_minibatch_f64
         params0 = target.params0_f64
 
-        logpost_and_grad, _ = make_logpost_and_score(
-            loss_full, loss_mini, params0, cfg.data.n_data, beta, gamma
+        logdensity_fn = make_logpost(
+            loss_full, params0, cfg.data.n_data, beta, gamma
         )
-        logdensity_fn = lambda params: logpost_and_grad(params)[0]
 
         # Create loss_full function for Ln recording
         loss_full_for_recording = make_loss_full(loss_full)
@@ -108,7 +106,7 @@ def run_sampler(
         loss_full = target.loss_full_f64
         params0 = target.params0_f64
 
-        logdensity_fn = make_logdensity_for_mclmc(
+        logdensity_fn = make_logpost(
             loss_full, params0, cfg.data.n_data, beta, gamma
         )
 
