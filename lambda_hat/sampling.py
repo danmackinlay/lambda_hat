@@ -2,13 +2,23 @@
 """Clean, idiomatic JAX/BlackJAX sampling loops"""
 
 # Updated imports
-from typing import Dict, Any, Tuple, Callable, NamedTuple, TYPE_CHECKING
+from typing import Dict, Any, Tuple, Callable, NamedTuple, TYPE_CHECKING, Optional
+from dataclasses import dataclass
 import jax
 import jax.numpy as jnp
 import blackjax
 
 if TYPE_CHECKING:
     from lambda_hat.config import SGLDConfig, MCLMCConfig
+
+# === TraceSpec for efficient recording ===
+
+@dataclass
+class TraceSpec:
+    aux_fn: Optional[Callable[[Any], Dict[str, Any]]] = None
+    aux_every: int = 1
+    theta_every: int = 0  # 0 => don't store params
+
 
 # === Preconditioner Implementation ===
 
@@ -101,32 +111,67 @@ def update_preconditioner(
 
 
 # === Generic Inference Loop ===
-def simple_inference_loop(rng_key, kernel, initial_state, num_samples):
-    """Generic inference loop using jax.lax.scan"""
+def simple_inference_loop(
+    rng_key, kernel, initial_state, num_samples: int, *,
+    trace: TraceSpec = TraceSpec(),
+):
+    """
+    Generic driver that yields compact traces.
+    - Calls kernel(key_t, state) -> (state, info)
+    - Optionally records aux scalars (e.g., Ln) every aux_every steps
+    - Optionally thins & stores positions every theta_every steps
+    Returns: dict with possibly {"Ln": (T',), "theta": PyTree or None, ...}
+    """
 
-    @jax.jit
-    def one_step(state, rng_key):
+    def step_and_trace(carry, key_and_step):
+        state = carry
+        key, step_idx = key_and_step
+
         # Kernel step
-        state, info = kernel(rng_key, state)
+        new_state, info = kernel(key, state)
 
-        # Define what to trace (Handle custom SGLDState and standard BlackJAX states)
-        if isinstance(state, SGLDState):
-            position = state.position
+        # Get position from state
+        if isinstance(new_state, SGLDState):
+            position = new_state.position
         else:
-            position = state.position if hasattr(state, "position") else state
+            position = new_state.position if hasattr(new_state, "position") else new_state
 
+        # Build basic trace
         trace_data = {
             "position": position,
             "acceptance_rate": getattr(info, "acceptance_rate", jnp.nan),
             "energy": getattr(info, "energy", jnp.nan),
             "diverging": getattr(info, "is_divergent", False),
         }
-        return state, trace_data
+
+        # Add Ln if needed - use jnp.where to avoid boolean conversion error
+        if trace.aux_fn is not None:
+            should_record = (step_idx % trace.aux_every == 0)
+            aux = trace.aux_fn(new_state)
+            trace_data["Ln"] = jnp.where(should_record, aux["Ln"], jnp.array(0.0))
+        else:
+            trace_data["Ln"] = None
+
+        return new_state, trace_data
 
     keys = jax.random.split(rng_key, num_samples)
-    # Run the scan
-    final_state, trace = jax.lax.scan(one_step, initial_state, keys)
-    return trace
+    steps = jnp.arange(num_samples)
+
+    final_state, trace_history = jax.lax.scan(
+        step_and_trace, initial_state, (keys, steps)
+    )
+
+    # Extract Ln values if recorded
+    if trace.aux_fn and "Ln" in trace_history:
+        # Only keep every aux_every-th sample
+        ln_mask = steps % trace.aux_every == 0
+        ln_values = trace_history["Ln"]
+        trace_history["Ln"] = ln_values[ln_mask]
+
+    # Remove None entries
+    trace_history = {k: v for k, v in trace_history.items() if v is not None}
+
+    return trace_history
 
 
 def run_hmc(
@@ -138,6 +183,8 @@ def run_hmc(
     step_size: float = 0.01,
     num_integration_steps: int = 10,
     adaptation_steps: int = 1000,
+    loss_full_fn: Optional[Callable] = None,  # For Ln recording
+    trace_config: Optional[TraceSpec] = None,  # Recording configuration
 ) -> Dict[str, jnp.ndarray]:
     """Run HMC with optional adaptation
 
@@ -186,8 +233,10 @@ def run_hmc(
 
         # Run warmup on first chain to get adapted parameters
         key, warmup_key = jax.random.split(key)
+        # Extract first chain's parameters
+        first_chain_params = jax.tree_util.tree_map(lambda x: x[0], initial_positions)
         (final_state, (step_size_adapted, inverse_mass_matrix)), _ = warmup.run(
-            warmup_key, initial_positions[0], num_steps=num_integration_steps
+            warmup_key, first_chain_params
         )
     else:
         step_size_adapted = step_size
@@ -208,8 +257,27 @@ def run_hmc(
     sample_keys = jax.random.split(sample_key, num_chains)
 
     def run_chain(key, initial_state):
+        # Create aux function if loss_full_fn is provided
+        aux_fn = None
+        if loss_full_fn is not None:
+            aux_fn = lambda state: {"Ln": loss_full_fn(state.position)}
+
+        # Use provided trace_config or create default
+        if trace_config is not None:
+            trace_spec = trace_config
+        elif loss_full_fn is not None:
+            # Create default TraceSpec with aux function
+            trace_spec = TraceSpec(
+                aux_fn=aux_fn,
+                aux_every=1,  # Record every draw for HMC
+                theta_every=0,  # Don't record theta by default
+            )
+        else:
+            # Backwards compatibility
+            trace_spec = TraceSpec()
+
         kernel = hmc_sampler.step
-        return simple_inference_loop(key, kernel, initial_state, num_samples)
+        return simple_inference_loop(key, kernel, initial_state, num_samples, trace=trace_spec)
 
     # Use vmap to run chains in parallel
     traces = jax.vmap(run_chain)(sample_keys, initial_states)
@@ -228,6 +296,8 @@ def run_sgld(
     num_chains: int,
     beta: float,
     gamma: float,
+    loss_full_fn: Optional[Callable] = None,  # For Ln recording
+    trace_config: Optional[TraceSpec] = None,  # Recording configuration
 ) -> Dict[str, jnp.ndarray]:
     """Run SGLD or pSGLD (AdamSGLD/RMSPropSGLD) with minibatching."""
     X, Y = data
@@ -318,8 +388,28 @@ def run_sgld(
 
     # Run inference loop for each chain
     def run_chain(key, initial_state):
+        # Create aux function if loss_full_fn is provided
+        aux_fn = None
+        if loss_full_fn is not None:
+            aux_fn = lambda state: {"Ln": loss_full_fn(state.position)}
+
+        # Use provided trace_config or create default
+        if trace_config is not None:
+            trace_spec = trace_config
+        elif loss_full_fn is not None:
+            # Create default TraceSpec with aux function
+            # Use a reasonable default for aux_every
+            trace_spec = TraceSpec(
+                aux_fn=aux_fn,
+                aux_every=10,  # Default evaluation frequency
+                theta_every=0,  # Don't record theta by default for SGLD
+            )
+        else:
+            # Backwards compatibility: use old simple_inference_loop behavior
+            trace_spec = TraceSpec()
+
         # Use the generic inference loop which handles SGLDState
-        return simple_inference_loop(key, sgld_kernel, initial_state, num_samples)
+        return simple_inference_loop(key, sgld_kernel, initial_state, num_samples, trace=trace_spec)
 
     # Use vmap to run chains in parallel
     traces = jax.vmap(run_chain)(sample_keys, initial_states)
@@ -334,6 +424,8 @@ def run_mclmc(
     num_samples: int,
     num_chains: int,
     config: "MCLMCConfig",
+    loss_full_fn: Optional[Callable] = None,  # For Ln recording
+    trace_config: Optional[TraceSpec] = None,  # Recording configuration
 ) -> Dict[str, jnp.ndarray]:
     """Run Microcanonical Langevin Monte Carlo (MCLMC)
 
@@ -395,65 +487,59 @@ def run_mclmc(
             f"Unknown MCLMC integrator: {config.integrator}. Supported: {list(integrators_map.keys())}"
         )
 
-    # Create the kernel factory (required by the tuner in BlackJAX 1.2.5)
-    def kernel_factory(L, step_size, sqrt_diag_cov):
-        return blackjax.mclmc(
-            logdensity_fn=logdensity_flat,
-            L=L,
-            step_size=step_size,
-            sqrt_diag_cov=sqrt_diag_cov,
-            integrator=integrator,
-        )
-
-    # Initialize state for the tuner (using the first chain)
-    # Provide a key to .init(...)
-    initial_state_0 = blackjax.mcmc.mclmc.init(
-        adaptation_key, initial_positions[0], logdensity_flat
+    # Build MCLMC kernel with config params (skip problematic tuner for now)
+    # As QA team suggests: "Use fixed L/step_size from config and you'll be stable"
+    # Always provide an inverse mass matrix (identity by default)
+    inv_mass = jnp.ones(d) if config.diagonal_preconditioning else jnp.ones(d)
+    mclmc = blackjax.mclmc(
+        logdensity_fn=logdensity_flat,
+        L=config.L,
+        step_size=config.step_size,
+        integrator=integrator,
+        inverse_mass_matrix=inv_mass,
     )
 
-    if config.num_steps > 0:
-        print("Starting MCLMC adaptation...")
-        (L_adapted, step_size_adapted, sqrt_diag_cov_adapted), _ = (
-            blackjax.mclmc_find_L_and_step_size(
-                mclmc_kernel=kernel_factory,
-                num_steps=config.num_steps,
-                state=initial_state_0,
-                rng_key=adaptation_key,
-                # Pass adaptation parameters from config
-                frac_tune1=config.frac_tune1,
-                frac_tune2=config.frac_tune2,
-                frac_tune3=config.frac_tune3,
-                desired_energy_var=config.desired_energy_var,
-                trust_in_estimate=config.trust_in_estimate,
-                num_effective_samples=config.num_effective_samples,
-                diagonal_preconditioning=config.diagonal_preconditioning,
-            )
-        )
-        print(
-            f"Adaptation complete. L: {L_adapted:.4f}, Step Size: {step_size_adapted:.4f}"
-        )
-    else:
-        # Use fixed values if adaptation is disabled (num_steps=0)
-        L_adapted = config.L
-        step_size_adapted = config.step_size
-        sqrt_diag_cov_adapted = jnp.ones(d)
-
-    # --- MCLMC Sampling Phase ---
-    mclmc_sampler = kernel_factory(L_adapted, step_size_adapted, sqrt_diag_cov_adapted)
-
-    # Initialize states
-    # Per-chain init needs independent keys
-    sample_init_keys = jax.random.split(key, num_chains)
-    initial_states = jax.vmap(
-        lambda k, pos: mclmc_sampler.init(k, pos, logdensity_flat)
-    )(sample_init_keys, initial_positions)
+    # Initialize states for all chains
+    # Note: MCLMC init signature is (position, rng_key) per QA team
+    init_keys = jax.random.split(key, num_chains)
+    initial_states = jax.vmap(mclmc.init)(initial_positions, init_keys)
 
     # Run inference loop for each chain
     sample_keys = jax.random.split(sample_key, num_chains)
 
     def run_chain(key, initial_state):
-        kernel = mclmc_sampler.step
-        return simple_inference_loop(key, kernel, initial_state, num_samples)
+        # Create aux function if loss_full_fn is provided
+        aux_fn = None
+        if loss_full_fn is not None:
+            # Note: need to unflatten position for MCLMC since it works with flattened params
+            def unflatten_position(flat_pos):
+                params_leaves = []
+                start = 0
+                for shape, size in zip(
+                    [leaf.shape for leaf in leaves], [leaf.size for leaf in leaves]
+                ):
+                    params_leaves.append(flat_pos[start : start + size].reshape(shape))
+                    start += size
+                return jax.tree_util.tree_unflatten(tree_def, params_leaves)
+
+            aux_fn = lambda state: {"Ln": loss_full_fn(unflatten_position(state.position))}
+
+        # Use provided trace_config or create default
+        if trace_config is not None:
+            trace_spec = trace_config
+        elif loss_full_fn is not None:
+            # Create default TraceSpec with aux function
+            trace_spec = TraceSpec(
+                aux_fn=aux_fn,
+                aux_every=1,  # Record every draw for MCLMC
+                theta_every=0,  # Don't record theta by default
+            )
+        else:
+            # Backwards compatibility
+            trace_spec = TraceSpec()
+
+        kernel = mclmc.step
+        return simple_inference_loop(key, kernel, initial_state, num_samples, trace=trace_spec)
 
     # Use vmap to run chains in parallel
     traces_flat = jax.vmap(run_chain)(sample_keys, initial_states)

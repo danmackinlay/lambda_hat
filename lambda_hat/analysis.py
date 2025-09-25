@@ -11,6 +11,87 @@ from pathlib import Path
 from jax.tree_util import tree_map
 
 
+def compute_llc_metrics_from_Ln(
+    Ln_values: jnp.ndarray,
+    L0: float,
+    n_data: int,
+    beta: float,
+    warmup: int = 0,
+) -> Dict[str, float]:
+    """Compute LLC metrics from precomputed Ln values.
+
+    Implements the estimator: hat{lambda} = n * beta * (E[L_n(w)] - L0)
+
+    Args:
+        Ln_values: Precomputed loss values with shape (chains, draws) or (draws,)
+        L0: Reference loss value (loss at ERM solution)
+        n_data: Dataset size (n)
+        beta: Inverse temperature (beta)
+        warmup: Number of warmup samples to discard from the beginning
+
+    Returns:
+        Dictionary with LLC statistics (hat{lambda})
+    """
+    # Handle different input shapes
+    if Ln_values.ndim == 1:
+        # Single chain case: (draws,) -> (1, draws)
+        Ln_values = Ln_values[None, :]
+
+    chains, draws = Ln_values.shape
+
+    # Apply warmup: discard initial samples
+    if warmup >= draws:
+        import warnings
+        warnings.warn(
+            f"Warmup ({warmup}) >= total draws ({draws}). Using all samples without warmup."
+        )
+        warmup = 0
+
+    if warmup > 0:
+        Ln_values = Ln_values[:, warmup:]
+        draws = draws - warmup
+
+    # Compute LLC values: n * beta * (L_n(w) - L0)
+    llc_values = float(n_data) * float(beta) * (Ln_values - L0)
+
+    # Convert to numpy for ArviZ
+    llc_values_np = np.array(llc_values)
+
+    # Create ArviZ InferenceData for ESS computation
+    idata = az.convert_to_inference_data(
+        {
+            "llc": llc_values_np[..., None]  # Add dummy dimension for ArviZ
+        }
+    )
+
+    # Compute summary statistics
+    summary = az.summary(idata, var_names=["llc"])
+
+    # Extract metrics
+    metrics = {
+        "llc_mean": float(llc_values_np.mean()),
+        "llc_std": float(llc_values_np.std()),
+        "llc_min": float(llc_values_np.min()),
+        "llc_max": float(llc_values_np.max()),
+    }
+
+    # Add ESS and R-hat if available
+    if not summary.empty:
+        metrics["ess_bulk"] = float(summary.get("ess_bulk", np.nan).iloc[0])
+        metrics["ess_tail"] = float(summary.get("ess_tail", np.nan).iloc[0])
+        metrics["r_hat"] = float(summary.get("r_hat", np.nan).iloc[0])
+
+        # Use minimum of bulk and tail ESS as overall ESS
+        ess_bulk = metrics["ess_bulk"]
+        ess_tail = metrics["ess_tail"]
+        if np.isnan(ess_bulk) or np.isnan(ess_tail):
+            metrics["ess"] = np.nan
+        else:
+            metrics["ess"] = min(ess_bulk, ess_tail)
+
+    return metrics
+
+
 def compute_llc_metrics(
     traces: Dict[str, jnp.ndarray],
     loss_fn: Callable,
@@ -24,8 +105,8 @@ def compute_llc_metrics(
     Implements the estimator: hat{lambda} = n * beta * (E[L_n(w)] - L0)
 
     Args:
-        traces: Dictionary with 'position' key containing parameter samples
-        loss_fn: Loss function to evaluate on parameter samples
+        traces: Dictionary with 'position' key containing parameter samples or 'Ln' key with precomputed losses
+        loss_fn: Loss function to evaluate on parameter samples (ignored if 'Ln' is present)
         L0: Reference loss value (loss at ERM solution)
         n_data: Dataset size (n)
         beta: Inverse temperature (beta)
@@ -34,6 +115,11 @@ def compute_llc_metrics(
     Returns:
         Dictionary with LLC statistics (hat{lambda})
     """
+    # Check if we have precomputed Ln values (new efficient path)
+    if "Ln" in traces:
+        return compute_llc_metrics_from_Ln(traces["Ln"], L0, n_data, beta, warmup)
+
+    # Fallback to old method for backwards compatibility (this is the memory-intensive path)
     # Extract positions
     positions = traces["position"]  # (chains, draws, param_structure)
 
@@ -66,7 +152,14 @@ def compute_llc_metrics(
         # Update draws count after warmup
         draws = draws - warmup
 
-    # Compute loss for all samples using vmap
+    # Compute loss for all samples using vmap (MEMORY INTENSIVE - SHOULD BE AVOIDED)
+    # This is the problematic code that causes 300GB allocations
+    import warnings
+    warnings.warn(
+        "Using memory-intensive position-based analysis. Consider using Ln-based traces for better performance.",
+        UserWarning
+    )
+
     # Flatten chains and draws for batch computation
     if isinstance(positions, dict):
         flat_positions = tree_map(lambda x: x.reshape(-1, *x.shape[2:]), positions)

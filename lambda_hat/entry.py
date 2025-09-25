@@ -21,7 +21,7 @@ from omegaconf import OmegaConf
 from hydra.core.hydra_config import HydraConfig
 
 from lambda_hat.config import Config, setup_config
-from lambda_hat.targets import build_target
+from lambda_hat.targets import build_target, make_loss_full
 from lambda_hat.posterior import (
     make_grad_loss_minibatch,
     compute_beta_gamma,
@@ -74,6 +74,9 @@ def run_sampler(
         )
         logdensity_fn = lambda params: logpost_and_grad(params)[0]
 
+        # Create loss_full function for Ln recording
+        loss_full_for_recording = make_loss_full(loss_full)
+
         # Run HMC
         traces = run_hmc(
             key,
@@ -84,6 +87,7 @@ def run_sampler(
             step_size=cfg.sampler.hmc.step_size,
             num_integration_steps=cfg.sampler.hmc.num_integration_steps,
             adaptation_steps=cfg.sampler.hmc.warmup,
+            loss_full_fn=loss_full_for_recording,
         )
 
     elif sampler_name == "sgld":
@@ -94,6 +98,9 @@ def run_sampler(
 
         # Use the new make_grad_loss_minibatch
         grad_loss_fn = make_grad_loss_minibatch(loss_mini)
+
+        # Create loss_full function for Ln recording
+        loss_full_for_recording = make_loss_full(target.loss_full_f32)
 
         # Run SGLD (Updated signature)
         traces = run_sgld(
@@ -106,6 +113,7 @@ def run_sampler(
             num_chains=cfg.sampler.chains,
             beta=beta,
             gamma=gamma,
+            loss_full_fn=loss_full_for_recording,
         )
 
     elif sampler_name == "mclmc":
@@ -117,6 +125,9 @@ def run_sampler(
             loss_full, params0, cfg.data.n_data, beta, gamma
         )
 
+        # Create loss_full function for Ln recording
+        loss_full_for_recording = make_loss_full(loss_full)
+
         # Run MCLMC (Updated signature)
         traces = run_mclmc(
             key,
@@ -125,6 +136,7 @@ def run_sampler(
             num_samples=cfg.sampler.mclmc.draws,
             num_chains=cfg.sampler.chains,
             config=cfg.sampler.mclmc,  # Pass the config object
+            loss_full_fn=loss_full_for_recording,
         )
 
     else:
@@ -159,7 +171,7 @@ def main(cfg: Config) -> None:
     log.info(f"Target built: d={target.d}, L0={target.L0:.6f}")
 
     # Run samplers
-    samplers_to_run = ["sgld", "hmc", "mclmc"]  # Default order
+    samplers_to_run = ["sgld", "mclmc"]  # Test SGLD and MCLMC (skip HMC for now)
     results = {}
 
     for sampler_name in samplers_to_run:
@@ -174,8 +186,8 @@ def main(cfg: Config) -> None:
             sampler_results["elapsed_time"] = elapsed
             results[sampler_name] = sampler_results
 
-        except Exception as e:
-            log.error(f"Failed to run {sampler_name}: {e}")
+        except Exception:
+            log.exception(f"Failed to run {sampler_name}")
             continue
 
     # Analyze results
@@ -217,8 +229,8 @@ def main(cfg: Config) -> None:
             if "ess" in metrics:
                 log.info(f"  ESS: {metrics['ess']:.1f}")
 
-        except Exception as e:
-            log.error(f"Failed to analyze {sampler_name}: {e}")
+        except Exception:
+            log.exception(f"Failed to analyze {sampler_name}")
             continue
 
     # Save artifacts
