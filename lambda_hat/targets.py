@@ -19,9 +19,13 @@ class TargetBundle:
     params0_f64: Dict[str, Any]  # Haiku params
     # loss(params) -> scalar
     loss_full_f32: Callable[[Dict[str, Any]], jnp.ndarray]
-    loss_minibatch_f32: Callable[[Dict[str, Any], jnp.ndarray, jnp.ndarray], jnp.ndarray]
+    loss_minibatch_f32: Callable[
+        [Dict[str, Any], jnp.ndarray, jnp.ndarray], jnp.ndarray
+    ]
     loss_full_f64: Callable[[Dict[str, Any]], jnp.ndarray]
-    loss_minibatch_f64: Callable[[Dict[str, Any], jnp.ndarray, jnp.ndarray], jnp.ndarray]
+    loss_minibatch_f64: Callable[
+        [Dict[str, Any], jnp.ndarray, jnp.ndarray], jnp.ndarray
+    ]
     # data for minibatching
     X_f32: jnp.ndarray
     Y_f32: jnp.ndarray
@@ -79,12 +83,7 @@ def build_target(key, cfg: Config) -> TargetBundle:
         )
 
         # Train to ERM (θ⋆) in f64 precision
-        params_star_f64, metrics = train_erm(
-            loss_full_f64,
-            params_init,
-            cfg,
-            key
-        )
+        params_star_f64, metrics = train_erm(loss_full_f64, params_init, cfg, key)
 
         # Convert to f32
         params_star_f32 = jax.tree_util.tree_map(

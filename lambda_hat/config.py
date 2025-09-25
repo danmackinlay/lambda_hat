@@ -2,14 +2,14 @@
 """Structured configuration using Hydra and dataclasses"""
 
 from dataclasses import dataclass, field
-from typing import Optional, Literal, List, Any
-from omegaconf import MISSING
+from typing import Optional, List
 from hydra.core.config_store import ConfigStore
 
 
 @dataclass
 class ModelConfig:
     """Neural network architecture configuration"""
+
     in_dim: int = 32
     out_dim: int = 1
     depth: int = 3
@@ -27,6 +27,7 @@ class ModelConfig:
 @dataclass
 class DataConfig:
     """Data generation configuration"""
+
     n_data: int = 20_000
     x_dist: str = "gauss_iso"
     cov_decay: float = 0.95
@@ -44,6 +45,7 @@ class DataConfig:
 @dataclass
 class TeacherConfig:
     """Teacher network configuration"""
+
     depth: Optional[int] = None
     widths: Optional[List[int]] = None
     activation: Optional[str] = None
@@ -53,6 +55,7 @@ class TeacherConfig:
 @dataclass
 class TrainingConfig:
     """ERM training configuration"""
+
     optimizer: str = "adam"
     learning_rate: float = 0.001
     erm_steps: int = 5000
@@ -62,6 +65,7 @@ class TrainingConfig:
 @dataclass
 class PosteriorConfig:
     """Local posterior configuration"""
+
     loss: str = "mse"
     beta_mode: str = "1_over_log_n"
     beta0: float = 1.0
@@ -73,6 +77,7 @@ class PosteriorConfig:
 @dataclass
 class SGLDConfig:
     """SGLD sampler configuration"""
+
     steps: int = 16_000
     warmup: int = 1_000
     batch_size: int = 256
@@ -88,6 +93,7 @@ class SGLDConfig:
 @dataclass
 class HMCConfig:
     """HMC sampler configuration"""
+
     draws: int = 5_000
     warmup: int = 1_000
     num_integration_steps: int = 10
@@ -100,6 +106,7 @@ class HMCConfig:
 @dataclass
 class MCLMCConfig:
     """MCLMC sampler configuration"""
+
     draws: int = 8_000
     L: float = 1.0
     step_size: float = 0.1
@@ -119,6 +126,7 @@ class MCLMCConfig:
 @dataclass
 class SamplerConfig:
     """Combined sampler configuration"""
+
     chains: int = 4
     sgld: SGLDConfig = field(default_factory=SGLDConfig)
     hmc: HMCConfig = field(default_factory=HMCConfig)
@@ -128,6 +136,7 @@ class SamplerConfig:
 @dataclass
 class OutputConfig:
     """Output and visualization configuration"""
+
     save_plots: bool = True
     show_plots: bool = False
     max_theta_plot_dims: int = 8
@@ -139,6 +148,7 @@ class OutputConfig:
 @dataclass
 class Config:
     """Main configuration combining all components"""
+
     # Target selection
     target: str = "mlp"  # "mlp" or "quadratic"
     quad_dim: Optional[int] = None

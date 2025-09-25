@@ -205,13 +205,19 @@ def test_api_alignment_integration():
 
     # Verify parameter names match BlackJAX 1.2.5 API
     expected_params = {
-        "num_steps", "frac_tune1", "frac_tune2", "frac_tune3",
-        "desired_energy_var", "trust_in_estimate", "num_effective_samples",
-        "diagonal_preconditioning"
+        "num_steps",
+        "frac_tune1",
+        "frac_tune2",
+        "frac_tune3",
+        "desired_energy_var",
+        "trust_in_estimate",
+        "num_effective_samples",
+        "diagonal_preconditioning",
     }
 
     config_mclmc_params = {
-        k.replace("mclmc_", "") for k in valid_config.keys()
+        k.replace("mclmc_", "")
+        for k in valid_config.keys()
         if k.startswith("mclmc_") and k != "mclmc_integrator"
     }
 

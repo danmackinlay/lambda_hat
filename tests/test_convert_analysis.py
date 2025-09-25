@@ -124,4 +124,3 @@ def test_ragged_alignment():
     # Should be truncated to minimum length
     assert idata.posterior["llc"].shape[1] == 80  # min of acceptance lengths
     assert idata.sample_stats["acceptance_rate"].shape[1] == 80
-

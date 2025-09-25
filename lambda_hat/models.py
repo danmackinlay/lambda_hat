@@ -90,10 +90,7 @@ class MLP(hk.Module):
         # Hidden layers
         for i, width in enumerate(self.widths):
             linear = hk.Linear(
-                width,
-                with_bias=self.bias,
-                w_init=w_init,
-                name=f"layer_{i}"
+                width, with_bias=self.bias, w_init=w_init, name=f"layer_{i}"
             )
             z = linear(h)
 
@@ -107,9 +104,11 @@ class MLP(hk.Module):
                 # Project if dimensions differ
                 if h.shape[-1] != h_new.shape[-1]:
                     d_in, d_out = h.shape[-1], h_new.shape[-1]
-                    h = h[:, :min(d_in, d_out)]
+                    h = h[:, : min(d_in, d_out)]
                     if d_out > h.shape[-1]:
-                        pad = jnp.zeros((h.shape[0], d_out - h.shape[-1]), dtype=h.dtype)
+                        pad = jnp.zeros(
+                            (h.shape[0], d_out - h.shape[-1]), dtype=h.dtype
+                        )
                         h = jnp.concatenate([h, pad], axis=1)
                 h = h + h_new
             else:
@@ -118,10 +117,7 @@ class MLP(hk.Module):
         # Output layer (always Xavier initialization for stability)
         output_init = hk.initializers.VarianceScaling(1.0, "fan_in", "truncated_normal")
         y = hk.Linear(
-            self.out_dim,
-            with_bias=self.bias,
-            w_init=output_init,
-            name="output"
+            self.out_dim, with_bias=self.bias, w_init=output_init, name="output"
         )(h)
 
         return y

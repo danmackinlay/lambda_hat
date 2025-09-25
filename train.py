@@ -17,12 +17,17 @@ from typing import Dict, Any
 
 import hydra
 import jax
-import jax.numpy as jnp
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import OmegaConf
+from hydra.core.hydra_config import HydraConfig
 
 from lambda_hat.config import Config, setup_config
 from lambda_hat.targets import build_target
-from lambda_hat.posterior import make_logpost, make_grad_loss_minibatch, compute_beta_gamma, make_logpost_and_score, make_logdensity_for_mclmc
+from lambda_hat.posterior import (
+    make_grad_loss_minibatch,
+    compute_beta_gamma,
+    make_logpost_and_score,
+    make_logdensity_for_mclmc,
+)
 from lambda_hat.sampling import run_hmc, run_sgld, run_mclmc
 from lambda_hat.analysis import compute_llc_metrics
 from lambda_hat.artifacts import save_run_artifacts
@@ -33,6 +38,9 @@ log = logging.getLogger(__name__)
 
 def setup_jax_environment():
     """Configure JAX environment"""
+    # Enable 64-bit precision for HMC/MCLMC
+    jax.config.update("jax_enable_x64", True)
+
     # Set platform
     if jax.default_backend() == "gpu":
         log.info("Using GPU backend")
@@ -41,14 +49,12 @@ def setup_jax_environment():
 
     # Configure memory preallocation
     import os
-    os.environ.setdefault('XLA_PYTHON_CLIENT_PREALLOCATE', 'false')
+
+    os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
 
 
 def run_sampler(
-    sampler_name: str,
-    cfg: Config,
-    target,
-    key: jax.random.PRNGKey
+    sampler_name: str, cfg: Config, target, key: jax.random.PRNGKey
 ) -> Dict[str, Any]:
     """Run a specific sampler and return results"""
     log.info(f"Running {sampler_name} sampler...")
@@ -64,8 +70,7 @@ def run_sampler(
         params0 = target.params0_f64
 
         logpost_and_grad, _ = make_logpost_and_score(
-            loss_full, loss_mini, params0,
-            cfg.data.n_data, beta, gamma
+            loss_full, loss_mini, params0, cfg.data.n_data, beta, gamma
         )
         logdensity_fn = lambda params: logpost_and_grad(params)[0]
 
@@ -84,8 +89,8 @@ def run_sampler(
     elif sampler_name == "sgld":
         # Setup SGLD/pSGLD
         loss_mini = target.loss_minibatch_f32
-        params0 = target.params0_f32 # Center for localization (w_0)
-        initial_params = params0     # Start sampling near w_0
+        params0 = target.params0_f32  # Center for localization (w_0)
+        initial_params = params0  # Start sampling near w_0
 
         # Use the new make_grad_loss_minibatch
         grad_loss_fn = make_grad_loss_minibatch(loss_mini)
@@ -109,8 +114,7 @@ def run_sampler(
         params0 = target.params0_f64
 
         logdensity_fn = make_logdensity_for_mclmc(
-            loss_full, params0,
-            cfg.data.n_data, beta, gamma
+            loss_full, params0, cfg.data.n_data, beta, gamma
         )
 
         # Run MCLMC (Updated signature)
@@ -185,7 +189,11 @@ def main(cfg: Config) -> None:
         try:
             # Compute LLC metrics
             traces = sampler_data["traces"]
-            loss_full = target.loss_full_f64 if sampler_name in ["hmc", "mclmc"] else target.loss_full_f32
+            loss_full = (
+                target.loss_full_f64
+                if sampler_name in ["hmc", "mclmc"]
+                else target.loss_full_f32
+            )
 
             # Determine warmup steps
             warmup_steps = 0
@@ -201,7 +209,7 @@ def main(cfg: Config) -> None:
                 target.L0,
                 n_data=cfg.data.n_data,
                 beta=sampler_data["beta"],
-                warmup=warmup_steps  # Pass warmup steps
+                warmup=warmup_steps,  # Pass warmup steps
             )
             analysis_results[sampler_name] = metrics
 
@@ -209,7 +217,7 @@ def main(cfg: Config) -> None:
             log.info(f"{sampler_name} LLC (hat{{lambda}}) metrics:")
             log.info(f"  Mean: {metrics['llc_mean']:.6f}")
             log.info(f"  Std: {metrics['llc_std']:.6f}")
-            if 'ess' in metrics:
+            if "ess" in metrics:
                 log.info(f"  ESS: {metrics['ess']:.1f}")
 
         except Exception as e:
@@ -219,12 +227,21 @@ def main(cfg: Config) -> None:
     # Save artifacts
     if cfg.output.save_plots:
         log.info("Saving artifacts...")
+        # Use Hydra's recorded output dir rather than assuming CWD
+        hydra_output_dir = Path(HydraConfig.get().run.dir)
+
+        # Optional guardrail: verify we're in the expected Hydra output directory
+        try:
+            assert Path.cwd().resolve() == hydra_output_dir.resolve()
+        except AssertionError:
+            log.warning(f"Working directory mismatch: cwd={Path.cwd()}, hydra_dir={hydra_output_dir}")
+
         save_run_artifacts(
             results=results,
             analysis_results=analysis_results,
             target=target,
             cfg=cfg,
-            output_dir=Path.cwd()
+            output_dir=hydra_output_dir,
         )
 
     log.info("Training completed successfully!")

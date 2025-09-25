@@ -44,7 +44,9 @@ def sample_X(key, cfg: Config, n: int, in_dim: int):
     elif data_cfg.x_dist == "heavy_tail":
         # Student-t via scaled normal / sqrt(gamma)
         k1, k2 = random.split(key)
-        g = random.gamma(k1, data_cfg.student_df / 2, (n, 1)) / (data_cfg.student_df / 2)
+        g = random.gamma(k1, data_cfg.student_df / 2, (n, 1)) / (
+            data_cfg.student_df / 2
+        )
         Z = random.normal(k2, (n, in_dim)) / jnp.sqrt(g)
         return Z
     else:
@@ -82,7 +84,8 @@ def build_teacher(key, cfg: Config):
     params = model.init(key, dummy_x)
 
     def forward(X):
-        return model.apply(params, X)
+        # Haiku's apply requires an RNG as the 2nd arg; pass None when not needed.
+        return model.apply(params, None, X)
 
     return params, forward
 
@@ -101,10 +104,12 @@ def add_noise(key, y_clean, cfg: Config, X):
     elif data_cfg.noise_model == "student_t":
         # Draw t noise via normal / sqrt(gamma)
         k1, k2 = random.split(key)
-        g = random.gamma(k1, data_cfg.student_df / 2, y_clean.shape) / (data_cfg.student_df / 2)
-        return y_clean + data_cfg.noise_scale * random.normal(k2, y_clean.shape) / jnp.sqrt(
-            g
+        g = random.gamma(k1, data_cfg.student_df / 2, y_clean.shape) / (
+            data_cfg.student_df / 2
         )
+        return y_clean + data_cfg.noise_scale * random.normal(
+            k2, y_clean.shape
+        ) / jnp.sqrt(g)
     elif data_cfg.noise_model == "outliers":
         k1, k2, k3 = random.split(key, 3)
         base = data_cfg.noise_scale * random.normal(k1, y_clean.shape)

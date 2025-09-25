@@ -14,10 +14,7 @@ if TYPE_CHECKING:
 
 
 def train_erm(
-    loss_fn,
-    params_init,
-    cfg: Config,
-    key: jax.random.PRNGKey
+    loss_fn, params_init, cfg: Config, key: jax.random.PRNGKey
 ) -> Tuple[Dict[str, Any], Dict[str, float]]:
     """Train to find the empirical risk minimizer w*
 

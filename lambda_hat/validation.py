@@ -1,7 +1,7 @@
 # llc/validation.py
 """Configuration validation with fail-fast approach"""
 
-from typing import Dict, Any, List
+from typing import Dict, Any
 import logging
 
 logger = logging.getLogger(__name__)
@@ -58,20 +58,22 @@ def validate_mclmc_config(cfg_dict: Dict[str, Any]) -> None:
     if deprecated_found:
         error_lines = [
             "Found deprecated MCLMC parameters that are incompatible with BlackJAX 1.2.5:",
-            ""
+            "",
         ]
         for old_key, replacement in deprecated_found:
             error_lines.append(f"  ❌ {old_key} → use {replacement}")
 
-        error_lines.extend([
-            "",
-            "Migration guide:",
-            "  1. Replace mclmc_tune_steps with mclmc_num_steps (total adaptation steps)",
-            "  2. Replace num_steps_tune1/2/3 with mclmc_frac_tune1/2/3 (fractions ∈ [0,1])",
-            "  3. Ensure mclmc_frac_tune1 + mclmc_frac_tune2 + mclmc_frac_tune3 ≤ 1.0",
-            "",
-            "See: https://blackjax-devs.github.io/blackjax/autoapi/blackjax/adaptation/mclmc_adaptation/"
-        ])
+        error_lines.extend(
+            [
+                "",
+                "Migration guide:",
+                "  1. Replace mclmc_tune_steps with mclmc_num_steps (total adaptation steps)",
+                "  2. Replace num_steps_tune1/2/3 with mclmc_frac_tune1/2/3 (fractions ∈ [0,1])",
+                "  3. Ensure mclmc_frac_tune1 + mclmc_frac_tune2 + mclmc_frac_tune3 ≤ 1.0",
+                "",
+                "See: https://blackjax-devs.github.io/blackjax/autoapi/blackjax/adaptation/mclmc_adaptation/",
+            ]
+        )
         raise ValueError("\n".join(error_lines))
 
     # Check for unknown MCLMC parameters
@@ -87,10 +89,12 @@ def validate_mclmc_config(cfg_dict: Dict[str, Any]) -> None:
         for param in sorted(VALID_MCLMC_PARAMS):
             error_lines.append(f"  ✓ {param}")
 
-        error_lines.extend([
-            "",
-            "Documentation: https://blackjax-devs.github.io/blackjax/autoapi/blackjax/adaptation/mclmc_adaptation/"
-        ])
+        error_lines.extend(
+            [
+                "",
+                "Documentation: https://blackjax-devs.github.io/blackjax/autoapi/blackjax/adaptation/mclmc_adaptation/",
+            ]
+        )
         raise ValueError("\n".join(error_lines))
 
     # Validate fraction semantics
@@ -99,7 +103,9 @@ def validate_mclmc_config(cfg_dict: Dict[str, Any]) -> None:
         if frac_key in cfg_dict:
             frac_val = cfg_dict[frac_key]
             if not isinstance(frac_val, (int, float)) or not (0.0 <= frac_val <= 1.0):
-                raise ValueError(f"{frac_key} must be a number in [0.0, 1.0], got: {frac_val}")
+                raise ValueError(
+                    f"{frac_key} must be a number in [0.0, 1.0], got: {frac_val}"
+                )
             fractions.append(frac_val)
 
     if fractions and sum(fractions) > 1.0:
@@ -112,7 +118,9 @@ def validate_mclmc_config(cfg_dict: Dict[str, Any]) -> None:
     if "mclmc_num_steps" in cfg_dict:
         num_steps = cfg_dict["mclmc_num_steps"]
         if not isinstance(num_steps, int) or num_steps <= 0:
-            raise ValueError(f"mclmc_num_steps must be a positive integer, got: {num_steps}")
+            raise ValueError(
+                f"mclmc_num_steps must be a positive integer, got: {num_steps}"
+            )
 
         # Validate that no nonzero fraction would yield zero steps (starvation check)
         ns = num_steps
@@ -121,10 +129,14 @@ def validate_mclmc_config(cfg_dict: Dict[str, Any]) -> None:
         f3 = float(cfg_dict.get("mclmc_frac_tune3", 0.0))
 
         # If any fraction > 0 but ns*f < 1, fail
-        starving = [i for i, f in enumerate((f1, f2, f3), start=1) if f > 0 and int(ns * f) == 0]
+        starving = [
+            i for i, f in enumerate((f1, f2, f3), start=1) if f > 0 and int(ns * f) == 0
+        ]
         if starving:
-            raise ValueError(f"MCLMC config invalid: num_steps={ns} too small for nonzero "
-                             f"fractions in phases {starving}. Increase num_steps or zero those fractions.")
+            raise ValueError(
+                f"MCLMC config invalid: num_steps={ns} too small for nonzero "
+                f"fractions in phases {starving}. Increase num_steps or zero those fractions."
+            )
 
     logger.debug("MCLMC configuration validation passed")
 

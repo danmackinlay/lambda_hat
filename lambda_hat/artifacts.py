@@ -14,7 +14,7 @@ def save_run_artifacts(
     analysis_results: Dict[str, Dict],
     target: Any,
     cfg: Any,
-    output_dir: Path
+    output_dir: Path,
 ) -> None:
     """Save all run artifacts including plots, metrics, and configuration
 
@@ -29,37 +29,36 @@ def save_run_artifacts(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Save configuration
-    with open(output_dir / 'config.yaml', 'w') as f:
+    with open(output_dir / "config.yaml", "w") as f:
         OmegaConf.save(cfg, f)
 
     # Save target info
     target_info = {
-        'target_type': cfg.target,
-        'dimension': target.d,
-        'L0_reference': float(target.L0),
-        'n_data': cfg.data.n_data,
-        'model_params': target.d if hasattr(target, 'd') else None,
+        "target_type": cfg.target,
+        "dimension": target.d,
+        "L0_reference": float(target.L0),
+        "n_data": cfg.data.n_data,
+        "model_params": target.d if hasattr(target, "d") else None,
     }
 
-    with open(output_dir / 'target_info.json', 'w') as f:
+    with open(output_dir / "target_info.json", "w") as f:
         json.dump(target_info, f, indent=2)
 
     # Save timing and config info
     run_info = {
-        'samplers_run': list(results.keys()),
-        'total_chains': cfg.sampler.chains,
-        'seed': cfg.seed,
-        'elapsed_times': {
-            name: data.get('elapsed_time', 0.0)
-            for name, data in results.items()
-        }
+        "samplers_run": list(results.keys()),
+        "total_chains": cfg.sampler.chains,
+        "seed": cfg.seed,
+        "elapsed_times": {
+            name: data.get("elapsed_time", 0.0) for name, data in results.items()
+        },
     }
 
-    with open(output_dir / 'run_info.json', 'w') as f:
+    with open(output_dir / "run_info.json", "w") as f:
         json.dump(run_info, f, indent=2)
 
     # Create plots
-    if cfg.output.save_plots:
+    if cfg.output.save_plots and results:
         create_trace_plots(results, analysis_results, output_dir)
         create_comparison_plot(analysis_results, output_dir)
 
