@@ -41,8 +41,6 @@ class MLP(hk.Module):
         activation: str = "relu",
         bias: bool = True,
         init: str = "he",
-        skip: bool = False,
-        residual_period: int = 2,
         layernorm: bool = False,
         name: Optional[str] = None,
     ):
@@ -52,8 +50,6 @@ class MLP(hk.Module):
         self.activation = activation
         self.bias = bias
         self.init = init
-        self.skip = skip
-        self.residual_period = residual_period
         self.layernorm = layernorm
 
     def _get_activation(self):
@@ -97,22 +93,7 @@ class MLP(hk.Module):
             if self.layernorm:
                 z = hk.LayerNorm(axis=-1, create_scale=True, create_offset=True)(z)
 
-            h_new = act(z)
-
-            # Skip connections
-            if self.skip and (i % self.residual_period == self.residual_period - 1):
-                # Project if dimensions differ
-                if h.shape[-1] != h_new.shape[-1]:
-                    d_in, d_out = h.shape[-1], h_new.shape[-1]
-                    h = h[:, : min(d_in, d_out)]
-                    if d_out > h.shape[-1]:
-                        pad = jnp.zeros(
-                            (h.shape[0], d_out - h.shape[-1]), dtype=h.dtype
-                        )
-                        h = jnp.concatenate([h, pad], axis=1)
-                h = h + h_new
-            else:
-                h = h_new
+            h = act(z)
 
         # Output layer (always Xavier initialization for stability)
         output_init = hk.initializers.VarianceScaling(1.0, "fan_in", "truncated_normal")
@@ -130,8 +111,6 @@ def build_mlp_forward_fn(
     activation: str = "relu",
     bias: bool = True,
     init: str = "he",
-    skip: bool = False,
-    residual_period: int = 2,
     layernorm: bool = False,
 ):
     """Build a Haiku-transformed MLP forward function"""
@@ -143,8 +122,6 @@ def build_mlp_forward_fn(
             activation=activation,
             bias=bias,
             init=init,
-            skip=skip,
-            residual_period=residual_period,
             layernorm=layernorm,
         )
         return mlp(x)

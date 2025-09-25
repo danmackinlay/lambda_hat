@@ -80,8 +80,6 @@ def build_target(key, cfg: Config) -> TargetBundle:
             activation=m_cfg.activation,
             bias=m_cfg.bias,
             init=m_cfg.init,
-            skip=m_cfg.skip_connections,
-            residual_period=m_cfg.residual_period,
             layernorm=m_cfg.layernorm,
         )
 

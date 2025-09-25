@@ -193,17 +193,11 @@ def run_hmc(rng_key, logdensity_fn, initial_params,
         # Unpack the result - BlackJAX returns ((state, params), info)
         (final_state, params), _ = warmup_result
 
-        # Handle different BlackJAX return formats robustly
-        if isinstance(params, dict):
-            step_size_adapted = params.get("step_size", step_size_adapted)
-            inv_mass_adapted = params.get("inverse_mass_matrix", inv_mass)
-            if hasattr(inv_mass_adapted, 'ndim') and inv_mass_adapted.ndim in [1, 2]:
-                inv_mass = inv_mass_adapted
-        elif isinstance(params, (tuple, list)) and len(params) >= 2:
-            step_size_adapted, inv_mass = params[:2]
-        else:
-            # Keep defaults if params structure is unexpected
-            print(f"[HMC WARNING] Unexpected params format: {type(params)}. Using defaults.")
+        # Extract adaptation results from BlackJAX 1.2.5 expected format
+        step_size_adapted = params.get("step_size", step_size_adapted)
+        inv_mass_adapted = params.get("inverse_mass_matrix", inv_mass)
+        if hasattr(inv_mass_adapted, 'ndim') and inv_mass_adapted.ndim in [1, 2]:
+            inv_mass = inv_mass_adapted
 
 
     # 3) build kernel and init all chains
@@ -344,7 +338,7 @@ def run_sgld(
 
     # Use eval_every from config if available, otherwise default to 10
     # Note: Ensure 'eval_every' is defined in SGLDConfig or handled here.
-    eval_every = getattr(config, 'eval_every', 10)
+    eval_every = config.eval_every
 
     # Use vmap with the optimized inference loop
     traces = jax.vmap(
