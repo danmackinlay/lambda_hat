@@ -51,7 +51,11 @@ uv run pytest tests/test_mclmc_validation.py  # Single test
 
 ## Implementation Notes
 
-**JAX Tree API (Required):**
+**No defensive coding or back compat:**
+- prefer fail-fast errors.
+- we pin package versions rather than introspecting APIs or versions
+
+**JAX Tree**
 - Use `jax.tree.map` exclusively (never `jax.tree_map` or `jax.tree_util.tree_map`)
 - Set `vmap` axes explicitly: `in_axes=(0, None)` for `(keys, params)`
 
@@ -77,8 +81,9 @@ uv run pytest tests/test_mclmc_validation.py  # Single test
 - Target ID resolution: Check `${fingerprint:...}` resolver in workflow configs
 - Sampler configs must exist in `lambda_hat/conf/sample/sampler/`
 
-**MCMC Sampling:**
-- Memory issues: Use `analyze_traces()` (efficient) not legacy parameter replay
+**BlackJAX API:**
+- MCLMC requires RNG keys for init
+- version 1.2.5 is pinned; note that the online documentation is for the `main` branch with many breaking changes
 - Warmup issues: Adjust if warmup >= total draws
 - BlackJAX API: HMC `warmup.run()` takes `num_steps`, MCLMC `init()` takes no `key`
 
