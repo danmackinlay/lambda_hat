@@ -21,6 +21,7 @@ slurm_logs/
 # Hydra outputs
 outputs/
 multirun/
+runs/
 
 # Virtual environments
 .venv
