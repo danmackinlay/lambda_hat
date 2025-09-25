@@ -168,29 +168,6 @@ def simple_inference_loop(
     if kept_theta_batch is not None:
         out["theta"] = kept_theta_batch
 
-    # Handle legacy compatibility - include position trace if no aux_fn
-    if not trace.aux_fn:
-        # Fall back to old behavior for backward compatibility
-        @jax.jit
-        def one_step(state, rng_key):
-            state, info = kernel(rng_key, state)
-
-            if isinstance(state, SGLDState):
-                position = state.position
-            else:
-                position = state.position if hasattr(state, "position") else state
-
-            trace_data = {
-                "position": position,
-                "acceptance_rate": getattr(info, "acceptance_rate", jnp.nan),
-                "energy": getattr(info, "energy", jnp.nan),
-                "diverging": getattr(info, "is_divergent", False),
-            }
-            return state, trace_data
-
-        final_state, trace_data = jax.lax.scan(one_step, initial_state, keys)
-        return trace_data
-
     # propagate sampler diagnostics if present
     if hasattr(info, "acceptance_rate"):
         out["acceptance_rate"] = info.acceptance_rate
