@@ -1,0 +1,28 @@
+# conf/hydra/launcher/submitit_slurm.yaml
+# @package hydra.launcher
+_target_: hydra_plugins.hydra_submitit_launcher.submitit_launcher.SlurmLauncher
+
+# Directory for SLURM logs (relative to the Hydra sweep output directory)
+submitit_folder: ${hydra.sweep.dir}/.submitit_slurm
+
+# Job timeout in minutes
+timeout_min: 240 # 4 hours
+
+# Resources requested per task (job)
+cpus_per_task: 4
+mem_gb: 16
+# Default to 1 GPU as this is a JAX project likely targeting GPUs.
+gpus_per_node: 1
+
+# SLURM partition (CRITICAL: Must be specified via the command line)
+# Example: hydra.launcher.partition=my_gpu_partition
+partition: null
+
+# Grace period before killing the job (seconds)
+signal_delay_s: 120
+
+# Limit concurrent jobs to avoid overwhelming the scheduler
+array_parallelism: 256
+
+# Optional: Specify SLURM account if required by the cluster
+# account: null

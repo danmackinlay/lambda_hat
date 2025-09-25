@@ -823,8 +823,6 @@ cpu = [
 cuda12 = [
     { name = "jax", extra = ["cuda12-local"] },
 ]
-
-[package.dev-dependencies]
 dev = [
     { name = "files-to-prompt" },
     { name = "marimo" },
@@ -845,19 +843,13 @@ requires-dist = [
     { name = "numpy", specifier = ">=1.24.0" },
     { name = "omegaconf", specifier = ">=2.3.0" },
     { name = "optax", specifier = ">=0.2.5" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.4.2" },
     { name = "pyyaml", specifier = ">=6.0" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.13.1" },
     { name = "scipy", specifier = ">=1.11" },
     { name = "snakemake", specifier = ">=9.11.6" },
 ]
-provides-extras = ["cpu", "cuda12"]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "files-to-prompt", specifier = ">=0.6" },
-    { name = "marimo", specifier = ">=0.15.2" },
-    { name = "pytest", specifier = ">=8.4.2" },
-    { name = "ruff", specifier = ">=0.13.1" },
-]
+provides-extras = ["cpu", "cuda12", "dev"]
 
 [[package]]
 name = "loro"
