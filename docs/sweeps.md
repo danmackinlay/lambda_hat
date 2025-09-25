@@ -2,6 +2,39 @@
 
 This document explains how to design and execute parameter sweeps using Hydra's `--multirun` functionality. This allows you to explore the parameter space efficiently by running multiple configurations in a single command.
 
+## Two-Stage Workflow Orchestration (N × M Sweeps)
+
+A common requirement is to run M sampler configurations across N different targets. This project facilitates this elegantly using configuration-driven orchestration, avoiding the need for external scripts or manual ID harvesting.
+
+### The Mechanism
+
+1. **Deterministic IDs:** Target IDs are deterministic fingerprints of their input configuration (`model`, `data`, `target.seed`).
+2. **Idempotent Builds:** Stage A (`lambda-hat-build-target`) skips execution if the target already exists.
+3. **Unified Configuration:** The `lambda-hat-workflow` entry point uses a unified configuration (`conf/workflow.yaml`) that includes both target definitions and sampler definitions.
+4. **Dynamic Resolution:** When you sweep target parameters using `lambda-hat-workflow`, Hydra dynamically calculates the corresponding `target_id` for each job using the configuration fingerprint.
+
+### Workflow Example
+
+Goal: Sweep 2 models × 2 seeds × 3 samplers (12 jobs).
+
+1. **Define the Sweep Space:**
+   ```bash
+   TARGET_SWEEP="model=small,base target.seed=1,2"
+   SAMPLER_SWEEP="sampler=sgld,hmc,mclmc"
+   ```
+
+2. **Ensure Targets Exist (Idempotent Build):**
+   ```bash
+   uv run lambda-hat-build-target -m $TARGET_SWEEP
+   ```
+
+3. **Run the Workflow Sweep:**
+   ```bash
+   uv run lambda-hat-workflow -m $TARGET_SWEEP $SAMPLER_SWEEP
+   ```
+
+This approach allows for fully automated, scalable N × M experiments managed entirely through Hydra's configuration system.
+
 ## Core Concepts
 
 Hydra allows you to define variations of your configuration along multiple dimensions. When you use the `--multirun` (or `-m`) flag, Hydra generates a Cartesian product of all specified variations and executes the application once for each combination.

@@ -35,9 +35,31 @@ pip install .[cuda12]    # For CUDA 12 (Linux)
 
 ---
 
+## Quickstart (N x M Workflow) - Recommended
+
+The configuration-driven workflow enables elegant N (Targets) × M (Samplers) sweeps:
+
+```bash
+# Define the experiment space (Example: N=4 targets, M=2 samplers)
+TARGET_SWEEP="model=small,base target.seed=42,43"
+SAMPLER_SWEEP="sampler=hmc,sgld"
+
+# 1. Ensure Targets Exist (Idempotent Build)
+# Launches N=4 jobs. If a target already exists, the job finishes instantly.
+uv run lambda-hat-build-target -m $TARGET_SWEEP
+
+# 2. Run the Workflow Sweep (N × M = 8 jobs)
+# Uses the unified configuration to dynamically calculate the target_id for each run.
+uv run lambda-hat-workflow -m $TARGET_SWEEP $SAMPLER_SWEEP
+```
+
+This approach eliminates manual target ID harvesting and provides fully automated N × M experiments.
+
+---
+
 ## Stage A: Build Target
 
-Build and train the neural network target once. This creates a content-addressed artifact with a deterministic ID.
+Build and train the neural network target. This process is **idempotent**: if a target matching the configuration already exists, the build is skipped.
 
 ```bash
 # Build a small target for testing
@@ -65,10 +87,16 @@ Artifacts are saved under `runs/targets/tgt_<id>/`.
 
 Run MCMC samplers on previously built targets. Supported samplers: **SGLD**, **HMC**, **MCLMC**.
 
-### Single Sampler Runs
+### Configuration-Driven Sweeps (N × M)
+
+See the Quickstart above. Use `lambda-hat-workflow` to sweep across target definitions and sampler configurations simultaneously.
+
+### Explicit Target ID (Legacy/Manual)
+
+Use `lambda-hat-sample` if you want to run samplers on a specific, known `target_id`, bypassing the dynamic calculation.
 
 ```bash
-# Run HMC on a target
+# Run HMC on a specific target
 uv run lambda-hat-sample target_id=tgt_abcd1234 sampler=hmc
 
 # Run SGLD with a custom step size
@@ -78,7 +106,7 @@ uv run lambda-hat-sample target_id=tgt_abcd1234 sampler=sgld sampler.sgld.step_s
 uv run lambda-hat-sample target_id=tgt_abcd1234 sampler=mclmc sampler.mclmc.draws=5000
 ```
 
-### Parameter Sweeps
+#### Parameter Sweeps
 
 Hydra multirun (`-m`) lets you sweep hyper-parameters:
 
@@ -90,31 +118,11 @@ uv run lambda-hat-sample -m target_id=tgt_abcd1234 sampler=sgld,hmc,mclmc
 uv run lambda-hat-sample -m target_id=tgt_abcd1234 sampler=hmc \
     sampler.hmc.step_size=0.005,0.01,0.02
 
-# Cross-product: 3 samplers × 3 step sizes = 9 runs
-uv run lambda-hat-sample -m target_id=tgt_abcd1234 sampler=sgld,hmc,mclmc \
-    sampler.hmc.step_size=0.005,0.01,0.02 sampler.sgld.step_size=1e-5,1e-4,1e-3
+# Sweep samplers on a single specific target
+uv run lambda-hat-sample -m target_id=tgt_abcd1234 sampler=sgld,hmc,mclmc
 ```
 
 Results are saved under `runs/samples/<target_id>/<sampler>/run_<hash>/`.
-
----
-
-## Quickstart
-
-```bash
-# Stage A: build target
-uv run lambda-hat-build-target model=small data=small target.seed=42
-# → prints: tgt_abc123
-
-# Stage B: run samplers
-uv run lambda-hat-sample target_id=tgt_abc123 sampler=sgld
-uv run lambda-hat-sample target_id=tgt_abc123 sampler=hmc
-uv run lambda-hat-sample target_id=tgt_abc123 sampler=mclmc
-
-# Stage B: sweep HMC hyper-parameters
-uv run lambda-hat-sample -m target_id=tgt_abc123 sampler=hmc \
-    sampler.hmc.step_size=0.005,0.01 sampler.hmc.num_integration_steps=3,5
-```
 
 ---
 
