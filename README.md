@@ -1,6 +1,13 @@
 # Lambda-Hat: Local Learning Coefficient (LLC) Estimation
 
-Lambda-Hat provides a streamlined framework for estimating the Local Learning Coefficient (LLC) using various MCMC samplers implemented in JAX (via BlackJAX). It uses Hydra for configuration management and Haiku for neural network definitions.
+In [Singular Learning Theory (SLT)](https://singularlearningtheory.com), the **Local Learning Coefficient (LLC)** quantifies the effective local dimensionality of a model around a trained optimum.
+
+This repo provides benchmark estimators of LLC on small but non-trivial neural networks, using standard industrial tooling:
+
+* [BlackJAX](https://github.com/blackjax-devs/blackjax/tree/1.2.5) for sampling
+* [ArviZ](https://python.arviz.org/) for diagnostics,
+* [Hydra](https://hydra.cc/) for configuration management
+* [Haiku](https://github.com/haiku/haiku) for neural network definitions.
 
 ## Installation
 
