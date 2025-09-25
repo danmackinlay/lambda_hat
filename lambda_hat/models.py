@@ -44,8 +44,6 @@ class MLP(hk.Module):
         activation: str = "relu",
         bias: bool = True,
         init: str = "he",
-        skip: bool = False,
-        residual_period: int = 2,
         layernorm: bool = False,
         name: Optional[str] = None,
     ):
@@ -55,8 +53,6 @@ class MLP(hk.Module):
         self.activation = activation
         self.bias = bias
         self.init = init
-        self.skip = skip
-        self.residual_period = residual_period
         self.layernorm = layernorm
 
     def _get_activation(self):
@@ -123,8 +119,6 @@ def build_mlp_forward_fn(
     activation: str = "relu",
     bias: bool = True,
     init: str = "he",
-    skip: bool = False,
-    residual_period: int = 2,
     layernorm: bool = False,
 ):
     """Build a Haiku-transformed MLP forward function"""
@@ -136,8 +130,6 @@ def build_mlp_forward_fn(
             activation=activation,
             bias=bias,
             init=init,
-            skip=skip,
-            residual_period=residual_period,
             layernorm=layernorm,
         )
         return mlp(x)

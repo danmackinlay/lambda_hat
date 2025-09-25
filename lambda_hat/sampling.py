@@ -251,14 +251,10 @@ def run_hmc(
         (final_state, params), _ = warmup_result
 
         # Extract adaptation results from BlackJAX 1.2.5 expected format
-        if isinstance(params, dict):
-            step_size_adapted = params.get("step_size", step_size_adapted)
-            inv_mass_adapted = params.get("inverse_mass_matrix", inv_mass)
-            if hasattr(inv_mass_adapted, "ndim") and inv_mass_adapted.ndim in [1, 2]:
-                inv_mass = inv_mass_adapted
-        else:
-            # Handle tuple format (step_size, inv_mass)
-            step_size_adapted, inv_mass = params
+        step_size_adapted = params.get("step_size", step_size_adapted)
+        inv_mass_adapted = params.get("inverse_mass_matrix", inv_mass)
+        if hasattr(inv_mass_adapted, 'ndim') and inv_mass_adapted.ndim in [1, 2]:
+            inv_mass = inv_mass_adapted
 
     # Stop adaptation timer
     adaptation_time = time.time() - adaptation_start_time

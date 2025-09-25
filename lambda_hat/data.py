@@ -90,8 +90,6 @@ def build_teacher(key, cfg: Config):
         activation=t_act,
         bias=True,
         init=m_cfg.init,
-        skip=False,
-        residual_period=m_cfg.residual_period,
         layernorm=False,
     )
 
