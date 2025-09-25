@@ -1,18 +1,17 @@
 from __future__ import annotations
 
-import json, time
+import json
+import time
 from pathlib import Path
-from typing import Any, Dict
 
 import jax
 import jax.numpy as jnp
 import hydra
 from omegaconf import DictConfig, OmegaConf
 
-from lambda_hat import hydra_support  # ensure resolvers registered
 from lambda_hat.target_artifacts import load_target_artifact, append_sample_manifest
 from lambda_hat.sampling_runner import run_sampler  # Use extracted sampler runner
-from lambda_hat.config import Config
+
 
 def run_sampling_logic(cfg: DictConfig) -> None:
     """Executes the sampling logic. Reusable by different entry points."""
@@ -27,7 +26,9 @@ def run_sampling_logic(cfg: DictConfig) -> None:
 
     # Guardrails
     if bool(cfg.jax.enable_x64) != bool(meta["jax_enable_x64"]):
-        raise RuntimeError(f"Precision mismatch: sampler x64={cfg.jax.enable_x64}, target x64={meta['jax_enable_x64']}")
+        raise RuntimeError(
+            f"Precision mismatch: sampler x64={cfg.jax.enable_x64}, target x64={meta['jax_enable_x64']}"
+        )
 
     # Use the existing targets module to build a target bundle
     from lambda_hat.targets import TargetBundle
@@ -42,12 +43,13 @@ def run_sampling_logic(cfg: DictConfig) -> None:
         widths = mcfg["widths"]
     else:
         from lambda_hat.models import infer_widths
+
         widths = infer_widths(
             in_dim=int(X.shape[-1]),
             out_dim=int(Y.shape[-1] if Y.ndim > 1 else 1),
             depth=mcfg.get("depth", 2),
             target_params=mcfg.get("target_params", None),
-            fallback_width=mcfg.get("hidden", 32)
+            fallback_width=mcfg.get("hidden", 32),
         )
 
     forward_fn = build_mlp_forward_fn(
@@ -107,7 +109,7 @@ def run_sampling_logic(cfg: DictConfig) -> None:
         X_f64=X_f64,
         Y_f64=Y_f64,
         L0=L0,
-        model={"forward": forward_fn}
+        model={"forward": forward_fn},
     )
 
     # Run the selected sampler using existing machinery
@@ -125,29 +127,38 @@ def run_sampling_logic(cfg: DictConfig) -> None:
 
     # Generate unique run ID based on hyperparams
     from hashlib import md5
-    hp_str = json.dumps(OmegaConf.to_container(cfg.sampler, resolve=True), sort_keys=True)
+
+    hp_str = json.dumps(
+        OmegaConf.to_container(cfg.sampler, resolve=True), sort_keys=True
+    )
     run_id = md5(hp_str.encode()).hexdigest()[:8]
     run_dir = sample_dir / f"run_{run_id}"
     run_dir.mkdir(exist_ok=True)
 
     # Save traces if available
     import numpy as np
+
     traces = result.get("traces", None)
     if traces is not None:
         # Prefer ArviZ NetCDF if available; otherwise fall back to NPZ
         try:
             import arviz as az
-            az_trace = az.from_dict(posterior=jax.tree.map(lambda x: np.asarray(x), traces))
+
+            az_trace = az.from_dict(
+                posterior=jax.tree.map(lambda x: np.asarray(x), traces)
+            )
             az.to_netcdf(az_trace, run_dir / "trace.nc")
         except Exception:
             # Fallback to NPZ with flattened structure
             flat = {}
+
             def _flatput(prefix, obj):
                 if isinstance(obj, dict):
                     for k, v in obj.items():
                         _flatput(f"{prefix}{k}/", v)
                 else:
                     flat[prefix[:-1]] = np.asarray(obj)
+
             _flatput("", traces)
             np.savez_compressed(run_dir / "traces.npz", **flat)
 
@@ -192,9 +203,11 @@ def run_sampling_logic(cfg: DictConfig) -> None:
 
     print(f"[sample] done in {dt:.2f}s → {run_dir}")
 
+
 @hydra.main(config_path="../conf/sample", config_name="base", version_base=None)
 def main(cfg: DictConfig) -> None:
     run_sampling_logic(cfg)
+
 
 if __name__ == "__main__":
     main()

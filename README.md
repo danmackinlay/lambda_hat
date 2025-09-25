@@ -35,9 +35,9 @@ pip install .[cuda12]    # For CUDA 12 (Linux)
 
 ---
 
-## Quickstart (N x M Workflow) - Recommended
+## Quickstart (N x M Workflow)
 
-The configuration-driven workflow enables elegant N (Targets) × M (Samplers) sweeps:
+The configuration-driven workflow enables  N (Targets) × M (Samplers) sweeps:
 
 ```bash
 # Define the experiment space (Example: N=4 targets, M=2 samplers)

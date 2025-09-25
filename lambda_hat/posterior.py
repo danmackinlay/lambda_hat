@@ -6,7 +6,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Callable
 import jax
 import jax.numpy as jnp
-from jax import grad, value_and_grad, jit
+from jax import grad, jit
 
 if TYPE_CHECKING:
     # Update TYPE_CHECKING imports
@@ -70,5 +70,3 @@ def make_grad_loss_minibatch(loss_minibatch: Callable) -> Callable:
         return g_Lb
 
     return grad_loss_fn
-
-

@@ -37,12 +37,14 @@ def run_sampler(
     log.info(f"Running {sampler_name} sampler...")
 
     # Derive n_data robustly from the TargetBundle
-    if hasattr(target, 'X_f64') and target.X_f64 is not None:
+    if hasattr(target, "X_f64") and target.X_f64 is not None:
         n_data = target.X_f64.shape[0]
-    elif hasattr(target, 'X_f32') and target.X_f32 is not None:
+    elif hasattr(target, "X_f32") and target.X_f32 is not None:
         n_data = target.X_f32.shape[0]
     else:
-        raise ValueError("TargetBundle must contain data (X_f64 or X_f32) to determine n_data.")
+        raise ValueError(
+            "TargetBundle must contain data (X_f64 or X_f32) to determine n_data."
+        )
 
     # Compute beta and gamma using explicit n_data (removes cfg.data.n_data dependency)
     beta, gamma = compute_beta_gamma(cfg.posterior, target.d, n_data)
@@ -54,9 +56,7 @@ def run_sampler(
         params0 = target.params0_f64
 
         # Use the modern make_logpost function
-        logdensity_fn = make_logpost(
-            loss_full, params0, n_data, beta, gamma
-        )
+        logdensity_fn = make_logpost(loss_full, params0, n_data, beta, gamma)
 
         # Run HMC
         traces = run_hmc(
@@ -98,9 +98,7 @@ def run_sampler(
         params0 = target.params0_f64
 
         # Use the modern make_logpost function
-        logdensity_fn = make_logpost(
-            loss_full, params0, n_data, beta, gamma
-        )
+        logdensity_fn = make_logpost(loss_full, params0, n_data, beta, gamma)
 
         # Run MCLMC
         traces = run_mclmc(

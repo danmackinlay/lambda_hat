@@ -1,15 +1,15 @@
 from __future__ import annotations
 
-import json, time
+import json
 from dataclasses import dataclass, asdict, field
 from pathlib import Path
 from typing import Dict, Any
 
-import jax
 import jax.numpy as jnp
 import numpy as np
 
 # ---------- Target metadata ----------
+
 
 @dataclass(frozen=True)
 class TargetMeta:
@@ -22,17 +22,22 @@ class TargetMeta:
     model_cfg: Dict[str, Any]
     data_cfg: Dict[str, Any]
     training_cfg: Dict[str, Any]
-    dims: Dict[str, int]         # e.g. {"n": 100, "d": 4, "p": 45}
-    hashes: Dict[str, str]       # e.g. {"theta": "sha256:..."}
+    dims: Dict[str, int]  # e.g. {"n": 100, "d": 4, "p": 45}
+    hashes: Dict[str, str]  # e.g. {"theta": "sha256:..."}
     hostname: str
-    metrics: Dict[str, float] = field(default_factory=dict)    # e.g. {"L0": 0.123}
+    metrics: Dict[str, float] = field(default_factory=dict)  # e.g. {"L0": 0.123}
+
 
 def _ensure_dir(p: Path) -> None:
     p.mkdir(parents=True, exist_ok=True)
 
+
 # ---------- Simple dict<str, ndarray> serialization for Haiku params ----------
 
-def _flatten_params_dict(params: Dict[str, Any], prefix: str = "") -> Dict[str, np.ndarray]:
+
+def _flatten_params_dict(
+    params: Dict[str, Any], prefix: str = ""
+) -> Dict[str, np.ndarray]:
     """Flattens a Haiku-style nested dict of arrays into { 'a/b/c': array }."""
     out: Dict[str, np.ndarray] = {}
     for k, v in params.items():
@@ -44,6 +49,7 @@ def _flatten_params_dict(params: Dict[str, Any], prefix: str = "") -> Dict[str, 
             out[key] = arr
     return out
 
+
 def _unflatten_params_dict(flat: Dict[str, np.ndarray]) -> Dict[str, Any]:
     root: Dict[str, Any] = {}
     for k, arr in flat.items():
@@ -54,11 +60,13 @@ def _unflatten_params_dict(flat: Dict[str, np.ndarray]) -> Dict[str, Any]:
         cur[parts[-1]] = jnp.asarray(arr)
     return root
 
+
 def _hash_arrays(flat: Dict[str, np.ndarray]) -> str:
     # Order by key for deterministic hashing.
     items = [(k, flat[k]) for k in sorted(flat)]
     # Hash concatenated bytes with shapes/dtypes so collisions are unlikely.
     from hashlib import sha256
+
     h = sha256()
     for k, arr in items:
         h.update(k.encode())
@@ -67,7 +75,9 @@ def _hash_arrays(flat: Dict[str, np.ndarray]) -> str:
         h.update(arr.tobytes(order="C"))
     return "sha256:" + h.hexdigest()
 
+
 # ---------- Public API ----------
+
 
 def save_target_artifact(
     root: str | Path,
@@ -98,6 +108,7 @@ def save_target_artifact(
 
     return tdir
 
+
 def load_target_artifact(root: str | Path, target_id_or_path: str | Path):
     """Returns (X, Y, params, meta_dict, tdir Path)."""
     # Resolve id/path
@@ -119,13 +130,16 @@ def load_target_artifact(root: str | Path, target_id_or_path: str | Path):
 
     return X, Y, params, meta, tdir
 
+
 def _append_catalog(root: Path, meta: TargetMeta):
     cat = root / "targets" / "_catalog.jsonl"
     _ensure_dir(cat.parent)
     with open(cat, "a") as f:
         f.write(json.dumps(asdict(meta), sort_keys=True) + "\n")
 
+
 # ---- Sample manifest per target ----
+
 
 def append_sample_manifest(
     root: str | Path,

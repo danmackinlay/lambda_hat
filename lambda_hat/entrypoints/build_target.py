@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import time
-from typing import Any, Dict
+from typing import Dict
 
 import jax
 from omegaconf import DictConfig, OmegaConf
@@ -9,10 +9,21 @@ import hydra
 
 # Ensure resolvers are registered before Hydra composes config.
 from lambda_hat import hydra_support  # noqa: F401
-from lambda_hat.target_artifacts import TargetMeta, save_target_artifact, _hash_arrays, _flatten_params_dict, load_target_artifact
+from lambda_hat.target_artifacts import (
+    TargetMeta,
+    save_target_artifact,
+    _hash_arrays,
+    _flatten_params_dict,
+    load_target_artifact,
+)
+
 
 def _pkg_versions() -> Dict[str, str]:
-    import haiku as hk, jax, blackjax, numpy as np
+    import haiku as hk
+    import jax
+    import blackjax
+    import numpy as np
+
     return {
         "jax": getattr(jax, "__version__", "unknown"),
         "haiku": getattr(hk, "__version__", "unknown"),
@@ -20,10 +31,10 @@ def _pkg_versions() -> Dict[str, str]:
         "numpy": getattr(np, "__version__", "unknown"),
     }
 
+
 def build_target_components(key, cfg: DictConfig):
     """Returns (X, Y, model, init_params, loss_fn, trained_params)."""
     from lambda_hat.targets import build_target
-    from lambda_hat.config import Config
 
     # Convert OmegaConf DictConfig to the project's Config class
     # For now, we'll just use the existing build_target function
@@ -40,20 +51,25 @@ def build_target_components(key, cfg: DictConfig):
 
     return X, Y, model, trained_params, train_info
 
+
 @hydra.main(config_path="../conf/target", config_name="base", version_base=None)
 def main(cfg: DictConfig) -> None:
     # --- IDEMPOTENCY CHECK ---
     try:
         # Attempt to load the artifact
         _, _, _, _, tdir = load_target_artifact(cfg.store.root, cfg.target.id)
-        print(f"[build-target] Target {cfg.target.id} already exists at {tdir}. Skipping build.")
-        return # Exit successfully
+        print(
+            f"[build-target] Target {cfg.target.id} already exists at {tdir}. Skipping build."
+        )
+        return  # Exit successfully
     except FileNotFoundError:
         # If not found, proceed with building
         print(f"[build-target] Building new target {cfg.target.id}...")
     except Exception as e:
         # Handle potential corruption or other errors during load check
-        print(f"[build-target] Error checking for existing target {cfg.target.id}: {e}. Proceeding with build.")
+        print(
+            f"[build-target] Error checking for existing target {cfg.target.id}: {e}. Proceeding with build."
+        )
     # -------------------------
 
     # Precision
@@ -72,7 +88,11 @@ def main(cfg: DictConfig) -> None:
     # Metadata & hashing
     flat = _flatten_params_dict(theta)
     theta_hash = _hash_arrays(flat)
-    dims = {"n": int(X.shape[0]), "d": int(X.shape[1]), "p": sum(v.size for v in flat.values())}
+    dims = {
+        "n": int(X.shape[0]),
+        "d": int(X.shape[1]),
+        "p": sum(v.size for v in flat.values()),
+    }
 
     meta = TargetMeta(
         target_id=cfg.target.id,
@@ -94,6 +114,7 @@ def main(cfg: DictConfig) -> None:
     out_dir = save_target_artifact(cfg.store.root, cfg.target.id, X, Y, theta, meta)
     print(f"[build-target] wrote {out_dir}")
     print(f"[build-target] L0 = {train_info.get('L0', 0):.6f}")
+
 
 if __name__ == "__main__":
     main()
