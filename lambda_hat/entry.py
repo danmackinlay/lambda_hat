@@ -139,7 +139,6 @@ def run_sampler(
     }
 
 
-@hydra.main(version_base=None, config_path="../conf", config_name="config")
 def main(cfg: Config) -> None:
     """Main LLC estimation function"""
     log.info("=== LLC Hydra Pipeline ===")
@@ -248,6 +247,13 @@ def main(cfg: Config) -> None:
 
 
 if __name__ == "__main__":
-    # Setup configuration
+    # This allows running as: python -m lambda_hat.entry
+    # Setup configuration and run with Hydra decorator
+    import hydra
+
+    @hydra.main(version_base=None, config_path="../conf", config_name="config")
+    def main_with_hydra(cfg: Config) -> None:
+        return main(cfg)
+
     setup_config()
-    main()
+    main_with_hydra()
