@@ -16,8 +16,6 @@ class ModelConfig:
     widths: Optional[List[int]] = None
     activation: str = "relu"
     bias: bool = True
-    skip_connections: bool = False
-    residual_period: int = 2
     layernorm: bool = False
     init: str = "he"
     target_params: Optional[int] = 10_000
@@ -112,15 +110,6 @@ class MCLMCConfig:
     L: float = 1.0
     step_size: float = 0.1
     dtype: str = "float64"
-    diagonal_preconditioning: bool = False
-    # Tuning parameters
-    num_steps: int = 2_000
-    frac_tune1: float = 0.1
-    frac_tune2: float = 0.1
-    frac_tune3: float = 0.1
-    desired_energy_var: float = 5e-4
-    trust_in_estimate: float = 1.0
-    num_effective_samples: float = 150.0
     integrator: str = "isokinetic_mclachlan"
 
 
@@ -140,11 +129,6 @@ class OutputConfig:
 
     save_plots: bool = True
     show_plots: bool = False
-    max_theta_plot_dims: int = 8
-    diag_mode: str = "proj"
-    diag_k: int = 16
-    diag_seed: int = 1234
-    record_Ln_every: int = 10  # compute full-data loss every k kept draws
 
 
 @dataclass
