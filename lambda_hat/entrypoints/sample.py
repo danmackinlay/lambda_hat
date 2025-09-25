@@ -6,7 +6,6 @@ from pathlib import Path
 from hashlib import md5
 
 import jax
-import jax.numpy as jnp
 import hydra
 from omegaconf import DictConfig, OmegaConf
 import arviz as az
@@ -18,7 +17,6 @@ from lambda_hat.losses import make_loss_fns, as_dtype
 from lambda_hat.analysis import compute_llc_metrics
 from lambda_hat.models import build_mlp_forward_fn
 from lambda_hat.models import infer_widths
-from lambda_hat import hydra_support  # Register custom resolvers
 
 import numpy as np
 
@@ -80,9 +78,9 @@ def run_sampling_logic(cfg: DictConfig) -> None:
     L0 = float(L0)
 
     # Store params and data in f32 for memory efficiency (precision determined dynamically)
-    params_f32 = as_dtype(params, jnp.float32)
-    X_f32 = jnp.asarray(X, dtype=jnp.float32)
-    Y_f32 = jnp.asarray(Y, dtype=jnp.float32)
+    params_f32 = as_dtype(params, "float32")
+    X_f32 = as_dtype(X, "float32")
+    Y_f32 = as_dtype(Y, "float32")
 
     # Guard: Use model.apply directly. (Removes DummyModel usage, lines 87-95)
     try:

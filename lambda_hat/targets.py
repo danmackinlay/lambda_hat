@@ -93,7 +93,7 @@ def build_target(key, cfg: Config) -> TargetBundle:
 
         # Store in f32 for memory efficiency (precision determined dynamically in sample.py)
         X_f32, Y_f32 = as_dtype(X, "float32"), as_dtype(Y, "float32")
-        params_star_f32 = jax.tree.map(lambda a: a.astype(jnp.float32), params_star_f64)
+        params_star_f32 = as_dtype(params_star_f64, "float32")
 
         # Create f32 loss functions for the bundle
         loss_full_f32, loss_minibatch_f32 = make_loss_fns(

@@ -8,7 +8,6 @@ import logging
 from typing import Dict, Any
 
 import jax
-import jax.numpy as jnp
 from omegaconf import DictConfig
 
 from lambda_hat.posterior import (
@@ -48,7 +47,7 @@ def run_sampler(
     if sampler_name == "hmc":
         # Setup HMC - cast to f64 for precision
         X_f64, Y_f64 = as_dtype(target.X, "float64"), as_dtype(target.Y, "float64")
-        params0_f64 = jax.tree.map(lambda x: x.astype(jnp.float64), target.params0)
+        params0_f64 = as_dtype(target.params0, "float64")
 
         # Create f64 loss function
         loss_full, _ = make_loss_fns(
@@ -78,7 +77,7 @@ def run_sampler(
 
     elif sampler_name == "sgld":
         # Setup SGLD/pSGLD - data already in f32, params may need casting
-        params0_f32 = jax.tree.map(lambda x: x.astype(jnp.float32), target.params0)
+        params0_f32 = as_dtype(target.params0, "float32")
         initial_params = params0_f32  # Start sampling near w_0
 
         # Create f32 loss function (minibatch version)
@@ -111,7 +110,7 @@ def run_sampler(
     elif sampler_name == "mclmc":
         # Setup MCLMC - cast to f64 for precision
         X_f64, Y_f64 = as_dtype(target.X, "float64"), as_dtype(target.Y, "float64")
-        params0_f64 = jax.tree.map(lambda x: x.astype(jnp.float64), target.params0)
+        params0_f64 = as_dtype(target.params0, "float64")
 
         # Create f64 loss function
         loss_full, _ = make_loss_fns(
