@@ -1,11 +1,10 @@
 
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Critical guidance for working with this LLC estimation codebase.
 
 ## Essential Commands
 
-**Development Environment:**
 ```bash
 # Setup (Python 3.11+ required)
 uv sync --extra cpu          # For CPU/macOS
