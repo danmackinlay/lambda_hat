@@ -44,6 +44,7 @@ cuda12 = [
 lambda-hat-promote = "lambda_hat.entrypoints.promote:main_promote"
 lambda-hat-build-target = "lambda_hat.entrypoints.build_target:main"
 lambda-hat-sample = "lambda_hat.entrypoints.sample:main"
+lambda-hat-workflow = "lambda_hat.entrypoints.workflow:main_workflow"
 
 [dependency-groups]
 dev = [

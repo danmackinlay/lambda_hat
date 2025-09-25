@@ -1,0 +1,58 @@
+# lambda_hat/conf/workflow.yaml
+# @package _global_
+
+# Unified Workflow Configuration for N x M Sweeps
+
+defaults:
+  # Include Stage A configuration groups (Define the Target)
+  - model: base
+  - data: base
+  # Include Stage B configuration groups (Define the Sampler)
+  - sample/sampler: hmc
+  - _self_
+
+# --- Shared Config ---
+jax:
+  enable_x64: true
+
+store:
+  root: runs
+
+runtime:
+  seed: 12345  # Used for sampler PRNG splitting (Stage B Seed)
+  code_sha: ${git_sha:}
+  hostname: ${hostname:}
+
+# --- Stage A: Target Definition (Used for Fingerprinting) ---
+target:
+  # Seed for data generation and NN training (Stage A Seed)
+  seed: 42
+
+# --- Stage B: Sampler Configuration ---
+sampler:
+  chains: 4
+  # name will be overridden by sample/sampler group
+
+posterior:
+  # Defaults compatible with existing structure
+  loss: mse
+  beta_mode: 1_over_log_n
+  beta0: 1.0
+  gamma: 1.0
+  # Compatibility fields from conf/sample/base.yaml if still required by downstream code
+  sigma_w: 1.0
+  sigma_b: 1.0
+  temp: 1.0
+
+# Training block (used for Stage A target building)
+training:
+  optimizer: adam
+  learning_rate: 0.001
+  steps: 5000
+  early_stop_tol: 1e-6
+  batch_size: null  # Use full batch by default
+
+# --- Dynamic Target ID Resolution ---
+# CRITICAL: This calculates the target_id based on the current configuration.
+# It must match the resolver used by lambda-hat-build-target.
+target_id: ${fingerprint:${model},${data},${target.seed},${jax.enable_x64},${runtime.code_sha}}
