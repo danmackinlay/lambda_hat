@@ -41,10 +41,15 @@ def build_target_components(key, cfg: DictConfig):
     # which expects a Config object
     target_bundle = build_target(key, cfg)
 
-    # Extract components
-    X = target_bundle.X_f64
-    Y = target_bundle.Y_f64
-    trained_params = target_bundle.params0_f64
+    # Extract components (using simplified TargetBundle attributes)
+    # Data stored in f32 for efficiency, cast to f64 for precision during build
+    from lambda_hat.losses import as_dtype
+    import jax.numpy as jnp
+
+    X = as_dtype(target_bundle.X, \"float64\")
+    Y = as_dtype(target_bundle.Y, \"float64\")
+    # Params stored in f32, cast to f64 for precision
+    trained_params = jax.tree.map(lambda x: x.astype(jnp.float64), target_bundle.params0)
     model = target_bundle.model
 
     train_info = {"L0": float(target_bundle.L0)}
