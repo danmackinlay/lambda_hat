@@ -43,11 +43,9 @@ class TargetBundle:
     loss_minibatch_f64: Callable[
         [Dict[str, Any], jnp.ndarray, jnp.ndarray], jnp.ndarray
     ]
-    # data for minibatching
-    X_f32: jnp.ndarray
-    Y_f32: jnp.ndarray
-    X_f64: jnp.ndarray
-    Y_f64: jnp.ndarray
+    # data for minibatching (stored once in f64)
+    X: jnp.ndarray
+    Y: jnp.ndarray
     L0: float  # L_n at params0 (f64)
     # Haiku model for forward passes
     model: Any
@@ -121,10 +119,8 @@ def build_target(key, cfg: Config) -> TargetBundle:
             loss_minibatch_f32=loss_minibatch_f32,
             loss_full_f64=loss_full_f64,
             loss_minibatch_f64=loss_minibatch_f64,
-            X_f32=X_f32,
-            Y_f32=Y_f32,
-            X_f64=X_f64,
-            Y_f64=Y_f64,
+            X=X_f64,
+            Y=Y_f64,
             L0=L0,
             model=model,
         )
@@ -168,10 +164,8 @@ def build_target(key, cfg: Config) -> TargetBundle:
             loss_minibatch_f32=lambda p, Xb, Yb: _lb(p, Xb, Yb).astype(jnp.float32),
             loss_full_f64=lambda p: _lf(p).astype(jnp.float64),
             loss_minibatch_f64=lambda p, Xb, Yb: _lb(p, Xb, Yb).astype(jnp.float64),
-            X_f32=X_f32,
-            Y_f32=Y_f32,
-            X_f64=X_f64,
-            Y_f64=Y_f64,
+            X=X_f64,
+            Y=Y_f64,
             L0=L0,
             model=model,
         )
