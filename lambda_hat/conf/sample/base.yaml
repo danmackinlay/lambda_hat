@@ -20,8 +20,4 @@ sampler:
   chains: 4
   name: hmc  # Will be overridden by sampler config group
 
-# Required fields for compatibility with existing run_sampler
-posterior:
-  sigma_w: 1.0
-  sigma_b: 1.0
-  temp: 1.0
+# Vestigial fields removed: sigma_w, sigma_b, temp (unused bloat)

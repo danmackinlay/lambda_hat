@@ -71,7 +71,7 @@ class PosteriorConfig:
     beta0: float = 1.0
     prior_radius: Optional[float] = None
     gamma: float = 1.0
-    prior_center: Optional[List[float]] = None
+    # prior_center field removed - unused vestigial parameter
 
 
 @dataclass
@@ -136,18 +136,11 @@ class SamplerConfig:
 
 @dataclass
 class OutputConfig:
-    """Output and visualization configuration"""
+    """Output and visualization configuration (bloat removed)"""
 
     save_plots: bool = True
     show_plots: bool = False
-    max_theta_plot_dims: int = 8
-    diag_mode: str = "proj"
-    diag_k: int = 16
-    diag_seed: int = 1234
-
-    # Efficient recording options
-    record_Ln_every: int = 10  # compute full-data loss every k kept draws
-    record_theta_every: int = 0  # 0 = don't store params; N = thin to every Nth
+    # Removed unused fields: max_theta_plot_dims, diag_mode, diag_k, diag_seed, record_Ln_every, record_theta_every
 
 
 @dataclass

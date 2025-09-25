@@ -39,10 +39,7 @@ posterior:
   beta_mode: 1_over_log_n
   beta0: 1.0
   gamma: 1.0
-  # Compatibility fields from conf/sample/base.yaml if still required by downstream code
-  sigma_w: 1.0
-  sigma_b: 1.0
-  temp: 1.0
+  # Vestigial fields removed: sigma_w, sigma_b, temp (unused bloat)
 
 # Training block (used for Stage A target building)
 training:
