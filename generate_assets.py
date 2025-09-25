@@ -33,7 +33,7 @@ def run_hydra_sweep_and_collect_assets():
 
     command = [
         "python",
-        str(ROOT_DIR / "train.py"),
+        str(ROOT_DIR / "lambda_hat/cli_main.py"),
         "--multirun",
         "sampler=fast",  # Use fast sampler settings
         "model=small",  # Use small model
