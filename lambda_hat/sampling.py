@@ -104,7 +104,9 @@ def update_preconditioner(
 
 
 # === Optimized Inference Loop ===
-def inference_loop_ln_only(rng_key, kernel, initial_state, num_samples, aux_fn, aux_every=1):
+def inference_loop_ln_only(
+    rng_key, kernel, initial_state, num_samples, aux_fn, aux_every=1
+):
     """
     Efficient inference loop using jax.lax.scan that records Ln and diagnostics.
 
@@ -112,12 +114,13 @@ def inference_loop_ln_only(rng_key, kernel, initial_state, num_samples, aux_fn, 
         aux_fn: A function that takes the state and returns a dict {"Ln": val}.
         aux_every: Thinning factor for the trace.
     """
+
     @jax.jit
     def one_step(state, rng_key):
         new_state, info = kernel(rng_key, state)
 
         # Compute Aux data (e.g., Ln) at every step.
-        aux_data = aux_fn(new_state) # Returns {"Ln": val}
+        aux_data = aux_fn(new_state)  # Returns {"Ln": val}
 
         # Combine aux data with standard diagnostics
         trace_data = aux_data.copy()
@@ -126,7 +129,9 @@ def inference_loop_ln_only(rng_key, kernel, initial_state, num_samples, aux_fn, 
         trace_data["acceptance_rate"] = getattr(info, "acceptance_rate", jnp.nan)
         trace_data["energy"] = getattr(info, "energy", jnp.nan)
         # Standardize divergence key (handle both 'is_divergent' and 'diverging')
-        trace_data["is_divergent"] = getattr(info, "is_divergent", getattr(info, "diverging", False))
+        trace_data["is_divergent"] = getattr(
+            info, "is_divergent", getattr(info, "diverging", False)
+        )
 
         return new_state, trace_data
 
@@ -142,11 +147,17 @@ def inference_loop_ln_only(rng_key, kernel, initial_state, num_samples, aux_fn, 
     return trace
 
 
-def run_hmc(rng_key, logdensity_fn, initial_params,
-            num_samples, num_chains,
-            step_size=0.01, num_integration_steps=10, adaptation_steps=1000,
-            loss_full_fn: Optional[Callable] = None):
-
+def run_hmc(
+    rng_key,
+    logdensity_fn,
+    initial_params,
+    num_samples,
+    num_chains,
+    step_size=0.01,
+    num_integration_steps=10,
+    adaptation_steps=1000,
+    loss_full_fn: Optional[Callable] = None,
+):
     if loss_full_fn is None:
         raise ValueError("loss_full_fn must be provided for Ln recording in HMC.")
 
@@ -160,9 +171,11 @@ def run_hmc(rng_key, logdensity_fn, initial_params,
         return jax.tree.map(
             lambda p: p + 0.01 * jax.random.normal(key, p.shape, p.dtype), params
         )
+
     key, k_init, k_warm = jax.random.split(rng_key, 3)
-    init_positions = jax.vmap(jitter, in_axes=(0, None))(jax.random.split(k_init, num_chains),
-                                                         initial_params)
+    init_positions = jax.vmap(jitter, in_axes=(0, None))(
+        jax.random.split(k_init, num_chains), initial_params
+    )
 
     # 2) warmup on one chain (Adaptation)
 
@@ -174,8 +187,8 @@ def run_hmc(rng_key, logdensity_fn, initial_params,
     if adaptation_steps > 0:
         # 2) warmup on one chain to get step size + inv_mass
         wa = blackjax.window_adaptation(
-            blackjax.hmc,            # algorithm
-            logdensity_fn,           # target log-density
+            blackjax.hmc,  # algorithm
+            logdensity_fn,  # target log-density
             target_acceptance_rate=0.8,
             # BIND the trajectory length HERE (constructor), NOT in .run()
             num_integration_steps=num_integration_steps,
@@ -195,16 +208,15 @@ def run_hmc(rng_key, logdensity_fn, initial_params,
         # Extract adaptation results from BlackJAX 1.2.5 expected format
         step_size_adapted = params.get("step_size", step_size_adapted)
         inv_mass_adapted = params.get("inverse_mass_matrix", inv_mass)
-        if hasattr(inv_mass_adapted, 'ndim') and inv_mass_adapted.ndim in [1, 2]:
+        if hasattr(inv_mass_adapted, "ndim") and inv_mass_adapted.ndim in [1, 2]:
             inv_mass = inv_mass_adapted
-
 
     # 3) build kernel and init all chains
     hmc = blackjax.hmc(
         logdensity_fn,
         step_size=step_size_adapted,
         num_integration_steps=num_integration_steps,
-        inverse_mass_matrix=inv_mass, # Guaranteed to be 1D or 2D array
+        inverse_mass_matrix=inv_mass,  # Guaranteed to be 1D or 2D array
     )
     init_states = jax.vmap(hmc.init)(init_positions)
 
@@ -222,10 +234,12 @@ def run_hmc(rng_key, logdensity_fn, initial_params,
     # Use vmap with the optimized inference loop
     traces = jax.vmap(
         lambda k, s: inference_loop_ln_only(
-            k, hmc.step, s,
+            k,
+            hmc.step,
+            s,
             num_samples=num_samples,
             aux_fn=aux_fn,
-            aux_every=1, # HMC records every step
+            aux_every=1,  # HMC records every step
         )
     )(chain_keys, init_states)
     return traces
@@ -281,9 +295,11 @@ def run_sgld(
         w_t = state.position
         precond_state = state.precond_state
 
-        # 1. Sample minibatch (now potentially in f64)
+        # 1. Sample minibatch indices. If the configured batch_size exceeds n_data,
+        # fall back to sampling *with* replacement (static shape; JIT-friendly).
+        replace_flag = batch_size > n_data  # Python bool; static
         indices = jax.random.choice(
-            key_batch, n_data, shape=(batch_size,), replace=False
+            key_batch, n_data, shape=(batch_size,), replace=replace_flag
         )
         minibatch_raw = (X[indices], Y[indices])
 
@@ -336,6 +352,7 @@ def run_sgld(
 
     # JIT the loss function for efficiency
     loss_full_fn_jitted = jax.jit(loss_full_fn)
+
     # SGLDState has 'position' attribute
     def aux_fn(st):
         return {"Ln": loss_full_fn_jitted(st.position)}
@@ -347,7 +364,9 @@ def run_sgld(
     # Use vmap with the optimized inference loop
     traces = jax.vmap(
         lambda k, s: inference_loop_ln_only(
-            k, sgld_kernel, s,
+            k,
+            sgld_kernel,
+            s,
             num_samples=config.steps,
             aux_fn=aux_fn,
             aux_every=eval_every,
@@ -357,10 +376,15 @@ def run_sgld(
     return traces
 
 
-def run_mclmc(rng_key, logdensity_fn, initial_params,
-              num_samples, num_chains, config,
-              loss_full_fn: Optional[Callable] = None):
-
+def run_mclmc(
+    rng_key,
+    logdensity_fn,
+    initial_params,
+    num_samples,
+    num_chains,
+    config,
+    loss_full_fn: Optional[Callable] = None,
+):
     # -- flatten params once for MCLMC's state vector
     leaves, treedef = jax.tree_util.tree_flatten(initial_params)
     sizes = [x.size for x in leaves]
@@ -375,7 +399,7 @@ def run_mclmc(rng_key, logdensity_fn, initial_params,
         out = []
         i = 0
         for shp, sz in zip(shapes, sizes):
-            out.append(theta[i:i+sz].reshape(shp))
+            out.append(theta[i : i + sz].reshape(shp))
             i += sz
         return jax.tree_util.tree_unflatten(treedef, out)
 
@@ -393,7 +417,9 @@ def run_mclmc(rng_key, logdensity_fn, initial_params,
 
     # diversify starting points
     key, k_init = jax.random.split(rng_key)
-    init_thetas = theta0 + 0.01 * jax.random.normal(k_init, (num_chains, theta0.size), dtype=theta0.dtype)
+    init_thetas = theta0 + 0.01 * jax.random.normal(
+        k_init, (num_chains, theta0.size), dtype=theta0.dtype
+    )
 
     # pick integrator
     integrators = {
@@ -432,7 +458,9 @@ def run_mclmc(rng_key, logdensity_fn, initial_params,
     # Use vmap with the optimized loop (Replace lines 478-486)
     traces = jax.vmap(
         lambda k, s: inference_loop_ln_only(
-            k, mclmc.step, s,
+            k,
+            mclmc.step,
+            s,
             num_samples=num_samples,
             aux_fn=aux_fn,
             aux_every=1,
