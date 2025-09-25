@@ -39,7 +39,7 @@ This approach allows for fully automated, scalable N × M experiments managed en
 
 Hydra allows you to define variations of your configuration along multiple dimensions. When you use the `--multirun` (or `-m`) flag, Hydra generates a Cartesian product of all specified variations and executes the application once for each combination.
 
-**Note on Execution Flow:** In the current implementation (`train.py`), each Hydra job executes all primary samplers (SGLD, HMC, MCLMC) sequentially.
+**Note on Execution Flow:** In the current implementation (`lambda-hat-workflow`), each Hydra job executes all primary samplers (SGLD, HMC, MCLMC) sequentially.
 
 ## Basic Sweeps
 
@@ -49,7 +49,7 @@ You can sweep over predefined configuration groups (e.g., different model sizes 
 
 ```bash
 # Sweep over 'small' and 'base' models
-uv run python train.py -m model=small,base
+uv run lambda-hat-workflow -m model=small,base
 ```
 
 This command launches two jobs.
@@ -60,7 +60,7 @@ You can sweep over individual parameters defined in your configuration using com
 
 ```bash
 # Sweep over different data sizes and noise scales
-uv run python train.py -m data.n_data=1000,5000,10000 data.noise_scale=0.01,0.1
+uv run lambda-hat-workflow -m data.n_data=1000,5000,10000 data.noise_scale=0.01,0.1
 ```
 
 This command launches 3 * 2 = 6 jobs.
@@ -73,7 +73,7 @@ Hydra supports range functions for numerical sweeps.
 
 ```bash
 # Sweep seeds from 1 to 5 (inclusive)
-uv run python train.py -m seed=range\(1,6\)
+uv run lambda-hat-workflow -m seed=range\(1,6\)
 ```
 
 ### Defining Sweeps in YAML (Experiments)
@@ -100,7 +100,7 @@ hydra:
 Execute the sweep using the `+experiment` syntax:
 
 ```bash
-uv run python train.py +experiment=data_scaling_sweep
+uv run lambda-hat-workflow +experiment=data_scaling_sweep
 ```
 
 ## Parallel Execution
@@ -111,7 +111,7 @@ See [Parallel Execution](./parallelism.md) for details.
 
 ```bash
 # Example: Running a sweep on SLURM
-uv run python train.py -m model=small,base \
+uv run lambda-hat-workflow -m model=small,base \
   hydra/launcher=submitit_slurm \
   hydra.launcher.partition=YOUR_PARTITION
 ```

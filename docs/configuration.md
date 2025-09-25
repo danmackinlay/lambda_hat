@@ -24,7 +24,7 @@ Controls the type of target function for LLC estimation.
 
 **Example:**
 ```bash
-uv run python train.py target=quadratic quad_dim=4
+uv run lambda-hat-workflow target=quadratic quad_dim=4
 ```
 
 ### Model (`model.*`)
@@ -37,7 +37,7 @@ Controls the architecture of the student MLP (when `target=mlp`).
 
 **Example:**
 ```bash
-uv run python train.py model.depth=4 model.target_params=5000 model.activation=identity
+uv run lambda-hat-workflow model.depth=4 model.target_params=5000 model.activation=identity
 ```
 
 ### Data (`data.*`)
@@ -59,7 +59,7 @@ Controls the synthetic data generation process using a teacher-student setup.
 
 **Example:**
 ```bash
-uv run python train.py data.n_data=10000 data.noise_model=student_t data.x_dist=mixture
+uv run lambda-hat-workflow data.n_data=10000 data.noise_model=student_t data.x_dist=mixture
 ```
 
 ### Training (`training.*`)
@@ -93,6 +93,6 @@ Controls the parameters for the MCMC samplers.
 
 **Example:**
 ```bash
-uv run python train.py sampler.chains=8 sampler.hmc.draws=5000 sampler.sgld.step_size=1e-6
+uv run lambda-hat-workflow sampler.chains=8 sampler.hmc.draws=5000 sampler.sgld.step_size=1e-6
 ```
 
