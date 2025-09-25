@@ -95,3 +95,4 @@ Controls the parameters for the MCMC samplers.
 ```bash
 uv run python train.py sampler.chains=8 sampler.hmc.draws=5000 sampler.sgld.step_size=1e-6
 ```
+
