@@ -34,7 +34,3 @@ posterior:
 output:
   save_plots: true
   show_plots: false
-  max_theta_plot_dims: 8
-  diag_mode: proj
-  diag_k: 16
-  diag_seed: 1234

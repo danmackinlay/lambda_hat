@@ -27,12 +27,4 @@ mclmc:
   L: 1.0
   step_size: 0.1
   dtype: float64
-  diagonal_preconditioning: false
-  num_steps: 2000
-  frac_tune1: 0.1
-  frac_tune2: 0.1
-  frac_tune3: 0.1
-  desired_energy_var: 0.0005
-  trust_in_estimate: 1.0
-  num_effective_samples: 150.0
   integrator: isokinetic_mclachlan
