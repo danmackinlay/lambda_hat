@@ -270,6 +270,7 @@ def run_hmc(
         num_integration_steps=num_integration_steps,
         inverse_mass_matrix=inv_mass,
     )
+    init_states = jax.vmap(hmc.init)(init_positions)
 
     # Initialize states for all chains
     init_states = jax.vmap(hmc.init)(init_positions)
