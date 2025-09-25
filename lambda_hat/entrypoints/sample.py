@@ -78,13 +78,10 @@ def run_sampling_logic(cfg: DictConfig) -> None:
         )
     L0 = float(L0)
 
-    # Convert params and data to proper dtypes
+    # Store params and data in f32 for memory efficiency (precision determined dynamically)
     params_f32 = as_dtype(params, jnp.float32)
-    params_f64 = as_dtype(params, jnp.float64)
     X_f32 = jnp.asarray(X, dtype=jnp.float32)
     Y_f32 = jnp.asarray(Y, dtype=jnp.float32)
-    X_f64 = jnp.asarray(X, dtype=jnp.float64)
-    Y_f64 = jnp.asarray(Y, dtype=jnp.float64)
 
     # Guard: Use model.apply directly. (Removes DummyModel usage, lines 87-95)
     try:
@@ -100,27 +97,19 @@ def run_sampling_logic(cfg: DictConfig) -> None:
     noise_scale = data_cfg.get("noise_scale", 0.1)
     student_df = data_cfg.get("student_df", 4.0)
 
-    # Create loss functions. (Removes manual model_apply wrapper usage, lines 113-123)
+    # Create loss functions in f32 (precision cast dynamically in sampling_runner)
     loss_full_f32, loss_mini_f32 = make_loss_fns(
         model.apply, X_f32, Y_f32,
-        loss_type=loss_type, noise_scale=noise_scale, student_df=student_df)
-    loss_full_f64, loss_mini_f64 = make_loss_fns(
-        model.apply, X_f64, Y_f64,
         loss_type=loss_type, noise_scale=noise_scale, student_df=student_df)
 
     # Build target bundle for compatibility with existing code
     target = TargetBundle(
         d=meta["dims"]["p"],
-        params0_f32=params_f32,
-        params0_f64=params_f64,
-        loss_full_f32=loss_full_f32,
-        loss_minibatch_f32=loss_mini_f32,
-        loss_full_f64=loss_full_f64,
-        loss_minibatch_f64=loss_mini_f64,
-        X_f32=X_f32,
-        Y_f32=Y_f32,
-        X_f64=X_f64,
-        Y_f64=Y_f64,
+        params0=params_f32,
+        loss_full=loss_full_f32,
+        loss_minibatch=loss_mini_f32,
+        X=X_f32,
+        Y=Y_f32,
         L0=L0,
         model=model, # Pass the Haiku object directly
     )
