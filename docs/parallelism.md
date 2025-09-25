@@ -48,6 +48,55 @@ uv run python train.py -m hydra/launcher=submitit_slurm \
 
 If your cluster requires an account, use `hydra.launcher.account=YOUR_ACCOUNT`.
 
+
+### Setting slurm account name
+
+#### One-off on the CLI
+
+(works for both `lambda-hat-build-target` and `lambda-hat-sample`)
+
+```bash
+uv run lambda-hat-build-target \
+  hydra/launcher=submitit_slurm \
+  hydra.launcher.account=OD-228158
+```
+
+Example with GPU on a cluster that needs `--gpus=1`:
+
+```bash
+uv run lambda-hat-sample -m target_id=tgt_abc123 sampler=hmc \
+  hydra/launcher=submitit_slurm \
+  hydra.launcher.gpus_per_node=1 \
+  +hydra.launcher.additional_parameters.gpus=1 \
+  hydra.launcher.account=OD-228158
+```
+
+Notes:
+
+* `hydra/launcher=submitit_slurm` selects the Slurm launcher.
+* `hydra.launcher.account=...` maps to `sbatch --account=...`.
+* If your cluster uses `--gpus=N` instead of `--gres=gpu:N`, pass it exactly as shown via `additional_parameters.gpus`.
+
+#### If you prefer not to repeat it
+
+Create a tiny config file and use it by name:
+
+`lambda_hat/conf/hydra/launcher/slurm_account.yaml`
+
+```yaml
+# Merges into the submitit_slurm launcher
+# Usage: hydra/launcher=submitit_slurm,hydra/launcher=slurm_account
+slurm:
+  additional_parameters:
+    account: OD-228158
+```
+
+Then:
+
+```bash
+uv run lambda-hat-build-target hydra/launcher=submitit_slurm,hydra/launcher=slurm_account
+```
+
 ### Local Parallel Execution
 
 To run jobs in parallel locally (e.g., utilizing multiple cores on a workstation), use the `submitit_local` launcher.
