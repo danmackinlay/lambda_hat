@@ -519,7 +519,6 @@ def run_mclmc(
         L=config.L,
         step_size=config.step_size,
         integrator=integrator,
-        # Remove the incorrect inverse_mass_matrix argument from Doc 1 L453
     )
 
     # init STATES — BlackJAX 1.2.5 still needs RNG keys

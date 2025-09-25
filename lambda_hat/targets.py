@@ -17,6 +17,23 @@ from .models import build_mlp_forward_fn, count_params, infer_widths
 from .training import train_erm
 
 
+def make_loss_full(loss_fn: Callable) -> Callable:
+    """Create a loss function that returns scalar per chain for auxiliary recording.
+
+    Args:
+        loss_fn: Function that takes position and returns scalar loss
+
+    Returns:
+        Callable that accepts batched position (C, ...) or single (...) and returns (C,) or ()
+    """
+    @jax.jit
+    def loss_from_position(position):
+        # Returns average negative log-likelihood or your Ln definition
+        Ln = loss_fn(position)  # scalar per chain
+        return Ln
+    return loss_from_position
+
+
 @dataclass
 class TargetBundle:
     d: int
