@@ -1,4 +1,4 @@
-# Lambda-Hat (λ̂): LLC Experiments in estimating the Local Learning Coefficient
+# Lambda-Hat (λ̂): Experiments in estimating the Local Learning Coefficient
 
 In [Singular Learning Theory (SLT)](https://singularlearningtheory.com), the **Local Learning Coefficient (LLC)** quantifies the effective local dimensionality of a model around a trained optimum.
 

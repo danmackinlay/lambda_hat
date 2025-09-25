@@ -288,6 +288,9 @@ def run_hmc(
     # Calculate work per step (FGEs): HMC uses full gradients.
     work_per_step = float(num_integration_steps)
 
+    # Start sampling timer
+    sampling_start_time = time.time()
+
     # Use vmap with the optimized inference loop
     traces = jax.vmap(
         lambda k, s: inference_loop_extended(
@@ -426,6 +429,9 @@ def run_sgld(
 
     # Use eval_every from config if available, otherwise default to 10 (matches config.py)
     eval_every = getattr(config, "eval_every", 10)
+
+    # Start sampling timer
+    sampling_start_time = time.time()
 
     # Start sampling timer
     sampling_start_time = time.time()

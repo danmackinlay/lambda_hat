@@ -282,7 +282,6 @@ def create_arviz_diagnostics(inference_data: Dict[str, az.InferenceData], output
             except Exception:
                 warnings.warn(f"Failed to create energy plot for {sampler_name}")
 
-
 def create_combined_convergence_plot(
     inference_data: Dict[str, az.InferenceData], output_dir: Path
 ) -> None:
@@ -377,7 +376,6 @@ def create_combined_convergence_plot(
     plt.tight_layout()
     plt.savefig(output_dir / "llc_convergence_combined.png", dpi=150, bbox_inches="tight")
     plt.close(fig)
-
 
 def create_work_normalized_variance_plot(
     inference_data: Dict[str, az.InferenceData], output_dir: Path
