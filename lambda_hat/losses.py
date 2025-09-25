@@ -10,11 +10,6 @@ if TYPE_CHECKING:
     from .config import Config
 
 
-def as_dtype(x, dtype_str):  # 'float32' or 'float64'
-    """Convert array to specified dtype"""
-    return x.astype(jnp.float32 if dtype_str == "float32" else jnp.float64)
-
-
 def make_loss_fns(model_apply: Callable, cfg: Config, X: jnp.ndarray, Y: jnp.ndarray):
     """Create loss functions for both full data and minibatch
 

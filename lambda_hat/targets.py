@@ -8,7 +8,7 @@ import jax.numpy as jnp
 from .config import Config
 from .data import make_dataset
 from .models import infer_widths, build_mlp_forward_fn, count_params
-from .losses import make_loss_fns, as_dtype
+from .losses import make_loss_fns
 from .training import train_erm
 
 
@@ -56,7 +56,6 @@ class TargetBundle:
 def build_target(key, cfg: Config) -> TargetBundle:
     """Return a self-contained target for the pipeline to consume."""
     m_cfg = cfg.model
-    s_cfg = cfg.sampler
 
     if (cfg.target or "mlp") == "mlp":
         # ----- MLP path with Haiku -----
@@ -87,10 +86,9 @@ def build_target(key, cfg: Config) -> TargetBundle:
         key, subkey = jax.random.split(key)
         params_init = model.init(subkey, X[:1])  # Use first data point for init
 
-        # Cast data to both dtypes
-        # Accessing dtypes correctly:
-        X_f32, Y_f32 = as_dtype(X, s_cfg.sgld.dtype), as_dtype(Y, s_cfg.sgld.dtype)
-        X_f64, Y_f64 = as_dtype(X, s_cfg.hmc.dtype), as_dtype(Y, s_cfg.hmc.dtype)
+        # Cast data to both dtypes using native JAX operations
+        X_f32, Y_f32 = X.astype(jnp.float32), Y.astype(jnp.float32)
+        X_f64, Y_f64 = X.astype(jnp.float64), Y.astype(jnp.float64)
 
         # Create loss functions for f64 (for ERM training)
         loss_full_f64, loss_minibatch_f64 = make_loss_fns(
