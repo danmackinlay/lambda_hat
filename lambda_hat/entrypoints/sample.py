@@ -14,7 +14,7 @@ from lambda_hat.target_artifacts import load_target_artifact, append_sample_mani
 from lambda_hat.sampling_runner import run_sampler  # Use extracted sampler runner
 from lambda_hat.targets import TargetBundle
 from lambda_hat.losses import make_loss_fns, as_dtype
-from lambda_hat.analysis import compute_llc_metrics
+from lambda_hat.analysis import analyze_traces
 from lambda_hat.models import build_mlp_forward_fn
 from lambda_hat.models import infer_widths
 
@@ -144,9 +144,9 @@ def run_sampling_logic(cfg: DictConfig) -> None:
     run_dir = sample_dir / f"run_{run_id}"
     run_dir.mkdir(exist_ok=True)
 
-    # --- Analysis and Trace Saving (Efficient Path) ---
-    # Replace Doc 12, lines 188-213 with the following:
+    # --- Analysis and Trace Saving (Enhanced Path) ---
     traces = result.get("traces", {})
+    timings = result.get("timings", {})
     metrics = {
         "elapsed_time": dt,
         "L0": L0,
@@ -155,8 +155,6 @@ def run_sampling_logic(cfg: DictConfig) -> None:
     beta = result["beta"]
 
     if "Ln" in traces:
-        Ln_values = traces["Ln"]
-
         # Determine warmup and recording frequency (needed for analysis)
         sampler_name = cfg.sampler.name
         sampler_specific_cfg = getattr(cfg.sampler, sampler_name, {})
@@ -170,45 +168,22 @@ def run_sampling_logic(cfg: DictConfig) -> None:
         # Calculate the number of warmup steps present in the recorded trace
         warmup_steps_in_trace = warmup // record_every
 
-        # Compute LLC metrics efficiently
-        llc_metrics = compute_llc_metrics(
-            Ln_values, L0, n_data=n_data, beta=beta, warmup=warmup_steps_in_trace
+        # Use the new comprehensive analysis function
+        llc_metrics, idata = analyze_traces(
+            traces, L0, n_data=n_data, beta=beta, warmup=warmup_steps_in_trace, timings=timings
         )
+
         metrics.update(llc_metrics)
-        metrics["n_samples"] = Ln_values.shape[1] - warmup_steps_in_trace
+        metrics["n_samples"] = traces["Ln"].shape[1] - warmup_steps_in_trace
 
-        # --- Save traces using ArviZ ---
-        # Compute LLC values for ArviZ structure (full trace including warmup)
-        llc_values = float(n_data) * float(beta) * (Ln_values - L0)
-
-        # Structure ArviZ object correctly
-        data_dict = {
-            "posterior": {
-                "Ln": np.asarray(Ln_values),
-                "llc": np.asarray(llc_values),
-            },
-            "sample_stats": {},
-        }
-
-        # Add diagnostics if present
-        # Map keys from sampler output to standard ArviZ names if needed
-        diag_map = {
-            "acceptance_rate": "acceptance_rate",
-            "energy": "energy",
-            "is_divergent": "diverging",  # ArviZ standard name
-        }
-        for az_key, trace_key in diag_map.items():
-            if trace_key in traces:
-                data_dict["sample_stats"][az_key] = np.asarray(traces[trace_key])
-
-        az_trace = az.from_dict(**data_dict)
-        az.to_netcdf(az_trace, run_dir / "trace.nc")
+        # Save traces using ArviZ InferenceData from analyze_traces
+        az.to_netcdf(idata, run_dir / "trace.nc")
     else:
         print("[WARNING] No 'Ln' found in traces. Analysis and trace saving skipped.")
 
     # Add any remaining computed metrics from result
     for k, v in result.items():
-        if k not in ["traces", "elapsed_time", "beta"]:
+        if k not in ["traces", "timings", "elapsed_time", "beta"]:
             if isinstance(v, (int, float, str, bool)):
                 metrics[k] = v
             elif hasattr(v, "item"):

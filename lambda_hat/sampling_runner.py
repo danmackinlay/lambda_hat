@@ -63,7 +63,7 @@ def run_sampler(
         logdensity_fn = make_logpost(loss_full, params0_f64, n_data, beta, gamma)
 
         # Run HMC
-        traces = run_hmc(
+        run_result = run_hmc(
             key,
             logdensity_fn,
             params0_f64,
@@ -72,8 +72,10 @@ def run_sampler(
             step_size=cfg.sampler.hmc.step_size,
             num_integration_steps=cfg.sampler.hmc.num_integration_steps,
             adaptation_steps=cfg.sampler.hmc.warmup,
-            loss_full=loss_full,  # Pass loss function for Ln recording
+            loss_full_fn=loss_full,  # Pass loss function for Ln recording
         )
+        traces = run_result.traces
+        timings = run_result.timings
 
     elif sampler_name == "sgld":
         # Setup SGLD/pSGLD - data already in f32, params may need casting
@@ -94,7 +96,7 @@ def run_sampler(
         grad_loss_fn = make_grad_loss_minibatch(loss_mini)
 
         # Run SGLD
-        traces = run_sgld(
+        run_result = run_sgld(
             key,
             grad_loss_fn,
             initial_params=initial_params,
@@ -104,8 +106,10 @@ def run_sampler(
             num_chains=cfg.sampler.chains,
             beta=beta,
             gamma=gamma,
-            loss_full=target.loss_full,  # Pass loss function for Ln recording
+            loss_full_fn=target.loss_full,  # Pass loss function for Ln recording
         )
+        traces = run_result.traces
+        timings = run_result.timings
 
     elif sampler_name == "mclmc":
         # Setup MCLMC - cast to f64 for precision
@@ -126,15 +130,17 @@ def run_sampler(
         logdensity_fn = make_logpost(loss_full, params0_f64, n_data, beta, gamma)
 
         # Run MCLMC
-        traces = run_mclmc(
+        run_result = run_mclmc(
             key,
             logdensity_fn,
             params0_f64,
             num_samples=cfg.sampler.mclmc.draws,
             num_chains=cfg.sampler.chains,
             config=cfg.sampler.mclmc,  # Pass the config object
-            loss_full=loss_full,  # Pass loss function for Ln recording
+            loss_full_fn=loss_full,  # Pass loss function for Ln recording
         )
+        traces = run_result.traces
+        timings = run_result.timings
 
     else:
         raise ValueError(f"Unknown sampler: {sampler_name}")
@@ -142,6 +148,7 @@ def run_sampler(
     log.info(f"Completed {sampler_name} sampling")
     return {
         "traces": traces,
+        "timings": timings,
         "sampler_config": getattr(cfg.sampler, sampler_name),
         "beta": beta,
         "gamma": gamma,
