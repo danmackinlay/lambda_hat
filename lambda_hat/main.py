@@ -1,13 +1,6 @@
 #!/usr/bin/env python3
 """
-Main LLC estimation script using Hydra for configuration management.
-
-Usage:
-    lambda-hat                              # Use default config
-    lambda-hat sampler=fast                 # Use fast sampler preset
-    lambda-hat model=small data=small       # Use small presets
-    lambda-hat model.target_params=1000     # Override specific values
-    lambda-hat --multirun sampler=base,fast # Run multiple configurations
+Main LLC estimation function using optimized samplers.
 """
 
 import logging
@@ -15,12 +8,11 @@ import time
 from pathlib import Path
 from typing import Dict, Any
 
-import hydra
 import jax
 from omegaconf import OmegaConf
 from hydra.core.hydra_config import HydraConfig
 
-from lambda_hat.config import Config, setup_config
+from lambda_hat.config import Config
 from lambda_hat.targets import build_target, make_loss_full
 from lambda_hat.posterior import (
     make_grad_loss_minibatch,
@@ -47,11 +39,6 @@ def setup_jax_environment():
     else:
         log.info("Using CPU backend")
 
-    # Configure memory preallocation
-    import os
-
-    os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
-
 
 def run_sampler(
     sampler_name: str, cfg: Config, target, key: jax.random.PRNGKey
@@ -59,7 +46,7 @@ def run_sampler(
     """Run a specific sampler and return results"""
     log.info(f"Running {sampler_name} sampler...")
 
-    # Compute beta and gamma (Updated signature)
+    # Compute beta and gamma
     beta, gamma = compute_beta_gamma(cfg.posterior, target.d, cfg.data.n_data)
     log.info(f"Using beta={beta:.6f}, gamma={gamma:.6f}")
 
@@ -102,7 +89,7 @@ def run_sampler(
         # Create loss_full function for Ln recording
         loss_full_for_recording = make_loss_full(target.loss_full_f32)
 
-        # Run SGLD (Updated signature)
+        # Run SGLD
         traces = run_sgld(
             key,
             grad_loss_fn,
@@ -128,14 +115,14 @@ def run_sampler(
         # Create loss_full function for Ln recording
         loss_full_for_recording = make_loss_full(loss_full)
 
-        # Run MCLMC (Updated signature)
+        # Run MCLMC
         traces = run_mclmc(
             key,
             logdensity_fn,
             params0,
             num_samples=cfg.sampler.mclmc.draws,
             num_chains=cfg.sampler.chains,
-            config=cfg.sampler.mclmc,  # Pass the config object
+            config=cfg.sampler.mclmc,
             loss_full_fn=loss_full_for_recording,
         )
 
@@ -171,7 +158,7 @@ def main(cfg: Config) -> None:
     log.info(f"Target built: d={target.d}, L0={target.L0:.6f}")
 
     # Run samplers
-    samplers_to_run = ["sgld", "mclmc"]  # Test SGLD and MCLMC (skip HMC for now)
+    samplers_to_run = ["sgld", "hmc", "mclmc"]  # Test all three samplers
     results = {}
 
     for sampler_name in samplers_to_run:
@@ -214,7 +201,6 @@ def main(cfg: Config) -> None:
             # Updated call to compute_llc_metrics
             metrics = compute_llc_metrics(
                 traces,
-                loss_full,
                 target.L0,
                 n_data=cfg.data.n_data,
                 beta=sampler_data["beta"],
@@ -239,14 +225,6 @@ def main(cfg: Config) -> None:
         # Use Hydra's recorded output dir rather than assuming CWD
         hydra_output_dir = Path(HydraConfig.get().run.dir)
 
-        # Optional guardrail: verify we're in the expected Hydra output directory
-        try:
-            assert Path.cwd().resolve() == hydra_output_dir.resolve()
-        except AssertionError:
-            log.warning(
-                f"Working directory mismatch: cwd={Path.cwd()}, hydra_dir={hydra_output_dir}"
-            )
-
         save_run_artifacts(
             results=results,
             analysis_results=analysis_results,
@@ -256,16 +234,3 @@ def main(cfg: Config) -> None:
         )
 
     log.info("LLC estimation completed successfully!")
-
-
-if __name__ == "__main__":
-    # This allows running as: python -m lambda_hat.entry
-    # Setup configuration and run with Hydra decorator
-    import hydra
-
-    @hydra.main(version_base=None, config_path="../conf", config_name="config")
-    def main_with_hydra(cfg: Config) -> None:
-        return main(cfg)
-
-    setup_config()
-    main_with_hydra()

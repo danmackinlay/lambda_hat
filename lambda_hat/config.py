@@ -145,7 +145,6 @@ class OutputConfig:
     diag_k: int = 16
     diag_seed: int = 1234
     record_Ln_every: int = 10  # compute full-data loss every k kept draws
-    record_theta_every: int = 0  # 0 = don't store params; N = thin to every Nth
 
 
 @dataclass

@@ -80,7 +80,7 @@ Config → Target/Data → ERM Training (L₀) → MCMC Sampling → LLC Analysi
 - **SGLD**: Custom implementation with optional preconditioning (Adam, RMSprop)
 - **HMC/MCLMC**: BlackJAX wrappers with proper API usage
 - Each sampler handles different precision: SGLD uses float32, HMC/MCLMC use float64
-- **Critical**: All samplers use efficient scalar Ln recording via `TraceSpec` to avoid 300GB memory allocations
+- **Critical**: All samplers use efficient scalar Ln recording to avoid 300GB memory allocations
 - Use `loss_full_fn` parameter to record scalar loss values during sampling, not full parameter trajectories
 
 **Configuration Patterns:**
@@ -89,7 +89,6 @@ Config → Target/Data → ERM Training (L₀) → MCMC Sampling → LLC Analysi
 - Parameter flattening/unflattening for structured Haiku parameters
 
 **Memory-Efficient Sampling Architecture:**
-- Uses `TraceSpec` dataclass to configure what gets recorded during MCMC sampling
 - `simple_inference_loop` only records positions when `theta_every > 0` (default: 0 = no positions)
 - All samplers record scalar `Ln` values efficiently via `aux_fn` parameter
 - Analysis functions require traces with `"Ln"` key - position-based analysis removed to prevent OOM
