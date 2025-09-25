@@ -7,7 +7,8 @@ Extracted from the one-phase workflow to be used by the two-stage sampling proce
 import logging
 from typing import Dict, Any
 
-import jax\nimport jax.numpy as jnp
+import jax
+import jax.numpy as jnp
 from omegaconf import DictConfig
 
 from lambda_hat.posterior import (

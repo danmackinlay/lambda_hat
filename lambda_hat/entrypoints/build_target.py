@@ -46,8 +46,8 @@ def build_target_components(key, cfg: DictConfig):
     from lambda_hat.losses import as_dtype
     import jax.numpy as jnp
 
-    X = as_dtype(target_bundle.X, \"float64\")
-    Y = as_dtype(target_bundle.Y, \"float64\")
+    X = as_dtype(target_bundle.X, "float64")
+    Y = as_dtype(target_bundle.Y, "float64")
     # Params stored in f32, cast to f64 for precision
     trained_params = jax.tree.map(lambda x: x.astype(jnp.float64), target_bundle.params0)
     model = target_bundle.model

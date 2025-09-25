@@ -2,8 +2,7 @@
 """Clean, idiomatic JAX/BlackJAX sampling loops"""
 
 # Updated imports
-from typing import Dict, Any, Tuple, Callable, NamedTuple, Optional, TYPE_CHECKING
-from dataclasses import dataclass
+from typing import Dict, Any, Tuple, Callable, NamedTuple, TYPE_CHECKING
 import jax
 import jax.numpy as jnp
 import blackjax
@@ -149,10 +148,10 @@ def run_hmc(
     initial_params: Dict[str, Any],
     num_samples: int,
     num_chains: int,
+    loss_full: Callable,
     step_size: float = 0.01,
     num_integration_steps: int = 10,
     adaptation_steps: int = 1000,
-    loss_full: Callable,
 ) -> Dict[str, jnp.ndarray]:
     """Run HMC with optional adaptation
 
@@ -226,7 +225,8 @@ def run_hmc(
         kernel = hmc_sampler.step
 
         # HMC uses the original parameter structure.
-        loss_fn_for_loop = lambda position: loss_full(position)
+        def loss_fn_for_loop(position):
+            return loss_full(position)
 
         # Use the efficient loop, removing the if/else trace_spec logic.
         return inference_loop_ln_only(
@@ -339,7 +339,8 @@ def run_sgld(
     # Run inference loop for each chain
     def run_chain(key, initial_state):
         # SGLD uses the original parameter structure.
-        loss_fn_for_loop = lambda position: loss_full(position)
+        def loss_fn_for_loop(position):
+            return loss_full(position)
 
         eval_every = getattr(config, 'eval_every', 10)
 

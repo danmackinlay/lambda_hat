@@ -99,8 +99,13 @@ def run_sampling_logic(cfg: DictConfig) -> None:
 
     # Create loss functions in f32 (precision cast dynamically in sampling_runner)
     loss_full_f32, loss_mini_f32 = make_loss_fns(
-        model.apply, X_f32, Y_f32,
-        loss_type=loss_type, noise_scale=noise_scale, student_df=student_df)
+        model.apply,
+        X_f32,
+        Y_f32,
+        loss_type=loss_type,
+        noise_scale=noise_scale,
+        student_df=student_df,
+    )
 
     # Build target bundle for compatibility with existing code
     target = TargetBundle(
@@ -111,7 +116,7 @@ def run_sampling_logic(cfg: DictConfig) -> None:
         X=X_f32,
         Y=Y_f32,
         L0=L0,
-        model=model, # Pass the Haiku object directly
+        model=model,  # Pass the Haiku object directly
     )
 
     # Run the selected sampler using existing machinery
@@ -151,12 +156,12 @@ def run_sampling_logic(cfg: DictConfig) -> None:
         # Determine warmup and recording frequency (needed for analysis)
         sampler_name = cfg.sampler.name
         sampler_specific_cfg = getattr(cfg.sampler, sampler_name, {})
-        warmup = getattr(sampler_specific_cfg, 'warmup', 0)
+        warmup = getattr(sampler_specific_cfg, "warmup", 0)
 
         record_every = 1
-        if sampler_name == 'sgld':
+        if sampler_name == "sgld":
             # SGLD records less frequently
-            record_every = getattr(sampler_specific_cfg, 'eval_every', 10)
+            record_every = getattr(sampler_specific_cfg, "eval_every", 10)
 
         # Calculate the number of warmup steps present in the recorded trace
         warmup_steps_in_trace = warmup // record_every
@@ -186,10 +191,10 @@ def run_sampling_logic(cfg: DictConfig) -> None:
         diag_map = {
             "acceptance_rate": "acceptance_rate",
             "energy": "energy",
-            "is_divergent": "diverging", # ArviZ standard name
+            "is_divergent": "diverging",  # ArviZ standard name
         }
         for az_key, trace_key in diag_map.items():
-             if trace_key in traces:
+            if trace_key in traces:
                 data_dict["sample_stats"][az_key] = np.asarray(traces[trace_key])
 
         az_trace = az.from_dict(**data_dict)

@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Callable
 import jax.numpy as jnp
 
 if TYPE_CHECKING:
-    from .config import Config
+    pass
 
 
 def as_dtype(x, dtype_str):  # 'float32' or 'float64'

@@ -15,13 +15,12 @@ from .training import train_erm
 @dataclass
 class TargetBundle:
     """Simplified TargetBundle - single precision version (memory bloat removed)"""
+
     d: int
     params0: Dict[str, Any]  # Haiku params (single precision)
     # loss(params) -> scalar
     loss_full: Callable[[Dict[str, Any]], jnp.ndarray]
-    loss_minibatch: Callable[
-        [Dict[str, Any], jnp.ndarray, jnp.ndarray], jnp.ndarray
-    ]
+    loss_minibatch: Callable[[Dict[str, Any], jnp.ndarray, jnp.ndarray], jnp.ndarray]
     # data for minibatching (single precision)
     X: jnp.ndarray
     Y: jnp.ndarray
@@ -33,7 +32,6 @@ class TargetBundle:
 def build_target(key, cfg: Config) -> TargetBundle:
     """Return a self-contained target for the pipeline to consume."""
     m_cfg = cfg.model
-    s_cfg = cfg.sampler
 
     if (cfg.target or "mlp") == "mlp":
         # ----- MLP path with Haiku -----
@@ -76,8 +74,12 @@ def build_target(key, cfg: Config) -> TargetBundle:
         # Train in f64 for precision, then cast to f32 for storage efficiency
         X_f64, Y_f64 = as_dtype(X, "float64"), as_dtype(Y, "float64")
         loss_full_f64, _ = make_loss_fns(
-            model.apply, X_f64, Y_f64,
-            loss_type=loss_type, noise_scale=noise_scale, student_df=student_df
+            model.apply,
+            X_f64,
+            Y_f64,
+            loss_type=loss_type,
+            noise_scale=noise_scale,
+            student_df=student_df,
         )
 
         # Train to ERM (θ⋆) in f64 precision
@@ -89,8 +91,12 @@ def build_target(key, cfg: Config) -> TargetBundle:
 
         # Create f32 loss functions for the bundle
         loss_full_f32, loss_minibatch_f32 = make_loss_fns(
-            model.apply, X_f32, Y_f32,
-            loss_type=loss_type, noise_scale=noise_scale, student_df=student_df
+            model.apply,
+            X_f32,
+            Y_f32,
+            loss_type=loss_type,
+            noise_scale=noise_scale,
+            student_df=student_df,
         )
 
         L0 = float(loss_full_f64(params_star_f64))

@@ -2,11 +2,11 @@
 """Simplified analysis functions for Hydra-based LLC experiments"""
 
 from __future__ import annotations
-from typing import Dict, Any, Callable
-import jax
+from typing import Dict
 import jax.numpy as jnp
 import numpy as np
 import arviz as az
+
 # Removed Path import - visualization functions deleted
 # Updated to use new JAX tree API (jax>=0.4.28)
 import warnings
