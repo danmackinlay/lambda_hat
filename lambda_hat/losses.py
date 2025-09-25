@@ -66,15 +66,4 @@ def make_loss_fns(
     return full, minibatch
 
 
-def make_loss_fns_from_config(
-    model_apply: Callable, cfg: Config, X: jnp.ndarray, Y: jnp.ndarray
-):
-    """Legacy wrapper for compatibility with existing code that uses Config object"""
-    return make_loss_fns(
-        model_apply,
-        X,
-        Y,
-        loss_type=cfg.posterior.loss,
-        noise_scale=cfg.data.noise_scale,
-        student_df=cfg.data.student_df,
-    )
+# Legacy wrapper make_loss_fns_from_config deleted - use make_loss_fns directly

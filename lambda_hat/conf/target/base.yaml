@@ -9,8 +9,8 @@ jax:
 
 target:
   seed: 42
-  # Compose a deterministic ID from model/data/seed + precision + code SHA.
-  id: ${fingerprint:${model},${data},${.seed},${jax.enable_x64},${runtime.code_sha}}
+  # Exclude volatile elements like code_sha. Ensure 'training' is included.
+  id: ${fingerprint:${model},${data},${training},${.seed}}
 
 store:
   root: runs

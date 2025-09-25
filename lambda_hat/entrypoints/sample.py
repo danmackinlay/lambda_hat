@@ -15,6 +15,7 @@ from lambda_hat.target_artifacts import load_target_artifact, append_sample_mani
 from lambda_hat.sampling_runner import run_sampler  # Use extracted sampler runner
 from lambda_hat.targets import TargetBundle
 from lambda_hat.losses import make_loss_fns, as_dtype
+from lambda_hat.analysis import compute_llc_metrics
 from lambda_hat.models import build_mlp_forward_fn
 from lambda_hat.models import infer_widths
 
@@ -55,7 +56,7 @@ def run_sampling_logic(cfg: DictConfig) -> None:
             fallback_width=mcfg.get("hidden", 32),
         )
 
-    forward_fn = build_mlp_forward_fn(
+    model = build_mlp_forward_fn(
         in_dim=int(X.shape[-1]),
         widths=widths,
         out_dim=int(Y.shape[-1] if Y.ndim > 1 else 1),
@@ -82,15 +83,9 @@ def run_sampling_logic(cfg: DictConfig) -> None:
     X_f64 = jnp.asarray(X, dtype=jnp.float64)
     Y_f64 = jnp.asarray(Y, dtype=jnp.float64)
 
-    # Guard: params shapes must match forward_fn expectations on a dummy input
+    # Guard: Use model.apply directly. (Removes DummyModel usage, lines 87-95)
     try:
-        # Test with a dummy haiku model-like object
-        class DummyModel:
-            def apply(self, params, rng, x):
-                return forward_fn(params, x)
-
-        dummy_model = DummyModel()
-        _ = dummy_model.apply(params_f32, None, X_f32[:1])
+        _ = model.apply(params_f32, None, X_f32[:1])
     except Exception as e:
         raise RuntimeError(f"Model/params mismatch for target {cfg.target_id}: {e}")
 
@@ -102,27 +97,13 @@ def run_sampling_logic(cfg: DictConfig) -> None:
     noise_scale = data_cfg.get("noise_scale", 0.1)
     student_df = data_cfg.get("student_df", 4.0)
 
-    # Create loss functions using the refactored signature
-    def model_apply(params, rng, x):
-        # Wrapper to match expected signature
-        return forward_fn(params, x)
-
+    # Create loss functions. (Removes manual model_apply wrapper usage, lines 113-123)
     loss_full_f32, loss_mini_f32 = make_loss_fns(
-        model_apply,
-        X_f32,
-        Y_f32,
-        loss_type=loss_type,
-        noise_scale=noise_scale,
-        student_df=student_df,
-    )
+        model.apply, X_f32, Y_f32,
+        loss_type=loss_type, noise_scale=noise_scale, student_df=student_df)
     loss_full_f64, loss_mini_f64 = make_loss_fns(
-        model_apply,
-        X_f64,
-        Y_f64,
-        loss_type=loss_type,
-        noise_scale=noise_scale,
-        student_df=student_df,
-    )
+        model.apply, X_f64, Y_f64,
+        loss_type=loss_type, noise_scale=noise_scale, student_df=student_df)
 
     # Build target bundle for compatibility with existing code
     target = TargetBundle(
@@ -138,7 +119,7 @@ def run_sampling_logic(cfg: DictConfig) -> None:
         X_f64=X_f64,
         Y_f64=Y_f64,
         L0=L0,
-        model={"forward": forward_fn},
+        model=model, # Pass the Haiku object directly
     )
 
     # Run the selected sampler using existing machinery
@@ -162,21 +143,71 @@ def run_sampling_logic(cfg: DictConfig) -> None:
     run_dir = sample_dir / f"run_{run_id}"
     run_dir.mkdir(exist_ok=True)
 
-    # Save traces if available
-    traces = result.get("traces", None)
-    if traces is not None:
-        az_trace = az.from_dict(posterior=jax.tree.map(lambda x: np.asarray(x), traces))
-        az.to_netcdf(az_trace, run_dir / "trace.nc")
-    # Extract metrics
+    # --- Analysis and Trace Saving (Efficient Path) ---
+    # Replace Doc 12, lines 188-213 with the following:
+    traces = result.get("traces", {})
     metrics = {
         "elapsed_time": dt,
         "L0": L0,
-        "n_samples": result.get("n_samples", 0),
     }
+    n_data = X.shape[0]  # Use X loaded from artifact
+    beta = result["beta"]
 
-    # Add any computed metrics from result
+    if "Ln" in traces:
+        Ln_values = traces["Ln"]
+
+        # Determine warmup and recording frequency (needed for analysis)
+        sampler_name = cfg.sampler.name
+        sampler_specific_cfg = getattr(cfg.sampler, sampler_name, {})
+        warmup = getattr(sampler_specific_cfg, 'warmup', 0)
+
+        record_every = 1
+        if sampler_name == 'sgld':
+            # SGLD records less frequently
+            record_every = getattr(sampler_specific_cfg, 'eval_every', 10)
+
+        # Calculate the number of warmup steps present in the recorded trace
+        warmup_steps_in_trace = warmup // record_every
+
+        # Compute LLC metrics efficiently
+        llc_metrics = compute_llc_metrics(
+            Ln_values, L0, n_data=n_data, beta=beta, warmup=warmup_steps_in_trace
+        )
+        metrics.update(llc_metrics)
+        metrics["n_samples"] = Ln_values.shape[1] - warmup_steps_in_trace
+
+        # --- Save traces using ArviZ ---
+        # Compute LLC values for ArviZ structure (full trace including warmup)
+        llc_values = float(n_data) * float(beta) * (Ln_values - L0)
+
+        # Structure ArviZ object correctly
+        data_dict = {
+            "posterior": {
+                "Ln": np.asarray(Ln_values),
+                "llc": np.asarray(llc_values),
+            },
+            "sample_stats": {},
+        }
+
+        # Add diagnostics if present
+        # Map keys from sampler output to standard ArviZ names if needed
+        diag_map = {
+            "acceptance_rate": "acceptance_rate",
+            "energy": "energy",
+            "is_divergent": "diverging", # ArviZ standard name
+        }
+        for az_key, trace_key in diag_map.items():
+             if trace_key in traces:
+                data_dict["sample_stats"][az_key] = np.asarray(traces[trace_key])
+
+        az_trace = az.from_dict(**data_dict)
+        az.to_netcdf(az_trace, run_dir / "trace.nc")
+    else:
+        print("[WARNING] No 'Ln' found in traces. Analysis and trace saving skipped.")
+
+    # Add any remaining computed metrics from result
     for k, v in result.items():
-        if k not in ["samples", "elapsed_time"]:
+        if k not in ["traces", "elapsed_time", "beta"]:
             if isinstance(v, (int, float, str, bool)):
                 metrics[k] = v
             elif hasattr(v, "item"):

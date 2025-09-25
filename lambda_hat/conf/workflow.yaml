@@ -53,6 +53,5 @@ training:
   batch_size: null  # Use full batch by default
 
 # --- Dynamic Target ID Resolution ---
-# CRITICAL: This calculates the target_id based on the current configuration.
-# Must match the definition in conf/target/base.yaml
-target_id: ${fingerprint:${model},${data},${target.seed},${jax.enable_x64},${runtime.code_sha}}
+# Exclude volatile elements like code_sha. Ensure 'training' is included.
+target_id: ${fingerprint:${model},${data},${training},${target.seed}}

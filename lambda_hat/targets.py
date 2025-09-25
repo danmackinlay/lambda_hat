@@ -8,7 +8,7 @@ import jax.numpy as jnp
 from .config import Config
 from .data import make_dataset
 from .models import infer_widths, build_mlp_forward_fn, count_params
-from .losses import make_loss_fns_from_config, as_dtype
+from .losses import make_loss_fns, as_dtype
 from .training import train_erm
 
 
@@ -77,10 +77,20 @@ def build_target(key, cfg: Config) -> TargetBundle:
         X_f32, Y_f32 = as_dtype(X, s_cfg.sgld.dtype), as_dtype(Y, s_cfg.sgld.dtype)
         X_f64, Y_f64 = as_dtype(X, s_cfg.hmc.dtype), as_dtype(Y, s_cfg.hmc.dtype)
 
+        # Determine loss parameters explicitly (required for make_loss_fns)
+        loss_type = cfg.posterior.loss
+        noise_scale = cfg.data.noise_scale
+        student_df = cfg.data.student_df
+
+        # Helper to create losses using the modernized interface
+        def create_losses(X_data, Y_data):
+            return make_loss_fns(
+                model.apply, X_data, Y_data,
+                loss_type=loss_type, noise_scale=noise_scale, student_df=student_df
+            )
+
         # Create loss functions for f64 (for ERM training)
-        loss_full_f64, loss_minibatch_f64 = make_loss_fns_from_config(
-            model.apply, cfg, X_f64, Y_f64
-        )
+        loss_full_f64, loss_minibatch_f64 = create_losses(X_f64, Y_f64)
 
         # Train to ERM (θ⋆) in f64 precision
         params_star_f64, metrics = train_erm(loss_full_f64, params_init, cfg, key)
@@ -91,9 +101,7 @@ def build_target(key, cfg: Config) -> TargetBundle:
         )
 
         # Create loss functions for f32
-        loss_full_f32, loss_minibatch_f32 = make_loss_fns_from_config(
-            model.apply, cfg, X_f32, Y_f32
-        )
+        loss_full_f32, loss_minibatch_f32 = create_losses(X_f32, Y_f32)
 
         L0 = float(loss_full_f64(params_star_f64))
         d = count_params(params_star_f64)

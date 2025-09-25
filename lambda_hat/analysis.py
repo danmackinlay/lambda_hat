@@ -8,11 +8,11 @@ import jax.numpy as jnp
 import numpy as np
 import arviz as az
 from pathlib import Path
-from jax.tree_util import tree_map
+# Updated to use new JAX tree API (jax>=0.4.28)
 import warnings
 
 
-def compute_llc_from_Ln(
+def compute_llc_metrics(
     Ln_values: jnp.ndarray,
     L0: float,
     n_data: int,
@@ -94,87 +94,7 @@ def compute_llc_from_Ln(
     return metrics
 
 
-def compute_llc_metrics(
-    traces: Dict[str, jnp.ndarray],
-    loss_fn: Callable,
-    L0: float,
-    n_data: int,
-    beta: float,
-    warmup: int = 0,
-) -> Dict[str, float]:
-    """LEGACY: Compute LLC metrics from sampling traces (MEMORY INTENSIVE).
-
-    ⚠️  WARNING: This function may cause OOM errors with large parameter counts.
-    Use compute_llc_from_Ln() with pre-computed Ln values for better performance.
-
-    Args:
-        traces: Dictionary with 'position' key containing parameter samples
-        loss_fn: Loss function to evaluate on parameter samples
-        L0: Reference loss value (loss at ERM solution)
-        n_data: Dataset size (n)
-        beta: Inverse temperature (beta)
-        warmup: Number of warmup samples to discard from the beginning
-
-    Returns:
-        Dictionary with LLC statistics (hat{lambda})
-    """
-    warnings.warn(
-        "compute_llc_metrics() is deprecated and memory-intensive. "
-        "Use compute_llc_from_Ln() with pre-computed Ln values instead.",
-        DeprecationWarning,
-    )
-
-    # Check if traces already contain pre-computed Ln values (efficient path)
-    if "Ln" in traces:
-        return compute_llc_from_Ln(traces["Ln"], L0, n_data, beta, warmup)
-
-    # Fall back to legacy memory-intensive computation
-    # Extract positions
-    positions = traces["position"]  # (chains, draws, param_structure)
-
-    # Determine chains and draws robustly
-    if isinstance(positions, dict):
-        # Handle structured params (Haiku), infer shape from the first leaf
-        first_leaf = jax.tree_util.tree_leaves(positions)[0]
-        chains, draws = first_leaf.shape[:2]
-    else:
-        # Handle flat params
-        chains, draws = positions.shape[:2]
-
-    # Apply warmup: discard initial samples efficiently
-    if warmup >= draws:
-        # If warmup is too large, use all draws but warn
-        warnings.warn(
-            f"Warmup ({warmup}) >= total draws ({draws}). Using all samples without warmup."
-        )
-        warmup = 0
-
-    if warmup > 0:
-        if isinstance(positions, dict):
-            # Discard warmup samples from the traces before processing
-            positions = tree_map(lambda x: x[:, warmup:, ...], positions)
-        else:
-            positions = positions[:, warmup:, ...]
-
-        # Update draws count after warmup
-        draws = draws - warmup
-
-    # Compute loss for all samples using vmap (MEMORY INTENSIVE!)
-    # Flatten chains and draws for batch computation
-    if isinstance(positions, dict):
-        flat_positions = tree_map(lambda x: x.reshape(-1, *x.shape[2:]), positions)
-        losses = jax.vmap(loss_fn)(flat_positions)
-    else:
-        flat_positions = positions.reshape(-1, *positions.shape[2:])
-        losses = jax.vmap(loss_fn)(flat_positions)
-
-    # Reshape back to (chains, draws)
-    losses = losses.reshape(chains, draws)
-
-    # Use the efficient function with computed losses
-    return compute_llc_from_Ln(
-        losses, L0, n_data, beta, warmup=0
-    )  # warmup already applied
+# Legacy compute_llc_metrics function deleted - now using memory-efficient compute_llc_metrics (renamed from compute_llc_from_Ln)
 
 
 def analyze_from_Ln_dict(
@@ -198,13 +118,13 @@ def analyze_from_Ln_dict(
     """
     analysis_results = {}
     for sampler_name, Ln_values in Ln_histories.items():
-        analysis_results[sampler_name] = compute_llc_from_Ln(
+        analysis_results[sampler_name] = compute_llc_metrics(
             Ln_values, L0, n_data, beta, warmup
         )
     return analysis_results
 
 
-def create_trace_plots_from_Ln(
+def create_trace_plots(
     Ln_histories: Dict[str, jnp.ndarray],
     analysis_results: Dict[str, Dict],
     output_dir: Path,
@@ -277,73 +197,7 @@ def create_trace_plots_from_Ln(
     plt.close()
 
 
-def create_trace_plots(
-    results: Dict[str, Any], analysis_results: Dict[str, Dict], output_dir: Path
-) -> None:
-    """LEGACY: Create trace plots for LLC values (MEMORY INTENSIVE).
-
-    ⚠️  WARNING: This function may cause OOM errors with large parameter counts.
-    Use create_trace_plots_from_Ln() with pre-computed Ln values for better performance.
-
-    Args:
-        results: Raw sampling results
-        analysis_results: Analysis results with metrics
-        output_dir: Directory to save plots
-    """
-    warnings.warn(
-        "create_trace_plots() is deprecated and may be memory-intensive. "
-        "Use create_trace_plots_from_Ln() with pre-computed Ln values instead.",
-        DeprecationWarning,
-    )
-
-    if not results:
-        return
-
-    import matplotlib.pyplot as plt
-
-    fig, axes = plt.subplots(len(results), 1, figsize=(10, 3 * len(results)))
-    if len(results) == 1:
-        axes = [axes]
-
-    for i, (sampler_name, sampler_data) in enumerate(results.items()):
-        ax = axes[i]
-
-        # Get LLC metrics
-        metrics = analysis_results.get(sampler_name, {})
-        llc_mean = metrics.get("llc_mean", 0.0)
-        ess = metrics.get("ess", 0.0)
-
-        # Try to extract actual LLC values if available
-        if "Ln" in sampler_data:
-            # Use pre-computed Ln values if available
-            Ln_values = sampler_data["Ln"]
-            # This would require L0, n_data, beta to compute LLC - skip for legacy compatibility
-            chains, draws = 4, 1000  # Placeholder
-            trace_data = np.random.normal(llc_mean, 0.1, (chains, draws))
-        else:
-            # Create dummy trace for illustration
-            chains, draws = 4, 1000  # Placeholder
-            trace_data = np.random.normal(llc_mean, 0.1, (chains, draws))
-
-        for chain in range(chains):
-            ax.plot(trace_data[chain], alpha=0.7, linewidth=0.8)
-
-        ax.axhline(
-            llc_mean,
-            color="red",
-            linestyle="--",
-            alpha=0.8,
-            label=f"Mean: {llc_mean:.4f}",
-        )
-        ax.set_title(f"{sampler_name.upper()} LLC Traces (ESS: {ess:.1f})")
-        ax.set_xlabel("Draw")
-        ax.set_ylabel("LLC")
-        ax.legend()
-        ax.grid(True, alpha=0.3)
-
-    plt.tight_layout()
-    plt.savefig(output_dir / "llc_traces.png", dpi=150, bbox_inches="tight")
-    plt.close()
+# Legacy create_trace_plots function deleted - now using memory-efficient create_trace_plots (renamed from create_trace_plots_from_Ln)
 
 
 def create_comparison_plot(analysis_results: Dict[str, Dict], output_dir: Path) -> None:
