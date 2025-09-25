@@ -14,24 +14,18 @@ from .training import train_erm
 
 @dataclass
 class TargetBundle:
+    """Simplified TargetBundle - single precision version (memory bloat removed)"""
     d: int
-    params0_f32: Dict[str, Any]  # Haiku params
-    params0_f64: Dict[str, Any]  # Haiku params
+    params0: Dict[str, Any]  # Haiku params (single precision)
     # loss(params) -> scalar
-    loss_full_f32: Callable[[Dict[str, Any]], jnp.ndarray]
-    loss_minibatch_f32: Callable[
+    loss_full: Callable[[Dict[str, Any]], jnp.ndarray]
+    loss_minibatch: Callable[
         [Dict[str, Any], jnp.ndarray, jnp.ndarray], jnp.ndarray
     ]
-    loss_full_f64: Callable[[Dict[str, Any]], jnp.ndarray]
-    loss_minibatch_f64: Callable[
-        [Dict[str, Any], jnp.ndarray, jnp.ndarray], jnp.ndarray
-    ]
-    # data for minibatching
-    X_f32: jnp.ndarray
-    Y_f32: jnp.ndarray
-    X_f64: jnp.ndarray
-    Y_f64: jnp.ndarray
-    L0: float  # L_n at params0 (f64)
+    # data for minibatching (single precision)
+    X: jnp.ndarray
+    Y: jnp.ndarray
+    L0: float  # L_n at params0
     # Haiku model for forward passes
     model: Any
 
@@ -72,52 +66,43 @@ def build_target(key, cfg: Config) -> TargetBundle:
         key, subkey = jax.random.split(key)
         params_init = model.init(subkey, X[:1])  # Use first data point for init
 
-        # Cast data to both dtypes
-        # Accessing dtypes correctly:
-        X_f32, Y_f32 = as_dtype(X, s_cfg.sgld.dtype), as_dtype(Y, s_cfg.sgld.dtype)
-        X_f64, Y_f64 = as_dtype(X, s_cfg.hmc.dtype), as_dtype(Y, s_cfg.hmc.dtype)
+        # Data will be cast to required precision dynamically in sample.py
 
         # Determine loss parameters explicitly (required for make_loss_fns)
         loss_type = cfg.posterior.loss
         noise_scale = cfg.data.noise_scale
         student_df = cfg.data.student_df
 
-        # Helper to create losses using the modernized interface
-        def create_losses(X_data, Y_data):
-            return make_loss_fns(
-                model.apply, X_data, Y_data,
-                loss_type=loss_type, noise_scale=noise_scale, student_df=student_df
-            )
-
-        # Create loss functions for f64 (for ERM training)
-        loss_full_f64, loss_minibatch_f64 = create_losses(X_f64, Y_f64)
+        # Train in f64 for precision, then cast to f32 for storage efficiency
+        X_f64, Y_f64 = as_dtype(X, "float64"), as_dtype(Y, "float64")
+        loss_full_f64, _ = make_loss_fns(
+            model.apply, X_f64, Y_f64,
+            loss_type=loss_type, noise_scale=noise_scale, student_df=student_df
+        )
 
         # Train to ERM (θ⋆) in f64 precision
         params_star_f64, metrics = train_erm(loss_full_f64, params_init, cfg, key)
 
-        # Convert to f32
-        params_star_f32 = jax.tree.map(
-            lambda a: a.astype(jnp.float32), params_star_f64
-        )
+        # Store in f32 for memory efficiency (precision determined dynamically in sample.py)
+        X_f32, Y_f32 = as_dtype(X, "float32"), as_dtype(Y, "float32")
+        params_star_f32 = jax.tree.map(lambda a: a.astype(jnp.float32), params_star_f64)
 
-        # Create loss functions for f32
-        loss_full_f32, loss_minibatch_f32 = create_losses(X_f32, Y_f32)
+        # Create f32 loss functions for the bundle
+        loss_full_f32, loss_minibatch_f32 = make_loss_fns(
+            model.apply, X_f32, Y_f32,
+            loss_type=loss_type, noise_scale=noise_scale, student_df=student_df
+        )
 
         L0 = float(loss_full_f64(params_star_f64))
         d = count_params(params_star_f64)
 
         return TargetBundle(
             d=d,
-            params0_f32=params_star_f32,
-            params0_f64=params_star_f64,
-            loss_full_f32=loss_full_f32,
-            loss_minibatch_f32=loss_minibatch_f32,
-            loss_full_f64=loss_full_f64,
-            loss_minibatch_f64=loss_minibatch_f64,
-            X_f32=X_f32,
-            Y_f32=Y_f32,
-            X_f64=X_f64,
-            Y_f64=Y_f64,
+            params0=params_star_f32,
+            loss_full=loss_full_f32,
+            loss_minibatch=loss_minibatch_f32,
+            X=X_f32,
+            Y=Y_f32,
             L0=L0,
             model=model,
         )
@@ -127,9 +112,8 @@ def build_target(key, cfg: Config) -> TargetBundle:
         # For quadratic target, we'll use a dummy Haiku model structure
         d = int(cfg.quad_dim or m_cfg.target_params or m_cfg.in_dim)
 
-        # Create dummy params structure (single layer with d parameters)
-        params0_f64 = {"quadratic": {"w": jnp.zeros((d,), dtype=jnp.float64)}}
-        params0_f32 = {"quadratic": {"w": jnp.zeros((d,), dtype=jnp.float32)}}
+        # Create dummy params structure (single layer with d parameters) - f32 for efficiency
+        params0 = {"quadratic": {"w": jnp.zeros((d,), dtype=jnp.float32)}}
 
         # loss_full(params) = 0.5 ||params||^2
         def _lf(params):
@@ -141,12 +125,10 @@ def build_target(key, cfg: Config) -> TargetBundle:
         def _lb(params, Xb, Yb):  # Keep (params, Xb, Yb) signature
             return _lf(params)
 
-        # Provide trivial data so SGLD minibatching works
+        # Provide trivial data so SGLD minibatching works - f32 for efficiency
         n = int(cfg.data.n_data)
-        X_f32 = jnp.zeros((n, 1), dtype=jnp.float32)
-        Y_f32 = jnp.zeros((n, 1), dtype=jnp.float32)
-        X_f64 = jnp.zeros((n, 1), dtype=jnp.float64)
-        Y_f64 = jnp.zeros((n, 1), dtype=jnp.float64)
+        X = jnp.zeros((n, 1), dtype=jnp.float32)
+        Y = jnp.zeros((n, 1), dtype=jnp.float32)
 
         L0 = 0.0  # L_n at params0=0
 
@@ -155,16 +137,11 @@ def build_target(key, cfg: Config) -> TargetBundle:
 
         return TargetBundle(
             d=d,
-            params0_f32=params0_f32,
-            params0_f64=params0_f64,
-            loss_full_f32=lambda p: _lf(p).astype(jnp.float32),
-            loss_minibatch_f32=lambda p, Xb, Yb: _lb(p, Xb, Yb).astype(jnp.float32),
-            loss_full_f64=lambda p: _lf(p).astype(jnp.float64),
-            loss_minibatch_f64=lambda p, Xb, Yb: _lb(p, Xb, Yb).astype(jnp.float64),
-            X_f32=X_f32,
-            Y_f32=Y_f32,
-            X_f64=X_f64,
-            Y_f64=Y_f64,
+            params0=params0,
+            loss_full=_lf,
+            loss_minibatch=_lb,
+            X=X,
+            Y=Y,
             L0=L0,
             model=model,
         )
