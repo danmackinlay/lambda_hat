@@ -1,8 +1,14 @@
 # Lambda-Hat (λ̂): LLC Experiments in estimating the Local Learning Coefficient
 
+In [Singular Learning Theory (SLT)](https://singularlearningtheory.com), the **Local Learning Coefficient (LLC)** quantifies the effective local dimensionality of a model around a trained optimum.
 
-Lambda-Hat provides a streamlined framework for estimating the Local Learning Coefficient (LLC).
-It uses JAX/BlackJAX for MCMC sampling, Hydra for configuration management, and Haiku for neural network definitions.
+This repo provides benchmark estimators of LLC on small but non-trivial neural networks, using standard industrial tooling:
+
+* [BlackJAX](https://github.com/blackjax-devs/blackjax/tree/1.2.5) for sampling
+* [ArviZ](https://python.arviz.org/) for diagnostics,
+* [Hydra](https://hydra.cc/) for configuration management
+* [Haiku](https://github.com/haiku/haiku) for neural network definitions.
+
 
 ## Concept
 
@@ -18,7 +24,6 @@ This separation provides:
 * **Isolation**: Target configuration and sampler hyper-parameters are decoupled
 * **Cost control**: Resource-intensive target building and cheaper sampling jobs can be optimized independently
 
----
 
 ## Installation
 
