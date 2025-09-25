@@ -93,7 +93,7 @@ def run_sampler(
             grad_loss_fn,
             initial_params=initial_params,
             params0=params0,
-            data=(target.X_f32, target.Y_f32),
+            data=(target.X, target.Y),
             config=cfg.sampler.sgld,
             num_chains=cfg.sampler.chains,
             beta=beta,
