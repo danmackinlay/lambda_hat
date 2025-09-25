@@ -6,10 +6,10 @@ You can optionally enable diagonal preconditioning for SGLD to improve practical
 
 ```bash
 # RMSProp/pSGLD-style
-uv run python -m llc run --sgld-precond=rmsprop --sgld-beta2=0.999 --sgld-eps=1e-8
+uv run python -m lambda_hat run --sgld-precond=rmsprop --sgld-beta2=0.999 --sgld-eps=1e-8
 
 # Adam-preconditioned SGLD
-uv run python -m llc run --sgld-precond=adam --sgld-beta1=0.9 --sgld-beta2=0.999 \
+uv run python -m lambda_hat run --sgld-precond=adam --sgld-beta1=0.9 --sgld-beta2=0.999 \
   --sgld-eps=1e-8 --sgld-bias-correction
 ```
 

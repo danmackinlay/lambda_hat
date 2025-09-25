@@ -21,7 +21,7 @@ def setup_logging(verbose: bool = False):
         logging.getLogger("matplotlib").setLevel(logging.WARNING)
         logging.getLogger("arviz").setLevel(logging.WARNING)
 
-@click.group()
+@click.group(help="Lambda-Hat: local posterior (LLC) benchmarking CLI.")
 @click.option("-v", "--verbose", is_flag=True, help="Enable verbose logging")
 def cli(verbose):
     setup_logging(verbose)
@@ -133,7 +133,7 @@ def analyze(run_dir, which, plots):
 
         click.echo(f"\n=== {sampler.upper()} ===")
         idata = az.from_netcdf(nc_file)
-        summary = az.summary(idata, var_names=["llc"])
+        summary = az.summary(idata, var_names=["lambda_hat"])
         click.echo(summary)
 
         # Generate requested plots

@@ -585,7 +585,7 @@ wheels = [
 ]
 
 [[package]]
-name = "llc"
+name = "lambda-hat"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [

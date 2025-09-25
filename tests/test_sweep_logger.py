@@ -1,6 +1,6 @@
 """Test sweep command logger functionality."""
 
-from llc.commands.sweep_cmd import _save_sweep_results
+from lambda_hat.commands.sweep_cmd import _save_sweep_results
 
 
 def test_save_sweep_no_crash_on_empty():

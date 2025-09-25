@@ -21,11 +21,11 @@ def _normalize(cfg) -> dict:
     return _strip_irrelevant(d)
 
 def _code_version() -> str:
-    v = os.environ.get("LLC_CODE_VERSION")
+    v = os.environ.get("LAMBDA_HAT_CODE_VERSION")
     if v: return str(v)
     # simple filesha of llc/*
     h = hashlib.sha1()
-    for root,_,files in os.walk("llc"):
+    for root,_,files in os.walk("lambda_hat"):
         for f in sorted(files):
             if f.endswith(".py"):
                 h.update(open(os.path.join(root,f),"rb").read())

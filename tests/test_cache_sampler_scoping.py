@@ -1,7 +1,7 @@
 import copy
 import os
 from unittest.mock import patch
-from llc.cache import run_id, run_family_id
+from lambda_hat.cache import run_id, run_family_id
 
 
 def _with(d, **kw):
@@ -80,10 +80,10 @@ def test_family_id_ignores_sampler_and_code_version():
     cfg_sgld = _with(cfg_base, samplers=("sgld",), sgld_step_size=1e-6)
 
     # Mock different code versions
-    with patch.dict(os.environ, {"LLC_CODE_VERSION": "v1.0"}):
+    with patch.dict(os.environ, {"LAMBDA_HAT_CODE_VERSION": "v1.0"}):
         fam1 = run_family_id(cfg_hmc)
 
-    with patch.dict(os.environ, {"LLC_CODE_VERSION": "v2.0"}):
+    with patch.dict(os.environ, {"LAMBDA_HAT_CODE_VERSION": "v2.0"}):
         fam2 = run_family_id(cfg_sgld)
 
     assert fam1 == fam2

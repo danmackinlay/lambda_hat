@@ -13,13 +13,13 @@ Each run is keyed by a hash of (normalized config, code fingerprint).
 
 ```bash
 # Normal run (uses cache if available)
-uv run python -m llc run --preset=quick
+uv run python -m lambda_hat run --preset=quick
 
 # Force re-run even if cached
-uv run python -m llc run --preset=quick --no-skip
+uv run python -m lambda_hat run --preset=quick --no-skip
 
 # Override code version (for CI/Modal deployments)
-LLC_CODE_VERSION=deploy-123 uv run python -m llc run
+LLC_CODE_VERSION=deploy-123 uv run python -m lambda_hat run
 ```
 
 ## Sampler-scoped hashing

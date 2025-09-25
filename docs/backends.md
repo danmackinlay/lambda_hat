@@ -43,13 +43,13 @@ uv run modal volume create llc-runs      # optional; code can create it on first
 
 ```bash
 # Single run
-uv run python -m llc run --backend=modal --preset=quick --sampler sghmc
+uv run python -m lambda_hat run --backend=modal --preset=quick --sampler sghmc
 
 # Single run with specific GPU types
-uv run python -m llc run --backend=modal --gpu-mode=vectorized --gpu-types=H100,A100
+uv run python -m lambda_hat run --backend=modal --gpu-mode=vectorized --gpu-types=H100,A100
 
 # Sweep (one job per sampler - default behavior)
-uv run python -m llc sweep --backend=modal --gpu-types=L40S
+uv run python -m lambda_hat sweep --backend=modal --gpu-types=L40S
 
 ```
 
@@ -101,7 +101,7 @@ If invalid types are specified, the system warns and falls back to L40S.
 
 ### Artifact Management
 
-**Automatic download**: When you run `llc run/sweep --backend=modal`, runs are automatically downloaded to `./runs/<run_id>/` as each job completes.
+**Automatic download**: When you run `lambda-hat run/sweep --backend=modal`, runs are automatically downloaded to `./runs/<run_id>/` as each job completes.
 
 **Manual retrieval**: For browsing or recovering old runs from the Modal volume use `llc pull-runs`.
 
@@ -154,11 +154,11 @@ Modal jobs can hang indefinitely if your account runs out of funds, since Modal'
 
 ```bash
 # Single run with GPU
-uv run python -m llc run --backend=submitit --gpu-mode=vectorized \
+uv run python -m lambda_hat run --backend=submitit --gpu-mode=vectorized \
   --slurm-partition=gpu --account=abc123 --timeout-min=119 --sampler hmc
 
 # Sweep (one job per sampler - default behavior)
-uv run python -m llc sweep --backend=submitit \
+uv run python -m lambda_hat sweep --backend=submitit \
   --gpu-mode=vectorized --slurm-partition=gpu --timeout-min=119
 ```
 
@@ -197,7 +197,7 @@ uv sync --extra slurm --extra cuda12
 
 ```bash
 # vectorized = 1 GPU per job, multiple chains batched
-uv run python -m llc run --backend=submitit \
+uv run python -m lambda_hat run --backend=submitit \
   --gpu-mode=vectorized \
   --slurm-partition=gpu --account=abc123 \
   --timeout-min=119 --cpus=4 --mem-gb=16 --sampler sghmc

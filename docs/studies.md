@@ -50,7 +50,7 @@ gpu_mode: vectorized
 Run with:
 
 ```bash
-uv run llc sweep --study study.yaml
+uv run lambda-hat sweep --study study.yaml
 ```
 
 This creates 3 problems × 5 samplers × 5 seeds = 75 jobs. Each matrix item expands to **one job per sampler**. Every job produces an **atomic run** with a single sampler's artifacts and metrics.
@@ -62,7 +62,7 @@ For quick experiments, use JSON grids directly:
 ### Sampler Variants Only
 
 ```bash
-uv run llc sweep --sampler-grid='[
+uv run lambda-hat sweep --sampler-grid='[
   {"name":"sgld","overrides":{"sgld_precond":"none"}},
   {"name":"sgld","overrides":{"sgld_precond":"adam","sgld_beta2":0.999}},
   {"name":"hmc","overrides":{"hmc_num_integration_steps":20}}
@@ -72,7 +72,7 @@ uv run llc sweep --sampler-grid='[
 ### Problem Variants Only
 
 ```bash
-uv run llc sweep --problem-grid='[
+uv run lambda-hat sweep --problem-grid='[
   {"name":"dim_5k","overrides":{"target_params":5000}},
   {"name":"dim_10k","overrides":{"target_params":10000}}
 ]'
@@ -81,7 +81,7 @@ uv run llc sweep --problem-grid='[
 ### Both Together
 
 ```bash
-uv run llc sweep \
+uv run lambda-hat sweep \
   --problem-grid='[{"name":"large","overrides":{"target_params":10000}}]' \
   --sampler-grid='[{"name":"sgld","overrides":{"sgld_precond":"adam"}}]'
 ```
@@ -149,10 +149,10 @@ seeds: [0, 1, 2, 3, 4]
 
 ```bash
 # ESS/sec vs problem size, colored by sampler
-uv run llc plot-sweep --size-col target_params --samplers sgld,sghmc,hmc
+uv run lambda-hat plot-sweep --size-col target_params --samplers sgld,sghmc,hmc
 
 # Filter to specific problem variants
-uv run llc plot-sweep --filters "problem=large"
+uv run lambda-hat plot-sweep --filters "problem=large"
 ```
 
 **Family Grouping**: The `family_id` allows cross-sampler comparisons on identical (problem, seed) combinations, enabling fair statistical comparisons. Per-sampler parameters only affect the cache key **for that sampler**; knobs for other samplers are ignored when hashing.

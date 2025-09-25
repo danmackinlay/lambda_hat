@@ -1,5 +1,5 @@
-from llc.config import Config
-from llc.run import run_one
+from lambda_hat.config import Config
+from lambda_hat.run import run_one
 
 def test_smoke_quadratic_sgld():
     cfg = Config(

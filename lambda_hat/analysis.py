@@ -33,7 +33,7 @@ def stack_ragged_2d(arrs: List[np.ndarray]) -> Optional[np.ndarray]:
     return np.stack([a[:t, :d] for a in arrs], axis=0)  # (C, T, D)
 
 def to_idata(*, Ln_histories, theta_thin, acceptance, energy, n, beta, L0, max_theta_dims=8):
-    """Ragged → (C,T) stack + build InferenceData with posterior['llc','L'] and sample_stats."""
+    """Ragged → (C,T) stack + build InferenceData with posterior['lambda_hat','L'] and sample_stats."""
 
     # L traces (C,T)
     if not Ln_histories or all(len(h) == 0 for h in Ln_histories):
@@ -102,9 +102,9 @@ def to_idata(*, Ln_histories, theta_thin, acceptance, energy, n, beta, L0, max_t
                 sstats["energy"] = E
 
     data = {
-        "posterior": {"llc": llc, "L": L},
+        "posterior": {"lambda_hat": llc, "L": L},
         "coords": {"chain": np.arange(C), "draw": np.arange(T)},
-        "dims": {"llc": ["chain", "draw"], "L": ["chain", "draw"]},
+        "dims": {"lambda_hat": ["chain", "draw"], "L": ["chain", "draw"]},
         "sample_stats": sstats if sstats else None,
     }
 
@@ -118,8 +118,8 @@ def to_idata(*, Ln_histories, theta_thin, acceptance, energy, n, beta, L0, max_t
     return az.from_dict(**data)
 
 def llc_point_se(idata):
-    mu = float(idata.posterior["llc"].values.mean())
-    summ = az.summary(idata, var_names=["llc"])
+    mu = float(idata.posterior["lambda_hat"].values.mean())
+    summ = az.summary(idata, var_names=["lambda_hat"])
     out = {"llc_mean": mu}
     if not summ.empty:
         ess = float(summ.get("ess_bulk", np.nan).iloc[0])
@@ -135,7 +135,7 @@ def llc_point_se(idata):
 
 def efficiency_metrics(*, idata, timings, work, n_data, sgld_batch=None):
     """Compute ESS/sec, ESS/FDE, WNV (time/FDE)."""
-    summ = az.summary(idata, var_names=["llc"])
+    summ = az.summary(idata, var_names=["lambda_hat"])
     if summ.empty:
         return {
             "ess": np.nan,
@@ -195,8 +195,8 @@ def fig_running_llc(idata, n, beta, L0, title):
     lam_pooled = n * float(beta) * (pooled - L0)  # (T,)
 
     # mean ± 2·SE band
-    summ = az.summary(idata, var_names=["llc"])
-    mu, se = float(idata.posterior["llc"].values.mean()), np.nan
+    summ = az.summary(idata, var_names=["lambda_hat"])
+    mu, se = float(idata.posterior["lambda_hat"].values.mean()), np.nan
     if not summ.empty:
         ess = float(summ["ess_bulk"].iloc[0])
         sd = float(summ["sd"].iloc[0])
@@ -220,7 +220,7 @@ def fig_running_llc(idata, n, beta, L0, title):
 
 def fig_rank_llc(idata):
     """LLC rank plot."""
-    axes = az.plot_rank(idata, var_names=["llc"], combined=True, kind="bars")
+    axes = az.plot_rank(idata, var_names=["lambda_hat"], combined=True, kind="bars")
     if hasattr(axes, 'fig'):
         return axes.fig
     elif isinstance(axes, (list, tuple, np.ndarray)):
@@ -230,7 +230,7 @@ def fig_rank_llc(idata):
 
 def fig_autocorr_llc(idata):
     """LLC autocorrelation plot."""
-    axes = az.plot_autocorr(idata, var_names=["llc"])
+    axes = az.plot_autocorr(idata, var_names=["lambda_hat"])
     return (
         axes[0].figure if isinstance(axes, (list, tuple, np.ndarray)) else axes.figure
     )

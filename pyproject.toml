@@ -3,10 +3,10 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-include = ["llc*"]
+include = ["lambda_hat*"]
 
 [project]
-name = "llc"
+name = "lambda-hat"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
@@ -22,7 +22,7 @@ dependencies = [
 ]
 
 [project.scripts]
-llc = "llc.cli:cli"
+lambda-hat = "lambda_hat.cli:cli"
 
 [project.optional-dependencies]
 # SLURM backend

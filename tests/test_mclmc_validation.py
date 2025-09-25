@@ -1,7 +1,7 @@
 """Tests for MCLMC parameter validation and BlackJAX 1.2.5 API alignment."""
 
 import pytest
-from llc.validation import validate_mclmc_config, validate_config_before_dispatch
+from lambda_hat.validation import validate_mclmc_config, validate_config_before_dispatch
 
 
 def test_validate_mclmc_config_success():

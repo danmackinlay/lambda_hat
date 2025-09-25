@@ -7,7 +7,7 @@ The system supports different target functions:
 ### Neural Network Targets (Default)
 
 ```bash
-uv run python -m llc run --preset=quick
+uv run python -m lambda_hat run --preset=quick
 ```
 
 **Model Configuration:**
@@ -31,7 +31,7 @@ uv run python -m llc run --preset=quick
 ### Analytical Quadratic Target
 
 ```bash
-uv run python -m llc run --target=quadratic --quad-dim=4
+uv run python -m lambda_hat run --target=quadratic --quad-dim=4
 ```
 
 The quadratic target uses L_n(θ) = 0.5||θ||² for testing sampler correctness and factor-of-2 bug detection.

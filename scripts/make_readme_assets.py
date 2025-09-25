@@ -15,9 +15,9 @@ from pathlib import Path
 import arviz as az
 import matplotlib.pyplot as plt
 
-from llc.config import Config, apply_preset, override_config
-from llc.run import run_one
-from llc.analysis import (
+from lambda_hat.config import Config, apply_preset, override_config
+from lambda_hat.run import run_one
+from lambda_hat.analysis import (
     fig_running_llc, fig_rank_llc, fig_autocorr_llc, fig_energy, fig_theta_trace
 )
 
