@@ -103,7 +103,9 @@ def update_preconditioner(
 
 
 # === Optimized Inference Loop ===
-def inference_loop_ln_only(rng_key, kernel, initial_state, num_samples, loss_fn, record_every=1):
+def inference_loop_ln_only(
+    rng_key, kernel, initial_state, num_samples, loss_fn, record_every=1
+):
     """
     Efficient inference loop using jax.lax.scan that only records Ln and diagnostics.
 
@@ -112,6 +114,7 @@ def inference_loop_ln_only(rng_key, kernel, initial_state, num_samples, loss_fn,
                  and returns the loss Ln. Must handle unflattening internally if needed.
         record_every: Thinning factor for the trace.
     """
+
     @jax.jit
     def one_step(state, rng_key):
         new_state, info = kernel(rng_key, state)
@@ -127,7 +130,9 @@ def inference_loop_ln_only(rng_key, kernel, initial_state, num_samples, loss_fn,
             "acceptance_rate": getattr(info, "acceptance_rate", jnp.nan),
             "energy": getattr(info, "energy", jnp.nan),
             # Standardize the key for divergence
-            "is_divergent": getattr(info, "is_divergent", getattr(info, "diverging", False)),
+            "is_divergent": getattr(
+                info, "is_divergent", getattr(info, "diverging", False)
+            ),
         }
         return new_state, trace_data
 
@@ -202,7 +207,8 @@ def run_hmc(
         one_pos = jax.tree.map(lambda x: x[0], initial_positions)
 
         (final_state, (step_size_adapted, inverse_mass_matrix)), _ = warmup.run(
-            warmup_key, one_pos, num_steps=adaptation_steps)
+            warmup_key, one_pos, num_steps=adaptation_steps
+        )
     else:
         step_size_adapted = step_size
         inverse_mass_matrix = None
@@ -306,7 +312,9 @@ def run_sgld(
 
         # 4. Calculate localization (prior) term: γ(w_t - w_0)
         # Note: params0 is captured by closure
-        localization_term = jax.tree.map(lambda w, w0: gamma_val * (w - w0), w_t, params0)
+        localization_term = jax.tree.map(
+            lambda w, w0: gamma_val * (w - w0), w_t, params0
+        )
 
         # 5. Calculate the total drift term
         # Drift = localization_term + beta_tilde * adapted_loss_drift
@@ -342,11 +350,16 @@ def run_sgld(
         def loss_fn_for_loop(position):
             return loss_full(position)
 
-        eval_every = getattr(config, 'eval_every', 10)
+        eval_every = getattr(config, "eval_every", 10)
 
         # Use the efficient loop, removing the if/else trace_spec logic.
         return inference_loop_ln_only(
-            key, sgld_kernel, initial_state, num_samples, loss_fn_for_loop, record_every=eval_every
+            key,
+            sgld_kernel,
+            initial_state,
+            num_samples,
+            loss_fn_for_loop,
+            record_every=eval_every,
         )
 
     # Use vmap to run chains in parallel

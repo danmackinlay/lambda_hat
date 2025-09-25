@@ -52,10 +52,12 @@ def run_sampler(
 
         # Create f64 loss function
         loss_full, _ = make_loss_fns(
-            target.model.apply, X_f64, Y_f64,
+            target.model.apply,
+            X_f64,
+            Y_f64,
             loss_type=cfg.posterior.loss,
-            noise_scale=cfg.data.noise_scale if hasattr(cfg, 'data') else 0.1,
-            student_df=cfg.data.student_df if hasattr(cfg, 'data') else 4.0
+            noise_scale=cfg.data.noise_scale if hasattr(cfg, "data") else 0.1,
+            student_df=cfg.data.student_df if hasattr(cfg, "data") else 4.0,
         )
 
         # Use the modern make_logpost function
@@ -81,10 +83,12 @@ def run_sampler(
 
         # Create f32 loss function (minibatch version)
         _, loss_mini = make_loss_fns(
-            target.model.apply, target.X, target.Y,
+            target.model.apply,
+            target.X,
+            target.Y,
             loss_type=cfg.posterior.loss,
-            noise_scale=cfg.data.noise_scale if hasattr(cfg, 'data') else 0.1,
-            student_df=cfg.data.student_df if hasattr(cfg, 'data') else 4.0
+            noise_scale=cfg.data.noise_scale if hasattr(cfg, "data") else 0.1,
+            student_df=cfg.data.student_df if hasattr(cfg, "data") else 4.0,
         )
 
         # Use the new make_grad_loss_minibatch
@@ -111,10 +115,12 @@ def run_sampler(
 
         # Create f64 loss function
         loss_full, _ = make_loss_fns(
-            target.model.apply, X_f64, Y_f64,
+            target.model.apply,
+            X_f64,
+            Y_f64,
             loss_type=cfg.posterior.loss,
-            noise_scale=cfg.data.noise_scale if hasattr(cfg, 'data') else 0.1,
-            student_df=cfg.data.student_df if hasattr(cfg, 'data') else 4.0
+            noise_scale=cfg.data.noise_scale if hasattr(cfg, "data") else 0.1,
+            student_df=cfg.data.student_df if hasattr(cfg, "data") else 4.0,
         )
 
         # Use the modern make_logpost function

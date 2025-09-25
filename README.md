@@ -98,7 +98,7 @@ Run MCMC samplers on previously built targets. Supported samplers: **SGLD**, **H
 
 See the Quickstart above. Use `lambda-hat-workflow` to sweep across target definitions and sampler configurations simultaneously.
 
-### Explicit Target ID (Legacy/Manual)
+### Explicit Target ID (Manual)
 
 Use `lambda-hat-sample` if you want to run samplers on a specific, known `target_id`, bypassing the dynamic calculation.
 
