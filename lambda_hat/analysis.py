@@ -11,6 +11,7 @@ import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import matplotlib.pyplot as plt
 
 
 def _debug_print_idata(idata, name: str):
@@ -365,6 +366,13 @@ def create_combined_convergence_plot(
     ax_time.legend()
     ax_time.grid(True, alpha=0.3)
     ax_time.set_xscale("log")  # Log scale for Time
+
+    # Use log scale for X axis if the range is large
+    # Check the last value of the first chain (or the draws axis)
+    if use_fge and fges.shape[1] > 0 and fges[0, -1] > 5000:
+        ax.set_xscale('log')
+    elif not use_fge and T > 5000:
+        ax.set_xscale('log')
 
     plt.tight_layout()
     plt.savefig(output_dir / "llc_convergence_combined.png", dpi=150, bbox_inches="tight")

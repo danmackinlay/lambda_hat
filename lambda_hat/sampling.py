@@ -147,9 +147,7 @@ def inference_loop_extended(
         )
         trace_data["energy"] = getattr(info, "energy", jnp.nan)
         # Standardize divergence key (handle both 'is_divergent' and 'diverging')
-        trace_data["is_divergent"] = getattr(
-            info, "is_divergent", getattr(info, "diverging", False)
-        )
+        trace_data["is_divergent"] = getattr(info, "is_divergent", getattr(info, "diverging", False))
 
         return (new_state, new_cumulative_work, t + 1, aux_data), trace_data
 
@@ -286,6 +284,9 @@ def run_hmc(
 
     # Start sampling timer
     sampling_start_time = time.time()
+
+    # Calculate work per step (FGEs): HMC uses full gradients.
+    work_per_step = float(num_integration_steps)
 
     # Use vmap with the optimized inference loop
     traces = jax.vmap(
