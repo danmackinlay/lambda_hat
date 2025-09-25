@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-Main training script using Hydra for configuration management.
+Main LLC estimation script using Hydra for configuration management.
 
 Usage:
-    python train.py                              # Use default config
-    python train.py sampler=fast                 # Use fast sampler preset
-    python train.py model=small data=small       # Use small presets
-    python train.py model.target_params=1000     # Override specific values
-    python train.py --multirun sampler=base,fast # Run multiple configurations
+    lambda-hat                              # Use default config
+    lambda-hat sampler=fast                 # Use fast sampler preset
+    lambda-hat model=small data=small       # Use small presets
+    lambda-hat model.target_params=1000     # Override specific values
+    lambda-hat --multirun sampler=base,fast # Run multiple configurations
 """
 
 import logging
@@ -139,13 +139,11 @@ def run_sampler(
     }
 
 
-@hydra.main(version_base=None, config_path="conf", config_name="config")
+@hydra.main(version_base=None, config_path="../conf", config_name="config")
 def main(cfg: Config) -> None:
-    """Main training function"""
-    # REMOVE this line, cfg is already structured by Hydra:
-    # cfg = OmegaConf.structured(cfg)
-
-    log.info("=== LLC Hydra Training ===")
+    """Main LLC estimation function"""
+    log.info("=== LLC Hydra Pipeline ===")
+    log.info("Using CPU/GPU backend according to cfg (and JAX flags)")
     # Use OmegaConf just for printing the structured config
     log.info(f"Config:\n{OmegaConf.to_yaml(cfg)}")
 
@@ -234,7 +232,9 @@ def main(cfg: Config) -> None:
         try:
             assert Path.cwd().resolve() == hydra_output_dir.resolve()
         except AssertionError:
-            log.warning(f"Working directory mismatch: cwd={Path.cwd()}, hydra_dir={hydra_output_dir}")
+            log.warning(
+                f"Working directory mismatch: cwd={Path.cwd()}, hydra_dir={hydra_output_dir}"
+            )
 
         save_run_artifacts(
             results=results,
@@ -244,7 +244,7 @@ def main(cfg: Config) -> None:
             output_dir=hydra_output_dir,
         )
 
-    log.info("Training completed successfully!")
+    log.info("LLC estimation completed successfully!")
 
 
 if __name__ == "__main__":

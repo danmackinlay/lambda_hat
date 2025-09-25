@@ -19,14 +19,18 @@ pip install .[cuda12]  # For CUDA 12 (Linux)
 
 ## Running Experiments
 
-The main entry point is `train.py`. Configuration is managed by Hydra.
+Lambda-Hat provides two entry points for running experiments. Configuration is managed by Hydra.
 
 ### Basic Usage
 
 Run the default configuration (MLP target, all samplers):
 
 ```bash
-uv run python train.py
+# Console script (recommended)
+uv run lambda-hat
+
+# Module entry
+uv run python -m lambda_hat
 ```
 
 Outputs (logs, plots, metrics) are automatically saved in a timestamped directory under `outputs/`.
@@ -38,7 +42,7 @@ The configuration is composable. You can select presets defined in the `conf/` d
 Run a quick, small experiment using the `fast` sampler settings and `small` model/data:
 
 ```bash
-uv run python train.py sampler=fast model=small data=small
+uv run lambda-hat sampler=fast model=small data=small
 ```
 
 ### Overriding Parameters
@@ -47,13 +51,13 @@ Override any configuration parameter from the command line:
 
 ```bash
 # Change the dataset size and random seed
-uv run python train.py data.n_data=5000 seed=123
+uv run lambda-hat data.n_data=5000 seed=123
 
 # Change the model architecture
-uv run python train.py model.depth=5 model.target_params=20000
+uv run lambda-hat model.depth=5 model.target_params=20000
 
 # Adjust sampler settings
-uv run python train.py sampler.hmc.draws=2000 sampler.sgld.step_size=1e-5
+uv run lambda-hat sampler.hmc.draws=2000 sampler.sgld.step_size=1e-5
 ```
 
 ### Running Sweeps (Multi-Run)
@@ -62,17 +66,17 @@ Hydra allows running sweeps over parameters using the `--multirun` (or `-m`) fla
 
 ```bash
 # Sweep over different model sizes
-uv run python train.py -m model.target_params=1000,5000,10000
+uv run lambda-hat -m model.target_params=1000,5000,10000
 
 # Compare base vs fast sampler settings
-uv run python train.py -m sampler=base,fast
+uv run lambda-hat -m sampler=base,fast
 ```
 
 Combine sweeps (Cartesian product):
 
 ```bash
 # 2 sizes x 2 sampler configs = 4 runs
-uv run python train.py -m model.target_params=1000,5000 sampler=base,fast
+uv run lambda-hat -m model.target_params=1000,5000 sampler=base,fast
 ```
 
 Multi-run outputs are saved under `multirun/`.

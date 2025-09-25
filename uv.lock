@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.11, <3.13"
 resolution-markers = [
     "python_full_version >= '3.12'",
@@ -573,6 +573,7 @@ cuda12 = [
 dev = [
     { name = "marimo" },
     { name = "pytest" },
+    { name = "ruff" },
 ]
 
 [package.metadata]
@@ -597,6 +598,7 @@ provides-extras = ["cpu", "cuda12"]
 dev = [
     { name = "marimo", specifier = ">=0.15.2" },
     { name = "pytest", specifier = ">=8.4.2" },
+    { name = "ruff", specifier = ">=0.13.1" },
 ]
 
 [[package]]
