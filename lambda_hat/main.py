@@ -55,9 +55,7 @@ def run_sampler(
         loss_mini = target.loss_minibatch_f64
         params0 = target.params0_f64
 
-        logdensity_fn = make_logpost(
-            loss_full, params0, cfg.data.n_data, beta, gamma
-        )
+        logdensity_fn = make_logpost(loss_full, params0, cfg.data.n_data, beta, gamma)
 
         # Create loss_full function for Ln recording
         loss_full_for_recording = make_loss_full(loss_full)
@@ -106,9 +104,7 @@ def run_sampler(
         loss_full = target.loss_full_f64
         params0 = target.params0_f64
 
-        logdensity_fn = make_logpost(
-            loss_full, params0, cfg.data.n_data, beta, gamma
-        )
+        logdensity_fn = make_logpost(loss_full, params0, cfg.data.n_data, beta, gamma)
 
         # Create loss_full function for Ln recording
         loss_full_for_recording = make_loss_full(loss_full)
