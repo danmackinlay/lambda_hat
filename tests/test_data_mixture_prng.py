@@ -1,6 +1,6 @@
 """Test mixture data generation PRNG coupling."""
 
-from lambda_hat.config import Config, DataConfig
+from lambda_hat.config import Config
 from lambda_hat.data import sample_X
 from jax import random
 import jax.numpy as jnp

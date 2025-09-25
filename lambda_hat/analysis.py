@@ -155,7 +155,7 @@ def create_trace_plots(
             Ln = np.array(sampler_data["traces"]["Ln"])
             if Ln.ndim == 2:
                 chains, draws = Ln.shape
-            else:                      # if your scan returns time-first, fix order
+            else:  # if your scan returns time-first, fix order
                 draws, chains = Ln.shape[0], 1
                 Ln = Ln[None, :]
 

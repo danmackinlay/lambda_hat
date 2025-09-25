@@ -70,5 +70,3 @@ def make_grad_loss_minibatch(loss_minibatch: Callable) -> Callable:
         return g_Lb
 
     return grad_loss_fn
-
-

@@ -21,11 +21,13 @@ def make_loss_full(loss_fn: Callable) -> Callable:
     Returns:
         Callable that accepts batched position (C, ...) or single (...) and returns (C,) or ()
     """
+
     @jax.jit
     def loss_from_position(position):
         # Returns average negative log-likelihood or your Ln definition
         Ln = loss_fn(position)  # scalar per chain
         return Ln
+
     return loss_from_position
 
 
