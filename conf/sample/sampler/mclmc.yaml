@@ -1,0 +1,11 @@
+sampler:
+  name: mclmc
+  mclmc:
+    draws: 1000
+    warmup: 500
+    L: 1.0
+    step_size: 0.1
+    num_steps: 100
+    desired_energy_var: 5e-4
+    dtype: float64
+    integrator: isokinetic_mclachlan

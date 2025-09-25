@@ -1,0 +1,7 @@
+data:
+  n_data: 100
+  x_dist: gauss_iso
+  cov_decay: 0.95
+  noise_model: gauss
+  noise_scale: 0.1
+  x_dim_latent: 2

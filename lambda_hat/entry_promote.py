@@ -1,22 +1,19 @@
-import argparse
+import hydra
 from pathlib import Path
+from omegaconf import DictConfig
 from lambda_hat.promote.core import promote
+from lambda_hat import hydra_support  # Ensure resolvers are registered
 
 
-def main_promote() -> None:
-    p = argparse.ArgumentParser("lambda-hat-promote")
-    p.add_argument("--runs-root", default="runs", type=Path)
-    p.add_argument("--samplers", default="sgld,hmc,mclmc")
-    p.add_argument("--outdir", default="assets", type=Path)
-    p.add_argument(
-        "--plot-name",
-        default="trace.png",
-        help="Which plot to copy from analysis/ (filename only)",
+@hydra.main(config_path="../conf", config_name="promote", version_base=None)
+def main_promote(cfg: DictConfig) -> None:
+    samplers = [s.strip() for s in cfg.samplers.split(",") if s.strip()]
+    promote(
+        runs_root=Path(cfg.runs_root),
+        samplers=samplers,
+        outdir=Path(cfg.outdir),
+        plot_name=cfg.plot_name
     )
-    args = p.parse_args()
-
-    samplers = [s.strip() for s in args.samplers.split(",") if s.strip()]
-    promote(args.runs_root, samplers, args.outdir, plot_name=args.plot_name)
 
 
 if __name__ == "__main__":

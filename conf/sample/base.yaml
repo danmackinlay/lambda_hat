@@ -1,0 +1,31 @@
+# Two-stage: Stage B (sample)
+defaults:
+  - sampler: hmc
+  - _self_
+
+jax:
+  enable_x64: true
+
+store:
+  root: runs
+
+# Select the target explicitly (ID or path). No training keys allowed here.
+target_id: ???
+
+runtime:
+  seed: 12345  # used to split per-chain keys downstream
+  code_sha: ${git_sha:}
+
+sampler:
+  chains: 4
+  name: hmc  # Will be overridden by sampler config group
+
+# Required fields for compatibility with existing run_sampler
+posterior:
+  sigma_w: 1.0
+  sigma_b: 1.0
+  temp: 1.0
+
+# Will be filled from target metadata at runtime
+data:
+  n_data: ???  # This gets filled from loaded target

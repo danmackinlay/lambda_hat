@@ -1,0 +1,10 @@
+sampler:
+  name: hmc
+  hmc:
+    draws: 1000
+    warmup: 500
+    step_size: 0.01
+    num_integration_steps: 10
+    adapt_step_size: true
+    target_acceptance: 0.8
+    dtype: float64

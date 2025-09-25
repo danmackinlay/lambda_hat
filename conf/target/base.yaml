@@ -1,0 +1,28 @@
+# Two-stage: Stage A (build-target)
+defaults:
+  - model: small
+  - data: small
+  - _self_
+
+jax:
+  enable_x64: true
+
+target:
+  seed: 42
+  # Compose a deterministic ID from model/data/seed + precision + code SHA.
+  id: ${fingerprint:${model},${data},${.seed},${jax.enable_x64},${runtime.code_sha}}
+
+store:
+  root: runs
+
+runtime:
+  code_sha: ${git_sha:}
+  hostname: ${hostname:}
+
+# Training block (used by your ERM)
+training:
+  optimizer: adam
+  learning_rate: 0.001
+  steps: 5000
+  early_stop_tol: 1e-6
+  batch_size: null  # Use full batch by default

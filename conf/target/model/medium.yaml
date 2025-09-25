@@ -1,0 +1,9 @@
+model:
+  name: mlp
+  target_params: 10000  # Approximate target number of parameters
+  depth: 3
+  width_factor: 1.2    # Multiplier for hidden layer width
+  activation: relu
+  use_bias: true
+  layer_norm: false
+  final_activation: none

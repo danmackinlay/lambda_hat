@@ -43,7 +43,7 @@ Run a quick, small experiment using the `fast` sampler settings and `small` mode
 
 ```bash
 uv run lambda-hat sampler=fast model=small data=small
-```
+```E.md 
 
 ### Overriding Parameters
 
@@ -80,6 +80,61 @@ uv run lambda-hat -m model.target_params=1000,5000 sampler=base,fast
 ```
 
 Multi-run outputs are saved under `multirun/`.
+
+## Two-Stage Workflow (Experimental)
+
+Lambda-Hat now supports a two-stage workflow that separates target building from sampling. This allows you to build a target once and run multiple samplers on it with different configurations:
+
+### Stage 1: Build Target
+
+Build and train the neural network target once:
+
+```bash
+# Build a small target with specific configuration
+uv run lambda-hat-build-target model=small data=small target.seed=42
+
+# The command outputs a target ID like: tgt_abcd1234
+# This target is saved under runs/targets/tgt_abcd1234/
+```
+
+### Stage 2: Sample from Target
+
+Run different samplers on the same target:
+
+```bash
+# Run HMC on the target
+uv run lambda-hat-sample target_id=tgt_abcd1234 sampler=hmc
+
+# Run SGLD with custom parameters
+uv run lambda-hat-sample target_id=tgt_abcd1234 sampler=sgld sampler.sgld.step_size=1e-5
+
+# Parameter sweep on the same target
+uv run lambda-hat-sample -m target_id=tgt_abcd1234 sampler=hmc,sgld,mclmc
+```
+
+Results are saved under `runs/samples/<target_id>/<sampler>/`.
+
+This workflow ensures:
+- **Reproducibility**: Same target ID = same neural network
+- **Efficiency**: Train once, sample many times
+- **Isolation**: Target config and sampler config are separate
+
+## Asset Promotion
+
+Lambda-Hat includes a promotion utility to select the latest plots from each sampler and copy them to a stable `assets/` directory for README display:
+
+```bash
+# Promote latest theta trace plots for all samplers
+uv run lambda-hat-promote --samplers sgld,hmc,mclmc --plot-name theta_trace.png
+
+# Promote running LLC plots from specific runs directory
+uv run lambda-hat-promote --runs-root runs --outdir assets --plot-name running_llc.png
+```
+
+This command:
+- Finds the most recent run directory for each specified sampler
+- Copies the specified plot from each run's `analysis/` directory
+- Saves plots as `assets/{sampler}.png` for stable referencing
 
 ## Documentation
 
