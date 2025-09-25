@@ -2,9 +2,11 @@
 """Clean, idiomatic JAX/BlackJAX sampling loops"""
 
 # Updated imports
-from typing import Dict, Any, Tuple, Callable, NamedTuple, TYPE_CHECKING
+from typing import Dict, Any, Tuple, Callable, NamedTuple, TYPE_CHECKING, Optional
+import time
 import jax
 import jax.numpy as jnp
+from jax.tree_util import tree_map
 import blackjax
 import blackjax.mcmc.integrators as bj_integrators
 
@@ -33,6 +35,11 @@ class SGLDInfo(NamedTuple):
     acceptance_rate: jnp.ndarray = jnp.array(1.0)
     energy: jnp.ndarray = jnp.nan
     is_divergent: bool = False
+
+
+class SamplerRunResult(NamedTuple):
+    traces: Dict[str, jnp.ndarray]
+    timings: Dict[str, float]  # {'adaptation': 0.0, 'sampling': 0.0, 'total': 0.0}
 
 
 def initialize_preconditioner(params: Any) -> PreconditionerState:
@@ -103,48 +110,68 @@ def update_preconditioner(
 
 
 # === Optimized Inference Loop ===
+def inference_loop_extended(rng_key, kernel, initial_state, num_samples, aux_fn, aux_every=1, work_per_step=1.0):
+    """
+    Efficient inference loop using jax.lax.scan that records Ln, diagnostics, and cumulative work (FGEs).
+
+    Args:
+        aux_fn: A function that takes the state and returns a dict {"Ln": val}.
+        aux_every: Thinning factor for the trace.
+        work_per_step: The amount of work (in FGEs) performed by one call to the kernel.
+    """
+    @jax.jit
+    def one_step(carry, rng_key):
+        state, cumulative_work = carry
+        new_state, info = kernel(rng_key, state)
+
+        # Update cumulative work (ensure dtype consistency)
+        current_work = jnp.asarray(work_per_step, dtype=cumulative_work.dtype)
+        new_cumulative_work = cumulative_work + current_work
+
+        # Compute Aux data (e.g., Ln)
+        aux_data = aux_fn(new_state)
+
+        # Combine data for trace
+        trace_data = aux_data.copy()
+        trace_data["cumulative_fge"] = new_cumulative_work
+
+        # Extract diagnostics robustly
+        trace_data["acceptance_rate"] = getattr(info, "acceptance_rate", jnp.nan)
+        trace_data["energy"] = getattr(info, "energy", jnp.nan)
+        # Standardize divergence key (handle both 'is_divergent' and 'diverging')
+        trace_data["is_divergent"] = getattr(info, "is_divergent", getattr(info, "diverging", False))
+
+        return (new_state, new_cumulative_work), trace_data
+
+    keys = jax.random.split(rng_key, num_samples)
+    # Initialize work accumulation with high precision (float64)
+    initial_work = jnp.array(0.0, dtype=jnp.float64)
+
+    # Run the scan
+    # The carry tuple is (state, cumulative_work)
+    _, trace = jax.lax.scan(one_step, (initial_state, initial_work), keys)
+
+    # Apply thinning AFTER the scan (efficient JAX pattern)
+    if aux_every > 1:
+        trace = tree_map(lambda x: x[::aux_every], trace)
+
+    return trace
+
+
 def inference_loop_ln_only(
     rng_key, kernel, initial_state, num_samples, loss_fn, record_every=1
 ):
     """
-    Efficient inference loop using jax.lax.scan that only records Ln and diagnostics.
-
-    Args:
-        loss_fn: A function that takes the position (PyTree or flat vector)
-                 and returns the loss Ln. Must handle unflattening internally if needed.
-        record_every: Thinning factor for the trace.
+    Legacy function - kept for backwards compatibility.
+    Use inference_loop_extended for new implementations.
     """
-
-    @jax.jit
-    def one_step(state, rng_key):
-        new_state, info = kernel(rng_key, state)
-
-        # Extract position (defensive programming removed - use position directly)
-        position = new_state.position
-
-        # Compute Loss (Ln). We compute this every step and thin post-scan.
+    def aux_fn(state):
+        position = state.position
         ln_val = loss_fn(position)
+        return {"Ln": ln_val}
 
-        trace_data = {
-            "Ln": ln_val,
-            "acceptance_rate": getattr(info, "acceptance_rate", jnp.nan),
-            "energy": getattr(info, "energy", jnp.nan),
-            # Standardize the key for divergence
-            "is_divergent": getattr(
-                info, "is_divergent", getattr(info, "diverging", False)
-            ),
-        }
-        return new_state, trace_data
-
-    keys = jax.random.split(rng_key, num_samples)
-    # Run the scan (replaces inefficient Python loop)
-    _, trace = jax.lax.scan(one_step, initial_state, keys)
-
-    # Apply thinning AFTER the scan (efficient JAX pattern)
-    if record_every > 1:
-        trace = jax.tree.map(lambda x: x[::record_every], trace)
-
-    return trace
+    # Use the extended loop with work_per_step=1.0 (default)
+    return inference_loop_extended(rng_key, kernel, initial_state, num_samples, aux_fn, aux_every=record_every, work_per_step=1.0)
 
 
 def run_hmc(
@@ -153,11 +180,11 @@ def run_hmc(
     initial_params: Dict[str, Any],
     num_samples: int,
     num_chains: int,
-    loss_full: Callable,
     step_size: float = 0.01,
     num_integration_steps: int = 10,
     adaptation_steps: int = 1000,
-) -> Dict[str, jnp.ndarray]:
+    loss_full_fn: Optional[Callable] = None,
+) -> SamplerRunResult:
     """Run HMC with optional adaptation
 
     Args:
@@ -169,9 +196,10 @@ def run_hmc(
         step_size: Initial step size
         num_integration_steps: Number of leapfrog steps
         adaptation_steps: Number of adaptation steps (0 to disable)
+        loss_full_fn: Optional function to compute loss for recording
 
     Returns:
-        Dictionary with traces, shape (Chains, Draws, ...)
+        SamplerRunResult with traces and timing information
     """
     # Setup keys
     key, init_key, sample_key = jax.random.split(rng_key, 3)
@@ -179,8 +207,6 @@ def run_hmc(
 
     # Create initial states for each chain (with slight perturbation)
     def init_chain(key, params):
-        # Add small noise to initial params for chain diversity
-
         noise = jax.tree.map(
             lambda p: 0.01 * jax.random.normal(key, p.shape, dtype=p.dtype), params
         )
@@ -188,61 +214,94 @@ def run_hmc(
         return perturbed_params
 
     # Map over keys (chains), broadcast params
-    initial_positions = jax.vmap(init_chain, in_axes=(0, None))(
-        init_keys, initial_params
-    )
+    init_positions = jax.vmap(init_chain, in_axes=(0, None))(init_keys, initial_params)
 
-    # Run adaptation if requested
+    # Flatten parameters for dimensionality calculation
+    D = sum(p.size for p in jax.tree_util.tree_leaves(initial_params))
+    ref_dtype = jax.tree_util.tree_leaves(initial_params)[0].dtype
+
+    # 2) warmup on one chain (Adaptation)
+    adaptation_start_time = time.time()
+
+    # Initialize defaults
+    step_size_adapted = step_size
+    # CRITICAL FIX: Default mass matrix must be a 1D array of size D
+    inv_mass = jnp.ones(D, dtype=ref_dtype)
+
     if adaptation_steps > 0:
-        # Use BlackJAX 1.2.5 API directly (defensive programming removed)
-        warmup = blackjax.window_adaptation(
+        wa = blackjax.window_adaptation(
             blackjax.hmc,
             logdensity_fn,
             target_acceptance_rate=0.8,
             num_integration_steps=num_integration_steps,
         )
 
-        # Run warmup on first chain to get adapted parameters
-        key, warmup_key = jax.random.split(key)
-        one_pos = jax.tree.map(lambda x: x[0], initial_positions)
+        one_pos = jax.tree.map(lambda x: x[0], init_positions)
 
-        (final_state, (step_size_adapted, inverse_mass_matrix)), _ = warmup.run(
-            warmup_key, one_pos, num_steps=adaptation_steps
+        # PASS ONLY num_steps (the warmup length) to .run()
+        warmup_result = wa.run(
+            jax.random.split(key)[0],
+            one_pos,
+            num_steps=adaptation_steps,
         )
-    else:
-        step_size_adapted = step_size
-        inverse_mass_matrix = None
+        # Ensure adaptation is finished before stopping the timer
+        jax.block_until_ready(warmup_result)
 
-    # Build HMC sampler using blackjax.hmc
-    hmc_sampler = blackjax.hmc(
+        # Unpack the result
+        (final_state, (step_size_adapted, inv_mass)), _ = warmup_result
+
+    # Stop adaptation timer
+    adaptation_time = time.time() - adaptation_start_time
+
+    # 3) build kernel and init all chains
+    hmc = blackjax.hmc(
         logdensity_fn,
         step_size=step_size_adapted,
         num_integration_steps=num_integration_steps,
-        inverse_mass_matrix=inverse_mass_matrix,
+        inverse_mass_matrix=inv_mass,
     )
 
     # Initialize states for all chains
-    initial_states = jax.vmap(hmc_sampler.init)(initial_positions)
+    init_states = jax.vmap(hmc.init)(init_positions)
 
-    # Run inference loop for each chain
+    # 4) drive all chains using the efficient loop
     sample_keys = jax.random.split(sample_key, num_chains)
 
-    def run_chain(key, initial_state):
-        kernel = hmc_sampler.step
+    # Define aux_fn for recording loss
+    def aux_fn(state):
+        if loss_full_fn is not None:
+            return {"Ln": loss_full_fn(state.position)}
+        else:
+            return {"Ln": jnp.nan}
 
-        # HMC uses the original parameter structure.
-        def loss_fn_for_loop(position):
-            return loss_full(position)
+    # Calculate work per step (FGEs): HMC uses full gradients.
+    work_per_step = float(num_integration_steps)
 
-        # Use the efficient loop, removing the if/else trace_spec logic.
-        return inference_loop_ln_only(
-            key, kernel, initial_state, num_samples, loss_fn_for_loop, record_every=1
+    # Start sampling timer
+    sampling_start_time = time.time()
+
+    # Use vmap with the optimized inference loop
+    traces = jax.vmap(
+        lambda k, s: inference_loop_extended(
+            k, hmc.step, s,
+            num_samples=num_samples,
+            aux_fn=aux_fn,
+            aux_every=1,  # HMC records every step
+            work_per_step=work_per_step,
         )
+    )(sample_keys, init_states)
 
-    # Use vmap to run chains in parallel
-    traces = jax.vmap(run_chain)(sample_keys, initial_states)
+    # Ensure sampling is finished before stopping the timer
+    jax.block_until_ready(traces)
+    sampling_time = time.time() - sampling_start_time
 
-    return traces
+    timings = {
+        'adaptation': adaptation_time,
+        'sampling': sampling_time,
+        'total': adaptation_time + sampling_time
+    }
+
+    return SamplerRunResult(traces=traces, timings=timings)
 
 
 # === SGLD / pSGLD ===
@@ -256,8 +315,8 @@ def run_sgld(
     num_chains: int,
     beta: float,
     gamma: float,
-    loss_full: Callable,
-) -> Dict[str, jnp.ndarray]:
+    loss_full_fn: Optional[Callable] = None,
+) -> SamplerRunResult:
     """Run SGLD or pSGLD (AdamSGLD/RMSPropSGLD) with minibatching."""
     X, Y = data
     n_data = X.shape[0]
@@ -344,28 +403,44 @@ def run_sgld(
 
         return new_state, info
 
-    # Run inference loop for each chain
-    def run_chain(key, initial_state):
-        # SGLD uses the original parameter structure.
-        def loss_fn_for_loop(position):
-            return loss_full(position)
+    # Define aux_fn for recording loss
+    def aux_fn(state):
+        if loss_full_fn is not None:
+            return {"Ln": loss_full_fn(state.position)}
+        else:
+            return {"Ln": jnp.nan}
 
-        eval_every = getattr(config, "eval_every", 10)
+    # Calculate work per step (FGEs): SGLD uses minibatch.
+    work_per_step = float(batch_size) / float(n_data)
 
-        # Use the efficient loop, removing the if/else trace_spec logic.
-        return inference_loop_ln_only(
-            key,
-            sgld_kernel,
-            initial_state,
-            num_samples,
-            loss_fn_for_loop,
-            record_every=eval_every,
+    # Use eval_every from config if available, otherwise default to 10 (matches config.py)
+    eval_every = getattr(config, 'eval_every', 10)
+
+    # Start sampling timer
+    sampling_start_time = time.time()
+
+    # Use vmap with the optimized inference loop
+    traces = jax.vmap(
+        lambda k, s: inference_loop_extended(
+            k, sgld_kernel, s,
+            num_samples=config.steps,
+            aux_fn=aux_fn,
+            aux_every=eval_every,
+            work_per_step=work_per_step,
         )
+    )(sample_keys, initial_states)
 
-    # Use vmap to run chains in parallel
-    traces = jax.vmap(run_chain)(sample_keys, initial_states)
+    # Ensure sampling is finished
+    jax.block_until_ready(traces)
+    sampling_time = time.time() - sampling_start_time
 
-    return traces
+    timings = {
+        'adaptation': 0.0,  # SGLD has no separate adaptation phase
+        'sampling': sampling_time,
+        'total': sampling_time
+    }
+
+    return SamplerRunResult(traces=traces, timings=timings)
 
 
 def run_mclmc(
@@ -375,8 +450,8 @@ def run_mclmc(
     num_samples: int,
     num_chains: int,
     config: "MCLMCConfig",
-    loss_full: Callable,
-) -> Dict[str, jnp.ndarray]:
+    loss_full_fn: Optional[Callable] = None,
+) -> SamplerRunResult:
     """Run Microcanonical Langevin Monte Carlo (MCLMC)
 
     Args:
@@ -393,6 +468,12 @@ def run_mclmc(
     # Setup keys
     key, init_key, sample_key = jax.random.split(rng_key, 3)
     init_keys = jax.random.split(init_key, num_chains)
+
+    # Calculate work per step (FGEs): MCLMC uses full gradients.
+    # Number of integration steps is approximately L / step_size.
+    # Use jnp.ceil to ensure it's an integer count of steps
+    num_integration_steps = jnp.ceil(config.L / config.step_size)
+    work_per_step = float(num_integration_steps)
 
     # Flatten initial params for MCLMC (modernized with ravel_pytree)
     initial_flat, unflatten_fn = jax.flatten_util.ravel_pytree(initial_params)
@@ -477,26 +558,41 @@ def run_mclmc(
         initial_positions
     )
 
-    # Run inference loop for each chain
+    # Define aux_fn for recording loss
+    def aux_fn(state):
+        if loss_full_fn is not None:
+            theta_flat = state.position
+            params = unflatten_fn(theta_flat)
+            return {"Ln": loss_full_fn(params)}
+        else:
+            return {"Ln": jnp.nan}
+
+    key, sample_key = jax.random.split(key)
     sample_keys = jax.random.split(sample_key, num_chains)
 
-    def run_chain(key, initial_state):
-        kernel = mclmc_sampler.step
+    # Start sampling timer
+    sampling_start_time = time.time()
 
-        # Define the loss function that unflattens the parameters first (modernized)
-        def loss_fn_for_loop(theta_flat):
-            params = unflatten_fn(theta_flat)
-            return loss_full(params)
-
-        # Use the efficient loop, removing the if/else trace_spec logic.
-        return inference_loop_ln_only(
-            key, kernel, initial_state, num_samples, loss_fn_for_loop, record_every=1
+    # Use vmap with the optimized loop
+    traces = jax.vmap(
+        lambda k, s: inference_loop_extended(
+            k, mclmc_sampler.step, s,
+            num_samples=num_samples,
+            aux_fn=aux_fn,
+            aux_every=1,
+            work_per_step=work_per_step,
         )
+    )(sample_keys, initial_states)
 
-    # Use vmap to run chains in parallel
-    traces = jax.vmap(run_chain)(sample_keys, initial_states)
+    # Ensure sampling is finished
+    jax.block_until_ready(traces)
+    sampling_time = time.time() - sampling_start_time
 
-    # >>> DELETE THE ENTIRE unflatten_trace BLOCK (lines 709-740 in Doc 17) <<<
-    # We no longer trace parameters, so this is obsolete and causes errors.
+    timings = {
+        # Note: This implementation assumes MCLMC adaptation is not used or timed separately.
+        'adaptation': 0.0,
+        'sampling': sampling_time,
+        'total': sampling_time
+    }
 
-    return traces
+    return SamplerRunResult(traces=traces, timings=timings)
