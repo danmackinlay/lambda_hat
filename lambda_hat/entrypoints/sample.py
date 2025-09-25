@@ -18,6 +18,7 @@ from lambda_hat.losses import make_loss_fns, as_dtype
 from lambda_hat.analysis import compute_llc_metrics
 from lambda_hat.models import build_mlp_forward_fn
 from lambda_hat.models import infer_widths
+from lambda_hat import hydra_support  # Register custom resolvers
 
 import numpy as np
 
@@ -85,7 +86,8 @@ def run_sampling_logic(cfg: DictConfig) -> None:
 
     # Guard: Use model.apply directly. (Removes DummyModel usage, lines 87-95)
     try:
-        _ = model.apply(params_f32, None, X_f32[:1])
+        test_key = jax.random.PRNGKey(0)  # Dummy key for model validation
+        _ = model.apply(params_f32, test_key, X_f32[:1])
     except Exception as e:
         raise RuntimeError(f"Model/params mismatch for target {cfg.target_id}: {e}")
 

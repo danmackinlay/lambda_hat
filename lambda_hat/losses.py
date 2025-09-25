@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Callable
+import jax
 import jax.numpy as jnp
 
 if TYPE_CHECKING:
@@ -11,8 +12,9 @@ if TYPE_CHECKING:
 
 
 def as_dtype(x, dtype_str):  # 'float32' or 'float64'
-    """Convert array to specified dtype"""
-    return x.astype(jnp.float32 if dtype_str == "float32" else jnp.float64)
+    """Convert array or PyTree to specified dtype"""
+    target_dtype = jnp.float32 if dtype_str == "float32" else jnp.float64
+    return jax.tree.map(lambda arr: arr.astype(target_dtype), x)
 
 
 def make_loss_fns(

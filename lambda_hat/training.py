@@ -52,7 +52,7 @@ def train_erm(
 
     # Training loop
     losses = []
-    for step in range(t_cfg.erm_steps):
+    for step in range(t_cfg.steps):
         params, opt_state, loss_val = update(params, opt_state)
         losses.append(float(loss_val))
 
@@ -66,14 +66,14 @@ def train_erm(
                     break
 
         # Logging
-        if step % max(1, t_cfg.erm_steps // 10) == 0:
-            print(f"Step {step}/{t_cfg.erm_steps}, Loss: {loss_val:.6f}")
+        if step % max(1, t_cfg.steps // 10) == 0:
+            print(f"Step {step}/{t_cfg.steps}, Loss: {loss_val:.6f}")
 
     # Compute final metrics
     final_loss = float(loss_fn(params))
     metrics = {
         "final_loss": final_loss,
-        "erm_steps": step + 1,
+        "steps": step + 1,
         "initial_loss": losses[0] if losses else 0.0,
     }
 

@@ -6,7 +6,7 @@ from typing import Dict, Any, Tuple, Callable, NamedTuple, TYPE_CHECKING
 import jax
 import jax.numpy as jnp
 import blackjax
-# Updated to use new JAX tree API (jax>=0.4.28)
+import blackjax.mcmc.integrators as bj_integrators
 
 if TYPE_CHECKING:
     from lambda_hat.config import SGLDConfig, MCLMCConfig
@@ -416,7 +416,6 @@ def run_mclmc(
     key, adaptation_key = jax.random.split(key)
 
     # Select integrator
-    import blackjax.mcmc.integrators as bj_integrators
 
     integrators_map = {
         "isokinetic_mclachlan": bj_integrators.isokinetic_mclachlan,

@@ -6,6 +6,7 @@ import jax
 import jax.numpy as jnp
 
 from .config import Config
+from omegaconf import DictConfig
 from .data import make_dataset
 from .models import infer_widths, build_mlp_forward_fn, count_params
 from .losses import make_loss_fns, as_dtype
@@ -32,8 +33,13 @@ class TargetBundle:
 def build_target(key, cfg: Config) -> TargetBundle:
     """Return a self-contained target for the pipeline to consume."""
     m_cfg = cfg.model
+    # Support both legacy string and new mapping forms for cfg.target
+    if isinstance(cfg.target, (dict, DictConfig)):
+        target_name = cfg.target.get("name", "mlp")
+    else:
+        target_name = cfg.target or "mlp"
 
-    if (cfg.target or "mlp") == "mlp":
+    if target_name == "mlp":
         # ----- MLP path with Haiku -----
         # Generate data
         X, Y, teacher_params, teacher_forward = make_dataset(key, cfg)
@@ -113,7 +119,7 @@ def build_target(key, cfg: Config) -> TargetBundle:
             model=model,
         )
 
-    elif cfg.target == "quadratic":
+    elif target_name == "quadratic":
         # ----- Analytic diagnostic: L_n(θ) = 0.5 ||θ||^2 -----
         # For quadratic target, we'll use a dummy Haiku model structure
         d = int(cfg.quad_dim or m_cfg.target_params or m_cfg.in_dim)
@@ -152,4 +158,4 @@ def build_target(key, cfg: Config) -> TargetBundle:
             model=model,
         )
     else:
-        raise ValueError(f"Unknown target: {cfg.target}")
+        raise ValueError(f"Unknown target: {target_name}")

@@ -59,15 +59,13 @@ def build_target_components(key, cfg: DictConfig):
     return X, Y, model, trained_params, train_info
 
 
-@hydra.main(config_path="../conf/target", config_name="base", version_base=None)
+@hydra.main(config_path="../conf", config_name="workflow", version_base=None)
 def main(cfg: DictConfig) -> None:
-    # Resolve the target ID immediately to catch configuration errors early
+    # Resolve the target ID (prefer unified workflow's 'target_id', fall back to 'target.id')
     try:
-        # Accessing the attribute forces Hydra to resolve the interpolation
-        target_id = cfg.target.id
+        target_id = cfg.get("target_id") or cfg.target.id
     except Exception:
-        print("Critical Error: Failed to resolve target ID from configuration.")
-        # Fail immediately if the configuration itself is invalid
+        print("Critical Error: Failed to resolve target ID (expected 'target_id' or 'target.id').")
         raise
 
     # --- IDEMPOTENCY CHECK ---
@@ -112,7 +110,7 @@ def main(cfg: DictConfig) -> None:
     }
 
     meta = TargetMeta(
-        target_id=cfg.target.id,
+        target_id=target_id,
         created_at=time.time(),
         code_sha=cfg.runtime.code_sha,
         jax_enable_x64=bool(cfg.jax.enable_x64),
@@ -128,7 +126,7 @@ def main(cfg: DictConfig) -> None:
     )
 
     # Write artifact
-    out_dir = save_target_artifact(cfg.store.root, cfg.target.id, X, Y, theta, meta)
+    out_dir = save_target_artifact(cfg.store.root, target_id, X, Y, theta, meta)
     print(f"[build-target] wrote {out_dir}")
     print(f"[build-target] L0 = {train_info.get('L0', 0):.6f}")
 

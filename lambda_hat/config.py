@@ -58,7 +58,7 @@ class TrainingConfig:
 
     optimizer: str = "adam"
     learning_rate: float = 0.001
-    erm_steps: int = 5000
+    steps: int = 5000
     early_stop_tol: Optional[float] = 1e-6
 
 
