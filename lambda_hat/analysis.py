@@ -2,7 +2,7 @@
 """Enhanced analysis functions for Hydra-based LLC experiments with proper visualization"""
 
 from __future__ import annotations
-from typing import Dict, Any, Tuple
+from typing import Dict, Any, Tuple, Optional
 import jax.numpy as jnp
 import numpy as np
 import arviz as az
@@ -18,6 +18,7 @@ def analyze_traces(
     n_data: int,
     beta: float,
     warmup: int = 0,
+    timings: Dict[str, float] = None,  # Add timings dictionary
 ) -> Tuple[Dict[str, float], az.InferenceData]:
     """Analyze sampling traces, compute LLC metrics, and create InferenceData.
 
@@ -63,6 +64,32 @@ def analyze_traces(
         fge_post_warmup = traces["cumulative_fge"][:, warmup:]
         sample_stats_data["cumulative_fge"] = np.array(fge_post_warmup, dtype=np.float64)
 
+    # Calculate cumulative time using precise timings
+    if timings:
+        sampling_time = timings.get('sampling', 0.0)
+        adaptation_time = timings.get('adaptation', 0.0)
+
+        if sampling_time > 0:
+            # Determine how time relates to the recorded draws
+            if adaptation_time == 0.0:
+                # Case 1: SGLD/MCLMC (No separate adaptation). Sampling time covers all 'draws'.
+                time_per_draw = sampling_time / draws if draws > 0 else 0.0
+                cumulative_time_all = np.arange(1, draws + 1) * time_per_draw
+                # Select post-warmup time
+                cumulative_time_post_warmup = cumulative_time_all[warmup:]
+            else:
+                # Case 2: HMC (Separate adaptation). Sampling time covers 'draws_post_warmup'.
+                # Note: For HMC, warmup should be 0 as traces start after adaptation.
+                time_per_draw = sampling_time / draws_post_warmup if draws_post_warmup > 0 else 0.0
+                cumulative_time_post_warmup = np.arange(1, draws_post_warmup + 1) * time_per_draw
+                # Add adaptation time as offset (time starts after adaptation)
+                cumulative_time_post_warmup += adaptation_time
+
+            # Replicate across chains (C, T)
+            if cumulative_time_post_warmup.size > 0:
+                cumulative_time_data = np.tile(cumulative_time_post_warmup, (chains, 1))
+                sample_stats_data["cumulative_time"] = cumulative_time_data
+
     # Extract other diagnostics
     for key in ["acceptance_rate", "energy", "is_divergent"]:
         if key in traces:
@@ -83,26 +110,59 @@ def analyze_traces(
     idata = az.from_dict(**data)
 
     # Compute metrics
-    metrics = _compute_metrics_from_idata(idata, llc_values_np)
+    metrics = _compute_metrics_from_idata(idata, llc_values_np, timings)
     return metrics, idata
 
-def _compute_metrics_from_idata(idata: az.InferenceData, llc_values_np: np.ndarray) -> Dict[str, float]:
+def _compute_metrics_from_idata(
+    idata: az.InferenceData,
+    llc_values_np: np.ndarray,
+    timings: Optional[Dict[str, float]]
+) -> Dict[str, float]:
     """Helper to compute metrics from InferenceData."""
     metrics = {
         "llc_mean": float(llc_values_np.mean()),
-        "llc_std": float(llc_values_np.std()),
+        "llc_std": float(llc_values_np.std()),  # Standard deviation of the samples
         "llc_min": float(llc_values_np.min()),
         "llc_max": float(llc_values_np.max()),
     }
+
+    # Extract Total Work (FGEs and Time)
+    total_fge = 0.0
+    if hasattr(idata, 'sample_stats') and 'cumulative_fge' in idata.sample_stats:
+        fges = idata.sample_stats["cumulative_fge"].values
+        if fges.size > 0:
+            # Use max across chains to represent the total work done
+            total_fge = float(np.max(fges))
+    metrics["total_fge"] = total_fge
+
+    total_time = timings.get('total', 0.0) if timings else 0.0
+    metrics["elapsed_time"] = total_time
+
     # Use ArviZ summary for diagnostics
     summary = az.summary(idata, var_names=["llc"])
     if not summary.empty:
         metrics["ess_bulk"] = float(summary.get("ess_bulk", np.nan).iloc[0])
         metrics["ess_tail"] = float(summary.get("ess_tail", np.nan).iloc[0])
         metrics["r_hat"] = float(summary.get("r_hat", np.nan).iloc[0])
-        # Use minimum of bulk and tail ESS
         ess = min(metrics.get("ess_bulk", np.nan), metrics.get("ess_tail", np.nan))
         metrics["ess"] = ess if not np.isnan(ess) else np.nan
+
+        # Calculate Efficiency and WNV
+        if not np.isnan(ess) and ess > 0:
+            # Variance of the estimate (SEM squared) = Var(samples) / ESS
+            variance_estimate = metrics["llc_std"]**2 / ess
+            metrics["llc_sem"] = np.sqrt(variance_estimate)  # Standard Error of the Mean
+
+            if total_fge > 0:
+                # Efficiency = ESS / Work
+                metrics["efficiency_fge"] = ess / total_fge
+                # WNV = Variance(Estimate) * Work
+                metrics["wnv_fge"] = variance_estimate * total_fge
+
+            if total_time > 0:
+                metrics["efficiency_time"] = ess / total_time
+                metrics["wnv_time"] = variance_estimate * total_time
+
     return metrics
 
 
@@ -146,71 +206,146 @@ def create_arviz_diagnostics(
             except Exception:
                 warnings.warn(f"Failed to create energy plot for {sampler_name}")
 
-def create_convergence_plots(
+def create_combined_convergence_plot(
     inference_data: Dict[str, az.InferenceData], output_dir: Path
 ) -> None:
-    """Create LLC convergence plots (Running Mean) vs FGEs."""
-    num_samplers = len(inference_data)
-    if num_samplers == 0:
+    """Create combined LLC convergence plots vs FGEs and Time, including 95% CI."""
+    if not inference_data:
         return
 
-    # Create a combined figure
-    fig, axes = plt.subplots(num_samplers, 1, figsize=(12, 4 * num_samplers), squeeze=False)
-    axes = axes.flatten()
+    # Setup figure with two subplots (FGEs and Time), sharing the Y-axis
+    fig, axes = plt.subplots(2, 1, figsize=(12, 10), sharey=True)
+    ax_fge, ax_time = axes
+
+    # Define colors
+    colors = plt.cm.tab10(np.linspace(0, 1, len(inference_data)))
 
     for i, (sampler_name, idata) in enumerate(inference_data.items()):
-        ax = axes[i]
+        color = colors[i % len(colors)]
         llc_traces = idata.posterior["llc"].values # (C, T)
-        T = llc_traces.shape[1]
+        C, T = llc_traces.shape
+
+        if T < 2 or C < 1: continue
 
         # Calculate running mean for each chain
-        running_means = np.cumsum(llc_traces, axis=1) / np.arange(1, T + 1)
+        running_means = np.cumsum(llc_traces, axis=1) / np.arange(1, T + 1) # (C, T)
 
-        # Determine X-axis (FGEs or Draws)
-        # FGEs are stored in sample_stats, shape (C, T)
+        # Calculate overall running mean (mean across chains)
+        mean_running_mean = running_means.mean(axis=0) # (T,)
+
+        # Calculate Standard Error of the Mean (SEM) using cross-chain variance
+        # Std across chains (use ddof=1 if C>1 for sample standard deviation)
+        ddof = 1 if C > 1 else 0
+        running_std_chains = running_means.std(axis=0, ddof=ddof) # (T,)
+        # SEM = Std / sqrt(C)
+        running_sem = running_std_chains / np.sqrt(C) # (T,)
+
+        # Calculate 95% CI bounds (Mean +/- 1.96 * SEM)
+        ci_lower = mean_running_mean - 1.96 * running_sem
+        ci_upper = mean_running_mean + 1.96 * running_sem
+
+        # Define a starting index to avoid plotting noisy CI early on
+        start_idx = min(10, T-1)
+
+        # --- Plot vs FGEs ---
         if hasattr(idata, 'sample_stats') and 'cumulative_fge' in idata.sample_stats:
-            fges = idata.sample_stats["cumulative_fge"].values
-            xlabel = "Full-Data Gradient Evaluations (FGEs)"
-            use_fge = True
-        else:
-            x_axis_draws = np.arange(1, T + 1)
-            xlabel = "Draws"
-            use_fge = False
+            # Use mean across chains for the X axis
+            fges = idata.sample_stats["cumulative_fge"].values.mean(axis=0)
+            if fges.shape[0] == T:
+                ax_fge.plot(fges, mean_running_mean, label=sampler_name.upper(), color=color)
+                ax_fge.fill_between(fges[start_idx:], ci_lower[start_idx:], ci_upper[start_idx:], color=color, alpha=0.2)
 
-        # Plot running means
-        for chain_idx in range(running_means.shape[0]):
-            if use_fge:
-                # Ensure shapes match if using FGEs (they should)
-                if fges.shape[1] == T:
-                    ax.plot(fges[chain_idx], running_means[chain_idx], alpha=0.7)
-                else:
-                     warnings.warn(f"FGE shape mismatch for {sampler_name}. Falling back to Draws.")
-                     ax.plot(x_axis_draws, running_means[chain_idx], alpha=0.7)
-                     xlabel = "Draws"
-            else:
-                ax.plot(x_axis_draws, running_means[chain_idx], alpha=0.7)
+        # --- Plot vs Time ---
+        if hasattr(idata, 'sample_stats') and 'cumulative_time' in idata.sample_stats:
+             # Use mean across chains for the X axis
+            times = idata.sample_stats["cumulative_time"].values.mean(axis=0)
+            if times.shape[0] == T:
+                ax_time.plot(times, mean_running_mean, label=sampler_name.upper(), color=color)
+                ax_time.fill_between(times[start_idx:], ci_lower[start_idx:], ci_upper[start_idx:], color=color, alpha=0.2)
 
+    # Finalize plots
+    ax_fge.set_title("LLC Convergence vs. Computational Work (FGEs)")
+    ax_fge.set_xlabel("Full-Data Gradient Evaluations (FGEs)")
+    ax_fge.set_ylabel("LLC Estimate (Running Mean ± 95% CI)")
+    ax_fge.legend()
+    ax_fge.grid(True, alpha=0.3)
+    ax_fge.set_xscale('log') # Log scale for FGEs
 
-        # Plot the final mean (the target)
-        final_mean = llc_traces.mean()
-        ax.axhline(final_mean, color='k', linestyle='--', label=f"Target (Final Mean): {final_mean:.4f}")
-
-        ax.set_title(f"{sampler_name.upper()} LLC Convergence")
-        ax.set_xlabel(xlabel)
-        ax.set_ylabel("LLC Estimate (Running Mean)")
-        ax.legend()
-        ax.grid(True, alpha=0.3)
-
-        # Use log scale for X axis if the range is large
-        # Check the last value of the first chain (or the draws axis)
-        if use_fge and fges.shape[1] > 0 and fges[0, -1] > 5000:
-            ax.set_xscale('log')
-        elif not use_fge and T > 5000:
-            ax.set_xscale('log')
+    ax_time.set_title("LLC Convergence vs. Wall-clock Time")
+    ax_time.set_xlabel("Time (seconds)")
+    ax_time.legend()
+    ax_time.grid(True, alpha=0.3)
+    ax_time.set_xscale('log') # Log scale for Time
 
     plt.tight_layout()
-    # Save the combined convergence plot (replaces the old uninformative llc_traces.png)
-    plt.savefig(output_dir / "llc_convergence.png", dpi=150, bbox_inches="tight")
+    plt.savefig(output_dir / "llc_convergence_combined.png", dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+def create_work_normalized_variance_plot(
+    inference_data: Dict[str, az.InferenceData], output_dir: Path
+) -> None:
+    """Create plots of Work-Normalized Variance (WNV) vs Work."""
+    if not inference_data:
+        return
+
+    fig, axes = plt.subplots(2, 1, figsize=(12, 10), sharey=True)
+    ax_fge, ax_time = axes
+    colors = plt.cm.tab10(np.linspace(0, 1, len(inference_data)))
+
+    for i, (sampler_name, idata) in enumerate(inference_data.items()):
+        color = colors[i % len(colors)]
+        llc_traces = idata.posterior["llc"].values # (C, T)
+        T = llc_traces.shape[1]
+        C = llc_traces.shape[0]
+
+        if T < 5 or C < 2:
+            warnings.warn(f"Skipping WNV for {sampler_name}: Requires T>=5 and C>=2 for reliable variance estimate.")
+            continue
+
+        # Estimate the variance of the estimator using cross-chain variance
+        running_means = np.cumsum(llc_traces, axis=1) / np.arange(1, T + 1) # (C, T)
+        # Var(lambda_hat_t) ≈ Var_chains(running_means_t) / C
+        # Use ddof=1 for sample variance
+        variance_estimate = running_means.var(axis=0, ddof=1) / C # (T,)
+
+        # Smooth the variance estimate as it can be noisy
+        if T > 20:
+            window_size = max(5, int(T * 0.1)) # 10% window size
+            # Use pandas rolling mean for smoothing
+            variance_estimate = pd.Series(variance_estimate).rolling(window=window_size, min_periods=5).mean().values
+
+        # --- Plot vs FGEs ---
+        if hasattr(idata, 'sample_stats') and 'cumulative_fge' in idata.sample_stats:
+            fges = idata.sample_stats["cumulative_fge"].values.mean(axis=0)
+            if fges.shape[0] == T:
+                # WNV = Variance * Work
+                wnv_fge = variance_estimate * fges
+                ax_fge.plot(fges, wnv_fge, label=sampler_name.upper(), color=color)
+
+        # --- Plot vs Time ---
+        if hasattr(idata, 'sample_stats') and 'cumulative_time' in idata.sample_stats:
+            times = idata.sample_stats["cumulative_time"].values.mean(axis=0)
+            if times.shape[0] == T:
+                wnv_time = variance_estimate * times
+                ax_time.plot(times, wnv_time, label=sampler_name.upper(), color=color)
+
+    # Finalize plots
+    ax_fge.set_title("Work-Normalized Variance (WNV) vs. FGEs (Smoothed)")
+    ax_fge.set_xlabel("FGEs")
+    ax_fge.set_ylabel("WNV (Variance × Work)")
+    ax_fge.legend()
+    ax_fge.grid(True, alpha=0.3)
+    ax_fge.set_xscale('log')
+    ax_fge.set_yscale('log') # WNV on log scale
+
+    ax_time.set_title("WNV vs. Time (Smoothed)")
+    ax_time.set_xlabel("Time (seconds)")
+    ax_time.legend()
+    ax_time.grid(True, alpha=0.3)
+    ax_time.set_xscale('log')
+
+    plt.tight_layout()
+    plt.savefig(output_dir / "llc_wnv.png", dpi=150, bbox_inches="tight")
     plt.close(fig)
 
 
@@ -280,9 +415,18 @@ def create_summary_table(analysis_results: Dict[str, Dict], output_dir: Path) ->
     for sampler_name, metrics in analysis_results.items():
         summary_text += f"{sampler_name.upper()}:\n"
         summary_text += f"  LLC Mean: {metrics.get('llc_mean', 0.0):.6f}\n"
-        summary_text += f"  LLC Std:  {metrics.get('llc_std', 0.0):.6f}\n"
+        summary_text += f"  LLC SEM:  {metrics.get('llc_sem', 0.0):.6f}\n"  # Standard Error of Mean
+        summary_text += f"  R-hat:    {metrics.get('r_hat', 1.0):.4f}\n"
+        summary_text += "-" * 20 + "\n"
         summary_text += f"  ESS:      {metrics.get('ess', 0.0):.1f}\n"
-        summary_text += f"  R-hat:    {metrics.get('r_hat', 1.0):.4f}\n\n"
+        summary_text += f"  Total FGEs: {metrics.get('total_fge', 0.0):.1f}\n"
+        summary_text += f"  Time (s):   {metrics.get('elapsed_time', 0.0):.2f}\n"
+        # WNV (Work-Normalized Variance)
+        summary_text += f"  WNV (FGE):  {metrics.get('wnv_fge', np.nan):.4f}\n"
+        summary_text += f"  WNV (Time): {metrics.get('wnv_time', np.nan):.4f}\n"
+        # Efficiency (ESS / Work)
+        summary_text += f"  Eff (FGE):  {metrics.get('efficiency_fge', np.nan):.4f}\n"
+        summary_text += f"  Eff (Time): {metrics.get('efficiency_time', np.nan):.4f}\n\n"
 
     # Save summary text
     with open(output_dir / "summary.txt", "w") as f:

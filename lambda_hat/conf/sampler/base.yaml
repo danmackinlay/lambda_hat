@@ -2,8 +2,9 @@
 chains: 4
 
 sgld:
-  steps: 16000
-  warmup: 1000
+  # Increased steps to reach ~10k FGEs (781250 steps * (256/20000) = 10000 FGEs)
+  steps: 781250
+  warmup: 50000
   batch_size: 256
   step_size: 0.000001
   dtype: float32
@@ -12,11 +13,13 @@ sgld:
   beta2: 0.999
   eps: 0.00000001
   bias_correction: true
-  eval_every: 10
+  # Increased thinning due to large step count
+  eval_every: 100
 
 hmc:
-  draws: 5000
-  warmup: 1000
+  # Reduced draws to reach ~10k FGEs (1000 draws * 10 steps = 10000 FGEs)
+  draws: 1000
+  warmup: 200
   num_integration_steps: 10
   step_size: 0.01
   dtype: float64
@@ -24,8 +27,18 @@ hmc:
   target_acceptance: 0.8
 
 mclmc:
-  draws: 8000
+  # Reduced draws to reach ~10k FGEs (1000 draws * (1.0/0.1) = 10000 FGEs)
+  draws: 1000
   L: 1.0
   step_size: 0.1
   dtype: float64
+  diagonal_preconditioning: false
+  # Reduced adaptation steps slightly
+  num_steps: 500
+  frac_tune1: 0.1
+  frac_tune2: 0.1
+  frac_tune3: 0.1
+  desired_energy_var: 0.0005
+  trust_in_estimate: 1.0
+  num_effective_samples: 150.0
   integrator: isokinetic_mclachlan

@@ -39,3 +39,4 @@ uv run ruff check lambda_hat/
 **BlackJAX API:**
 - MCLMC requires RNG keys for init
 - HMC `window_adaptation` may have internal `num_steps` errors
+- version 1.2.5 is pinned; note that the online documentation is for the `main` branch with many breaking changes

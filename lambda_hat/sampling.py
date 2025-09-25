@@ -3,6 +3,7 @@
 
 # Updated imports
 from typing import Dict, Any, Tuple, Callable, NamedTuple, TYPE_CHECKING, Optional
+import time
 import jax
 import jax.numpy as jnp
 import blackjax
@@ -34,6 +35,11 @@ class SGLDInfo(NamedTuple):
     acceptance_rate: jnp.ndarray = jnp.array(1.0)
     energy: jnp.ndarray = jnp.nan
     is_divergent: bool = False
+
+
+class SamplerRunResult(NamedTuple):
+    traces: Dict[str, jnp.ndarray]
+    timings: Dict[str, float]  # {'adaptation': 0.0, 'sampling': 0.0, 'total': 0.0}
 
 
 def initialize_preconditioner(params: Any) -> PreconditionerState:
@@ -162,7 +168,7 @@ def run_hmc(
     num_integration_steps=10,
     adaptation_steps=1000,
     loss_full_fn: Optional[Callable] = None,
-):
+) -> SamplerRunResult:
     if loss_full_fn is None:
         raise ValueError("loss_full_fn must be provided for Ln recording in HMC.")
 
@@ -183,6 +189,7 @@ def run_hmc(
     )
 
     # 2) warmup on one chain (Adaptation)
+    adaptation_start_time = time.time()
 
     # Initialize defaults
     step_size_adapted = step_size
@@ -207,6 +214,9 @@ def run_hmc(
             one_pos,
             num_steps=adaptation_steps,
         )
+        # Ensure adaptation is finished before stopping the timer
+        jax.block_until_ready(warmup_result)
+
         # Unpack the result - BlackJAX returns ((state, params), info)
         (final_state, params), _ = warmup_result
 
@@ -215,6 +225,9 @@ def run_hmc(
         inv_mass_adapted = params.get("inverse_mass_matrix", inv_mass)
         if hasattr(inv_mass_adapted, "ndim") and inv_mass_adapted.ndim in [1, 2]:
             inv_mass = inv_mass_adapted
+
+    # Stop adaptation timer
+    adaptation_time = time.time() - adaptation_start_time
 
     # 3) build kernel and init all chains
     hmc = blackjax.hmc(
@@ -239,6 +252,9 @@ def run_hmc(
     # Calculate work per step (FGEs): HMC uses full gradients.
     work_per_step = float(num_integration_steps)
 
+    # Start sampling timer
+    sampling_start_time = time.time()
+
     # Use vmap with the optimized inference loop
     traces = jax.vmap(
         lambda k, s: inference_loop_extended(
@@ -251,7 +267,18 @@ def run_hmc(
             work_per_step=work_per_step,  # Pass work
         )
     )(chain_keys, init_states)
-    return traces
+
+    # Ensure sampling is finished before stopping the timer
+    jax.block_until_ready(traces)
+    sampling_time = time.time() - sampling_start_time
+
+    timings = {
+        'adaptation': adaptation_time,
+        'sampling': sampling_time,
+        'total': adaptation_time + sampling_time
+    }
+
+    return SamplerRunResult(traces=traces, timings=timings)
 
 
 # === SGLD / pSGLD ===
@@ -266,7 +293,7 @@ def run_sgld(
     beta: float,
     gamma: float,
     loss_full_fn: Optional[Callable] = None,  # For Ln recording
-) -> Dict[str, jnp.ndarray]:
+) -> SamplerRunResult:
     """Run SGLD or pSGLD (AdamSGLD/RMSPropSGLD) with minibatching."""
     X, Y = data
     n_data = X.shape[0]
@@ -373,6 +400,9 @@ def run_sgld(
     # Note: Ensure 'eval_every' is defined in SGLDConfig or handled here.
     eval_every = config.eval_every
 
+    # Start sampling timer
+    sampling_start_time = time.time()
+
     # Use vmap with the optimized inference loop
     traces = jax.vmap(
         lambda k, s: inference_loop_extended(
@@ -386,7 +416,17 @@ def run_sgld(
         )
     )(sample_keys, initial_states)
 
-    return traces
+    # Ensure sampling is finished
+    jax.block_until_ready(traces)
+    sampling_time = time.time() - sampling_start_time
+
+    timings = {
+        'adaptation': 0.0,  # SGLD has no separate adaptation phase
+        'sampling': sampling_time,
+        'total': sampling_time
+    }
+
+    return SamplerRunResult(traces=traces, timings=timings)
 
 
 def run_mclmc(
@@ -397,7 +437,7 @@ def run_mclmc(
     num_chains,
     config,
     loss_full_fn: Optional[Callable] = None,
-):
+) -> SamplerRunResult:
     # -- flatten params once for MCLMC's state vector
     leaves, treedef = jax.tree_util.tree_flatten(initial_params)
     sizes = [x.size for x in leaves]
@@ -474,6 +514,9 @@ def run_mclmc(
     key, sample_key = jax.random.split(key)
     chain_keys = jax.random.split(sample_key, num_chains)
 
+    # Start sampling timer
+    sampling_start_time = time.time()
+
     # Use vmap with the optimized loop
     traces = jax.vmap(
         lambda k, s: inference_loop_extended(
@@ -487,4 +530,15 @@ def run_mclmc(
         )
     )(chain_keys, init_states)
 
-    return traces
+    # Ensure sampling is finished
+    jax.block_until_ready(traces)
+    sampling_time = time.time() - sampling_start_time
+
+    timings = {
+        # Note: This implementation assumes MCLMC adaptation is not used or timed separately.
+        'adaptation': 0.0,
+        'sampling': sampling_time,
+        'total': sampling_time
+    }
+
+    return SamplerRunResult(traces=traces, timings=timings)

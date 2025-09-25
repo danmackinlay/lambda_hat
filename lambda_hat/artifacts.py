@@ -7,7 +7,9 @@ import json
 from omegaconf import OmegaConf
 
 from .analysis import (
-    create_arviz_diagnostics, create_convergence_plots,
+    create_arviz_diagnostics,
+    create_combined_convergence_plot,      # Updated name
+    create_work_normalized_variance_plot,  # New plot
     create_comparison_plot, create_summary_table
 )
 
@@ -65,7 +67,10 @@ def save_run_artifacts(
     if cfg.output.save_plots:
         # Use the new plotting functions if InferenceData is available
         if inference_data:
-            create_convergence_plots(inference_data, output_dir)
+            # Replace the previous create_convergence_plots call
+            create_combined_convergence_plot(inference_data, output_dir)
+            # Add the WNV plot
+            create_work_normalized_variance_plot(inference_data, output_dir)
             create_arviz_diagnostics(inference_data, output_dir)
 
         # Keep the comparison plot (it uses analysis_results)

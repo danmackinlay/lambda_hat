@@ -60,8 +60,8 @@ def run_sampler(
         # Create loss_full function for Ln recording
         loss_full_for_recording = make_loss_full(loss_full)
 
-        # Run HMC
-        traces = run_hmc(
+        # Run HMC (Updated call)
+        run_result = run_hmc(
             key,
             logdensity_fn,
             params0,
@@ -85,8 +85,8 @@ def run_sampler(
         # Create loss_full function for Ln recording
         loss_full_for_recording = make_loss_full(target.loss_full_f32)
 
-        # Run SGLD
-        traces = run_sgld(
+        # Run SGLD (Updated call)
+        run_result = run_sgld(
             key,
             grad_loss_fn,
             initial_params=initial_params,
@@ -109,8 +109,8 @@ def run_sampler(
         # Create loss_full function for Ln recording
         loss_full_for_recording = make_loss_full(loss_full)
 
-        # Run MCLMC
-        traces = run_mclmc(
+        # Run MCLMC (Updated call)
+        run_result = run_mclmc(
             key,
             logdensity_fn,
             params0,
@@ -124,8 +124,10 @@ def run_sampler(
         raise ValueError(f"Unknown sampler: {sampler_name}")
 
     log.info(f"Completed {sampler_name} sampling")
+    # Return the results including the new timings
     return {
-        "traces": traces,
+        "traces": run_result.traces,
+        "timings": run_result.timings,  # Add timings
         "sampler_config": getattr(cfg.sampler, sampler_name),
         "beta": beta,
         "gamma": gamma,
@@ -161,10 +163,18 @@ def main(cfg: Config) -> None:
 
         try:
             sampler_results = run_sampler(sampler_name, cfg, target, sampler_key)
-            elapsed = time.time() - start_time
+            elapsed_external = time.time() - start_time
 
-            log.info(f"{sampler_name} completed in {elapsed:.2f}s")
-            sampler_results["elapsed_time"] = elapsed
+            # Use internal precise timings if available
+            if 'timings' in sampler_results and sampler_results['timings']:
+                timings = sampler_results['timings']
+                log.info(f"{sampler_name} completed. Total (Internal): {timings.get('total', 0.0):.2f}s | Adaptation: {timings.get('adaptation', 0.0):.2f}s | Sampling: {timings.get('sampling', 0.0):.2f}s")
+                # We prioritize internal timing for the final result structure
+                sampler_results["elapsed_time"] = timings.get('total', elapsed_external)
+            else:
+                log.info(f"{sampler_name} completed in {elapsed_external:.2f}s (external measurement)")
+                sampler_results["elapsed_time"] = elapsed_external
+
             results[sampler_name] = sampler_results
 
         except Exception:
@@ -179,25 +189,28 @@ def main(cfg: Config) -> None:
     for sampler_name, sampler_data in results.items():
         try:
             traces = sampler_data["traces"]
+            # Pass the timings dictionary to analyze_traces
+            timings = sampler_data.get("timings", {})
 
             # Determine warmup draws to discard (burn-in)
             # HMC/MCLMC handle adaptation during sampling (warmup=0 for analysis).
             warmup_draws = 0
             if sampler_name == "sgld":
                 # SGLD requires explicit burn-in. Convert warmup steps to recorded draws based on thinning.
-                # Access eval_every from config, defaulting to 10 (matches config.py)
-                eval_every = getattr(cfg.sampler.sgld, 'eval_every', 10)
+                # Use the updated default (100) or the configured value
+                eval_every = getattr(cfg.sampler.sgld, 'eval_every', 100)
                 if eval_every > 0:
                     # cfg.sampler.sgld.warmup is the number of steps to discard.
                     warmup_draws = cfg.sampler.sgld.warmup // eval_every
 
-            # Use the new centralized analysis function
+            # Updated call to analyze_traces
             metrics, idata = analyze_traces(
                 traces,
                 target.L0,
                 n_data=cfg.data.n_data,
                 beta=sampler_data["beta"],
                 warmup=warmup_draws,
+                timings=timings,  # Pass timings
             )
             analysis_results[sampler_name] = metrics
             inference_data[sampler_name] = idata # Store idata

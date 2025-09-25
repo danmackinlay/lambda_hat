@@ -1,4 +1,4 @@
-# Lambda-Hat: Local Learning Coefficient (LLC) Estimation
+# `lambda_hat`: Local Learning Coefficient (LLC) Estimation
 
 In [Singular Learning Theory (SLT)](https://singularlearningtheory.com), the **Local Learning Coefficient (LLC)** quantifies the effective local dimensionality of a model around a trained optimum.
 
@@ -26,7 +26,7 @@ pip install .[cuda12]  # For CUDA 12 (Linux)
 
 ## Running Experiments
 
-Lambda-Hat provides two entry points for running experiments. Configuration is managed by Hydra.
+`lambda_hat` provides two entry points for running experiments. Configuration is managed by Hydra.
 
 ### Basic Usage
 

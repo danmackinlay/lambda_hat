@@ -86,7 +86,7 @@ class SGLDConfig:
     beta2: float = 0.999
     eps: float = 1e-8
     bias_correction: bool = True
-    eval_every: int = 10  # compute full-data loss every k kept draws
+    eval_every: int = 100  # compute full-data loss every k kept draws
 
 
 @dataclass
