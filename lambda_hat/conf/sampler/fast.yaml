@@ -13,6 +13,7 @@ sgld:
   beta2: 0.999
   eps: 0.00000001
   bias_correction: true
+  eval_every: 10
 
 hmc:
   draws: 50

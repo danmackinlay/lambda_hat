@@ -183,11 +183,6 @@ def main(cfg: Config) -> None:
         try:
             # Compute LLC metrics
             traces = sampler_data["traces"]
-            loss_full = (
-                target.loss_full_f64
-                if sampler_name in ["hmc", "mclmc"]
-                else target.loss_full_f32
-            )
 
             # Determine warmup steps
             warmup_steps = 0

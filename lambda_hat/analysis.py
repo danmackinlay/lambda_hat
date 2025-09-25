@@ -2,7 +2,6 @@
 """Analysis functions for LLC experiments with proper visualization"""
 
 from __future__ import annotations
-
 import warnings
 from pathlib import Path
 from typing import Dict, Optional, Tuple
