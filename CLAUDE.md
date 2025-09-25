@@ -14,14 +14,18 @@ uv run pytest tests/
 uv run ruff check lambda_hat/
 ```
 
-## Critical Implementation Details
+## Implementation Notes
 
-**JAX Tree API (BREAKING):**
-- ✅ Use `jax.tree_util.tree_map` for BlackJAX compatibility
-- ❌ Never use `jax.tree_map` (removed in JAX v0.6.0)
+**No defensive coding or back compat:**
+- prefer fail-fast errors.
+- we pin package versions rather than introspecting APIs or versions
+
+**JAX Tree API (Required):**
+- Use `jax.tree.map` exclusively (never `jax.tree_map` or `jax.tree_util.tree_map`) which are from old jax versions and are unsuppored
+- Set `vmap` axes explicitly: `in_axes=(0, None)` for `(keys, params)`
 
 **Haiku Models:**
-- Always include RNG: `model.apply(params, None, X)` (even for deterministic models)
+- Always include RNG: `model.apply(params, rng, X)` (even for deterministic models where `rng=None`)
 
 **Memory-Efficient Sampling:**
 - All samplers use `loss_full_fn` parameter for scalar Ln recording (not parameter trajectories)
@@ -38,5 +42,7 @@ uv run ruff check lambda_hat/
 
 **BlackJAX API:**
 - MCLMC requires RNG keys for init
-- HMC `window_adaptation` may have internal `num_steps` errors
 - version 1.2.5 is pinned; note that the online documentation is for the `main` branch with many breaking changes
+- Warmup issues: Adjust if warmup >= total draws
+- BlackJAX API: HMC `warmup.run()` takes `num_steps`, MCLMC `init()` takes no `key`
+
