@@ -62,7 +62,9 @@ def main(cfg: DictConfig) -> None:
     try:
         target_id = cfg.get("target_id") or cfg.target.id
     except Exception:
-        print("Critical Error: Failed to resolve target ID (expected 'target_id' or 'target.id').")
+        print(
+            "Critical Error: Failed to resolve target ID (expected 'target_id' or 'target.id')."
+        )
         raise
 
     # --- IDEMPOTENCY CHECK ---

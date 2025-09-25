@@ -27,7 +27,11 @@ def run_sampling_logic(cfg: DictConfig) -> None:
         jax.config.update("jax_enable_x64", True)
 
     print("=== LLC: Sample ===")
-    print(OmegaConf.to_yaml(cfg, resolve=True))
+    try:
+        print(OmegaConf.to_yaml(cfg, resolve=True))
+    except Exception:
+        # Fallback to non-resolved view to keep the run alive
+        print(OmegaConf.to_yaml(cfg, resolve=False))
 
     # Load target
     X, Y, params, meta, tdir = load_target_artifact(cfg.store.root, cfg.target_id)

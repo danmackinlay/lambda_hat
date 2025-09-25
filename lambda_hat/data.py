@@ -58,7 +58,7 @@ def build_teacher(key, cfg: Config):
     m_cfg = cfg.model
 
     # Use teacher config if present, otherwise fall back to model config
-    if hasattr(cfg, 'teacher') and cfg.teacher is not None:
+    if hasattr(cfg, "teacher") and cfg.teacher is not None:
         t_cfg = cfg.teacher
         t_depth = t_cfg.depth or m_cfg.depth
         t_widths = t_cfg.widths
@@ -141,14 +141,16 @@ def make_dataset(key, cfg: Config):
 
     # Apply dropout if teacher config exists and specifies it
     dropout_rate = 0.0
-    if hasattr(cfg, 'teacher') and cfg.teacher is not None and hasattr(cfg.teacher, 'dropout_rate'):
+    if (
+        hasattr(cfg, "teacher")
+        and cfg.teacher is not None
+        and hasattr(cfg.teacher, "dropout_rate")
+    ):
         dropout_rate = cfg.teacher.dropout_rate
 
     if dropout_rate > 0.0:
         kd = random.split(kt, 1)[0]
-        mask = (random.uniform(kd, y_clean.shape) > dropout_rate).astype(
-            y_clean.dtype
-        )
+        mask = (random.uniform(kd, y_clean.shape) > dropout_rate).astype(y_clean.dtype)
         y_clean = y_clean * mask
 
     Y = add_noise(kn, y_clean, cfg, X)
