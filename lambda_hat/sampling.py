@@ -117,12 +117,8 @@ def inference_loop_ln_only(rng_key, kernel, initial_state, num_samples, loss_fn,
     def one_step(state, rng_key):
         new_state, info = kernel(rng_key, state)
 
-        # Extract position (handle different state types)
-        if isinstance(new_state, SGLDState):
-            position = new_state.position
-        else:
-            # Standard BlackJAX state (or flattened state for MCLMC)
-            position = new_state.position
+        # Extract position (defensive programming removed - use position directly)
+        position = new_state.position
 
         # Compute Loss (Ln). We compute this every step and thin post-scan.
         ln_val = loss_fn(position)
@@ -194,30 +190,20 @@ def run_hmc(
 
     # Run adaptation if requested
     if adaptation_steps > 0:
-        # Use window adaptation with robust API handling
-        def _wa(alg, logprob, *, nint, targ):
-            try:
-                return blackjax.window_adaptation(alg, logprob, target_acceptance_rate=targ,
-                                                  num_integration_steps=nint)
-            except TypeError:
-                # Older variant: bind nint at run-time
-                return blackjax.window_adaptation(alg, logprob, target_acceptance_rate=targ)
-
-        warmup = _wa(blackjax.hmc, logdensity_fn, nint=num_integration_steps, targ=0.8)
+        # Use BlackJAX 1.2.5 API directly (defensive programming removed)
+        warmup = blackjax.window_adaptation(
+            blackjax.hmc,
+            logdensity_fn,
+            target_acceptance_rate=0.8,
+            num_integration_steps=num_integration_steps,
+        )
 
         # Run warmup on first chain to get adapted parameters
         key, warmup_key = jax.random.split(key)
         one_pos = jax.tree.map(lambda x: x[0], initial_positions)
 
-        args = dict(num_steps=adaptation_steps)
-        try:
-            (final_state, (step_size_adapted, inverse_mass_matrix)), _ = warmup.run(
-                warmup_key, one_pos, **args)
-        except TypeError:
-            (final_state, (step_size_adapted, inverse_mass_matrix)), _ = warmup.run(
-                warmup_key, one_pos,
-                num_steps=adaptation_steps,
-                num_integration_steps=num_integration_steps)
+        (final_state, (step_size_adapted, inverse_mass_matrix)), _ = warmup.run(
+            warmup_key, one_pos, num_steps=adaptation_steps)
     else:
         step_size_adapted = step_size
         inverse_mass_matrix = None
