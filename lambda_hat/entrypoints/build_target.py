@@ -40,7 +40,7 @@ def build_target_components(key, cfg: DictConfig):
 
     return X, Y, model, trained_params, train_info
 
-@hydra.main(config_path="../../conf/target", config_name="base", version_base=None)
+@hydra.main(config_path="../conf/target", config_name="base", version_base=None)
 def main(cfg: DictConfig) -> None:
     # Precision
     if cfg.jax.enable_x64:

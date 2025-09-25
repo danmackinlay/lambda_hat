@@ -1,6 +1,19 @@
-# Lambda-Hat: Local Learning Coefficient (LLC) Estimation
+# Lambda-Hat (λ̂): Two-Stage LLC Experiments
 
-Lambda-Hat provides a streamlined framework for estimating the Local Learning Coefficient (LLC) using various MCMC samplers implemented in JAX (via BlackJAX). It uses Hydra for configuration management and Haiku for neural network definitions.
+Lambda-Hat provides a streamlined framework for estimating the Local Learning Coefficient (LLC) using a two-stage workflow. It uses JAX/BlackJAX for MCMC sampling, Hydra for configuration management, and Haiku for neural network definitions.
+
+## Concept
+
+The Local Learning Coefficient (LLC) measures the effective number of parameters that a neural network "learns" from data. Lambda-Hat implements a teacher-student framework with a two-stage design:
+
+**Stage A**: Build and train a neural network target once, generating a reproducible target artifact
+**Stage B**: Run multiple MCMC samplers on the same target with different configurations
+
+This separation provides:
+- **Reproducibility**: Same target ID = identical neural network weights and data
+- **Efficiency**: Train expensive targets once, sample many times
+- **Isolation**: Target configuration and sampler hyperparameters are decoupled
+- **Cost Control**: Expensive target building vs. cheaper sampling jobs can be optimized separately
 
 ## Installation
 
@@ -9,132 +22,169 @@ Requires Python 3.11+.
 ```bash
 # Using uv (recommended):
 uv venv --python 3.12 && source .venv/bin/activate
-uv sync --extra cpu   # For CPU/macOS
+uv sync --extra cpu     # For CPU/macOS
 uv sync --extra cuda12  # For CUDA 12 (Linux)
 
 # Or using pip:
-pip install .[cpu]     # For CPU/macOS
-pip install .[cuda12]  # For CUDA 12 (Linux)
+pip install .[cpu]      # For CPU/macOS
+pip install .[cuda12]   # For CUDA 12 (Linux)
 ```
 
-## Running Experiments
+## Stage A: Build Target
 
-Lambda-Hat provides two entry points for running experiments. Configuration is managed by Hydra.
-
-### Basic Usage
-
-Run the default configuration (MLP target, all samplers):
+Build and train the neural network target once. This creates a content-addressed artifact with a deterministic ID.
 
 ```bash
-# Console script (recommended)
-uv run lambda-hat
-
-# Module entry
-uv run python -m lambda_hat
-```
-
-Outputs (logs, plots, metrics) are automatically saved in a timestamped directory under `outputs/`.
-
-### Using Configuration Presets
-
-The configuration is composable. You can select presets defined in the `conf/` directory.
-
-Run a quick, small experiment using the `fast` sampler settings and `small` model/data:
-
-```bash
-uv run lambda-hat sampler=fast model=small data=small
-```E.md 
-
-### Overriding Parameters
-
-Override any configuration parameter from the command line:
-
-```bash
-# Change the dataset size and random seed
-uv run lambda-hat data.n_data=5000 seed=123
-
-# Change the model architecture
-uv run lambda-hat model.depth=5 model.target_params=20000
-
-# Adjust sampler settings
-uv run lambda-hat sampler.hmc.draws=2000 sampler.sgld.step_size=1e-5
-```
-
-### Running Sweeps (Multi-Run)
-
-Hydra allows running sweeps over parameters using the `--multirun` (or `-m`) flag.
-
-```bash
-# Sweep over different model sizes
-uv run lambda-hat -m model.target_params=1000,5000,10000
-
-# Compare base vs fast sampler settings
-uv run lambda-hat -m sampler=base,fast
-```
-
-Combine sweeps (Cartesian product):
-
-```bash
-# 2 sizes x 2 sampler configs = 4 runs
-uv run lambda-hat -m model.target_params=1000,5000 sampler=base,fast
-```
-
-Multi-run outputs are saved under `multirun/`.
-
-## Two-Stage Workflow (Experimental)
-
-Lambda-Hat now supports a two-stage workflow that separates target building from sampling. This allows you to build a target once and run multiple samplers on it with different configurations:
-
-### Stage 1: Build Target
-
-Build and train the neural network target once:
-
-```bash
-# Build a small target with specific configuration
+# Build a small target for testing
 uv run lambda-hat-build-target model=small data=small target.seed=42
 
-# The command outputs a target ID like: tgt_abcd1234
-# This target is saved under runs/targets/tgt_abcd1234/
+# Build a larger target for production experiments
+uv run lambda-hat-build-target model=base data=base target.seed=123
+
+# Override specific parameters
+uv run lambda-hat-build-target model.depth=5 model.target_params=10000 data.n_data=5000
 ```
 
-### Stage 2: Sample from Target
+Each command outputs a target ID like `tgt_abcd1234`. The target artifact contains:
+- Neural network parameters (`theta`)
+- Training data (`X`, `Y`)
+- Model configuration and metadata
+- Reference loss (`L0`) for LLC computation
 
-Run different samplers on the same target:
+Artifacts are saved under `runs/targets/tgt_<id>/` with content-based deduplication.
+
+## Stage B: Sample
+
+Run MCMC samplers on previously built targets. All samplers (SGLD, HMC, MCLMC) can use the same target.
+
+### Single Sampler Runs
 
 ```bash
-# Run HMC on the target
+# Run HMC on a specific target
 uv run lambda-hat-sample target_id=tgt_abcd1234 sampler=hmc
 
-# Run SGLD with custom parameters
+# Run SGLD with custom step size
 uv run lambda-hat-sample target_id=tgt_abcd1234 sampler=sgld sampler.sgld.step_size=1e-5
 
-# Parameter sweep on the same target
-uv run lambda-hat-sample -m target_id=tgt_abcd1234 sampler=hmc,sgld,mclmc
+# Run MCLMC with more samples
+uv run lambda-hat-sample target_id=tgt_abcd1234 sampler=mclmc sampler.mclmc.draws=5000
 ```
 
-Results are saved under `runs/samples/<target_id>/<sampler>/`.
+### Parameter Sweeps
 
-This workflow ensures:
-- **Reproducibility**: Same target ID = same neural network
-- **Efficiency**: Train once, sample many times
-- **Isolation**: Target config and sampler config are separate
+Use Hydra's multirun (`-m`) for parameter sweeps:
+
+```bash
+# Compare all three samplers on the same target
+uv run lambda-hat-sample -m target_id=tgt_abcd1234 sampler=sgld,hmc,mclmc
+
+# HMC step size sweep
+uv run lambda-hat-sample -m target_id=tgt_abcd1234 sampler=hmc \
+    sampler.hmc.step_size=0.005,0.01,0.02
+
+# Cross-product: 3 samplers × 3 step sizes = 9 runs
+uv run lambda-hat-sample -m target_id=tgt_abcd1234 sampler=sgld,hmc,mclmc \
+    sampler.hmc.step_size=0.005,0.01,0.02 sampler.sgld.step_size=1e-5,1e-4,1e-3
+```
+
+Results are saved under `runs/samples/<target_id>/<sampler>/run_<hash>/` with trace files and analysis.
+
+## Two-Stage Quickstart
+
+Copy-paste commands to get started:
+
+```bash
+# Stage A: Build target
+uv run lambda-hat-build-target model=small data=small target.seed=42
+# → outputs: tgt_abc123 (example)
+
+# Stage B: Run samplers
+uv run lambda-hat-sample target_id=tgt_abc123 sampler=sgld
+uv run lambda-hat-sample target_id=tgt_abc123 sampler=hmc
+uv run lambda-hat-sample target_id=tgt_abc123 sampler=mclmc
+
+# Stage B: Parameter sweep
+uv run lambda-hat-sample -m target_id=tgt_abc123 sampler=hmc \
+    sampler.hmc.step_size=0.005,0.01 sampler.hmc.num_integration_steps=3,5
+```
+
+## Artifacts
+
+The artifact layout provides organized storage:
+
+```
+runs/
+├── targets/
+│   ├── _catalog.jsonl              # Target registry
+│   └── tgt_abc123/                 # Target artifact
+│       ├── meta.json               # Metadata (model config, L0, etc.)
+│       ├── data.npz                # Training data (X, Y)
+│       └── params.npz              # Trained parameters (theta)
+└── samples/
+    └── tgt_abc123/                 # Samples for target
+        ├── _index.jsonl            # Sample run registry
+        ├── sgld/run_def456/        # SGLD results
+        │   ├── trace.nc            # ArviZ trace file
+        │   └── analysis.json       # LLC metrics
+        ├── hmc/run_ghi789/         # HMC results
+        └── mclmc/run_jkl012/       # MCLMC results
+```
+
+The `_index.jsonl` manifest records hyperparameters, runtime, and metrics for each sampling run, enabling systematic analysis across parameter sweeps.
+
+## Reproducibility & Precision
+
+### Reproducibility Checklist
+- ✅ Use the same `target_id` across sampling runs
+- ✅ Check that JAX precision matches between target and sampling (`jax_enable_x64`)
+- ✅ Verify package versions recorded in target metadata
+- ✅ Ensure parameter shapes validate before sampling
+
+### JAX Precision
+The system automatically handles mixed precision:
+- **Target building**: Uses `jax_enable_x64=true` for accurate training
+- **SGLD sampling**: Uses `float32` for efficiency
+- **HMC/MCLMC sampling**: Uses `float64` for accuracy
+
+Precision mismatches between target and sampling stages are automatically detected and will raise an error.
+
+## HPC Usage
+
+Use Hydra's Submitit launcher for SLURM clusters:
+
+```bash
+# Build targets on login node or submit as job
+uv run lambda-hat-build-target -m model=small,base target.seed=42,123
+
+# Submit sampling jobs to SLURM
+uv run lambda-hat-sample -m target_id=tgt_abc123 sampler=sgld,hmc,mclmc \
+    hydra/launcher=submitit_slurm hydra.launcher.partition=gpu
+```
+
+The two-stage design is particularly valuable for HPC: expensive target building can use different resources than massively parallel sampling sweeps.
 
 ## Asset Promotion
 
-Lambda-Hat includes a promotion utility to select the latest plots from each sampler and copy them to a stable `assets/` directory for README display:
+Lambda-Hat includes a utility to promote latest plots from sampling runs to a stable `assets/` directory:
 
 ```bash
-# Promote latest theta trace plots for all samplers
-uv run lambda-hat-promote --samplers sgld,hmc,mclmc --plot-name theta_trace.png
+# Promote latest trace plots for documentation
+uv run lambda-hat-promote runs_root=runs samplers=sgld,hmc,mclmc plot_name=trace.png
 
-# Promote running LLC plots from specific runs directory
-uv run lambda-hat-promote --runs-root runs --outdir assets --plot-name running_llc.png
+# Custom output directory
+uv run lambda-hat-promote runs_root=runs samplers=sgld outdir=figures plot_name=running_llc.png
 ```
 
-This command:
-- Finds the most recent run directory for each specified sampler
-- Copies the specified plot from each run's `analysis/` directory
-- Saves plots as `assets/{sampler}.png` for stable referencing
+This finds the most recent sampling run for each sampler and copies the specified plot to `assets/{sampler}.png`.
+
+## Why Two Stages?
+
+Lambda-Hat uses a two-stage design for several key benefits:
+
+- **Orthogonality**: Target configuration (model, data, training) is completely separate from sampling configuration (chains, step sizes, warmup)
+- **Cost Control**: Expensive target building can use different compute resources than massively parallel sampling sweeps
+- **Reproducibility**: Content-addressed target IDs ensure identical experiments across runs and users
+- **Efficiency**: Build complex targets once, then run dozens of sampler configurations without retraining
 
 ## Documentation
 

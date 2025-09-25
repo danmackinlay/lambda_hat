@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json, time
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, field
 from pathlib import Path
 from typing import Dict, Any
 
@@ -24,8 +24,8 @@ class TargetMeta:
     training_cfg: Dict[str, Any]
     dims: Dict[str, int]         # e.g. {"n": 100, "d": 4, "p": 45}
     hashes: Dict[str, str]       # e.g. {"theta": "sha256:..."}
-    metrics: Dict[str, float]    # e.g. {"L0": 0.123}
     hostname: str
+    metrics: Dict[str, float] = field(default_factory=dict)    # e.g. {"L0": 0.123}
 
 def _ensure_dir(p: Path) -> None:
     p.mkdir(parents=True, exist_ok=True)

@@ -41,7 +41,7 @@ cuda12 = [
 ]
 
 [project.scripts]
-lambda-hat-promote = "lambda_hat.entry_promote:main_promote"
+lambda-hat-promote = "lambda_hat.entrypoints.promote:main_promote"
 lambda-hat-build-target = "lambda_hat.entrypoints.build_target:main"
 lambda-hat-sample = "lambda_hat.entrypoints.sample:main"
 

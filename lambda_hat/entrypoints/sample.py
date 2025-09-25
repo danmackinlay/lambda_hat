@@ -11,11 +11,10 @@ from omegaconf import DictConfig, OmegaConf
 
 from lambda_hat import hydra_support  # ensure resolvers registered
 from lambda_hat.target_artifacts import load_target_artifact, append_sample_manifest
-from lambda_hat.entry import run_sampler  # Use existing sampler runner
+from lambda_hat.sampling_runner import run_sampler  # Use extracted sampler runner
 from lambda_hat.config import Config
-from lambda_hat.analysis import analyze_results
 
-@hydra.main(config_path="../../conf/sample", config_name="base", version_base=None)
+@hydra.main(config_path="../conf/sample", config_name="base", version_base=None)
 def main(cfg: DictConfig) -> None:
     if cfg.jax.enable_x64:
         jax.config.update("jax_enable_x64", True)
