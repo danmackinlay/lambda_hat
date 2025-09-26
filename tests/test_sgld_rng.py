@@ -36,5 +36,8 @@ def test_sgld_noise_independence_smoke():
     # Check basic output
     traces = out.traces
     assert "Ln" in traces
-    # Quick stochastic sanity: step once and compare per-leaf updates
-    # (re-run kernel once deterministically with fixed key)
+    # Weak stochastic sanity: repeated runs should change Ln occasionally
+    out2 = run_sgld(jax.random.PRNGKey(1), grad_loss, tb.params0_f32, tb.params0_f32,
+                    (tb.X, tb.Y), cfg, num_chains=1, beta=1.0, gamma=0.0,
+                    loss_full_fn=tb.loss_full_f32)
+    assert jnp.any(traces["Ln"] != out2.traces["Ln"])
