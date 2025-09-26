@@ -20,7 +20,10 @@ def compute_beta_gamma(
     """Compute beta and gamma from config and dimension"""
     n_eff = max(3, int(n_data))
     beta = cfg.beta0 / jnp.log(n_eff) if cfg.beta_mode == "1_over_log_n" else cfg.beta0
-    gamma = (d / (cfg.prior_radius**2)) if (cfg.prior_radius is not None) else cfg.gamma
+    if cfg.prior_radius is not None and cfg.prior_radius > 0:
+        gamma = d / (cfg.prior_radius**2)
+    else:
+        gamma = cfg.gamma
     return float(beta), float(gamma)
 
 

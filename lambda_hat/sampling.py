@@ -141,7 +141,9 @@ def inference_loop_extended(
         trace_data["cumulative_fge"] = new_cumulative_work
 
         # Extract diagnostics robustly
-        trace_data["acceptance_rate"] = getattr(info, "acceptance_rate", jnp.nan)
+        trace_data["acceptance_rate"] = getattr(
+            info, "acceptance_rate", getattr(info, "acceptance_probability", jnp.nan)
+        )
         trace_data["energy"] = getattr(info, "energy", jnp.nan)
         # Standardize divergence key (handle both 'is_divergent' and 'diverging')
         trace_data["is_divergent"] = getattr(

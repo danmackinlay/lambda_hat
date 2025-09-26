@@ -19,7 +19,6 @@ from lambda_hat.models import build_mlp_forward_fn
 from lambda_hat.models import infer_widths
 
 
-
 def run_sampling_logic(cfg: DictConfig) -> None:
     """Executes the sampling logic. Reusable by different entry points."""
     if cfg.jax.enable_x64:

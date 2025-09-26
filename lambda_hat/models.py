@@ -25,8 +25,10 @@ def infer_widths(
     if a == 0:
         h = max(1, (target_params - out_dim) // (in_dim + 1))
     else:
-        disc = b * b + 4 * a * target_params
-        h = int((-b + jnp.sqrt(disc)) / (2 * a))
+        import math
+
+        disc = float(b) * float(b) + 4.0 * float(a) * float(target_params)
+        h = int((-float(b) + math.sqrt(disc)) / (2.0 * float(a)))
         h = int(max(1, h))
     return [h] * L
 
@@ -71,12 +73,11 @@ class MLP(hk.Module):
         if self.init == "he":
             return hk.initializers.VarianceScaling(2.0, "fan_in", "truncated_normal")
         elif self.init == "xavier":
-            return hk.initializers.VarianceScaling(1.0, "fan_in", "truncated_normal")
+            return hk.initializers.VarianceScaling(1.0, "fan_avg", "truncated_normal")
         elif self.init == "lecun":
             return hk.initializers.VarianceScaling(1.0, "fan_in", "truncated_normal")
         elif self.init == "orthogonal":
-            # Use He scaling for consistency with original implementation
-            return hk.initializers.VarianceScaling(2.0, "fan_in", "truncated_normal")
+            return hk.initializers.Orthogonal()
         else:
             return hk.initializers.TruncatedNormal(stddev=1.0)
 
@@ -99,9 +100,13 @@ class MLP(hk.Module):
 
             h_new = act(z)
 
-            # Skip connections (simplified - removed complex dimension handling)
-            if self.skip and (i % self.residual_period == self.residual_period - 1):
-                h = h + h_new  # Standard residual addition
+            # Skip connections with dimension compatibility check
+            if (
+                self.skip
+                and (i % self.residual_period == self.residual_period - 1)
+                and h.shape[-1] == h_new.shape[-1]
+            ):
+                h = h + h_new
             else:
                 h = h_new
 
