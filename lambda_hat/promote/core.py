@@ -11,7 +11,7 @@ def gather_latest_runs(runs_root: Path, samplers: list[str]) -> Dict[str, Path]:
     for sampler in samplers:
         candidates = []
         for run_dir in runs_root.glob("*/"):
-            analysis_dir = run_dir / "analysis"
+            analysis_dir = run_dir / "diagnostics"
             if not analysis_dir.exists():
                 continue
             # heuristic: check for an image file for this sampler
@@ -44,7 +44,7 @@ def promote(
     latest_runs = gather_latest_runs(runs_root, samplers)
 
     for sampler, run_dir in latest_runs.items():
-        src = run_dir / "analysis" / plot_name
+        src = run_dir / "diagnostics" / plot_name
         if not src.exists():
             raise RuntimeError(f"Expected plot {src} not found")
         dst = outdir / f"{sampler}.png"

@@ -8,7 +8,7 @@ import jax
 import jax.numpy as jnp
 import blackjax
 import blackjax.mcmc.integrators as bj_int
-from jax.tree_util import tree_map
+# prefer jax.tree.map at call sites per project guidance
 
 if TYPE_CHECKING:
     from lambda_hat.config import SGLDConfig
@@ -48,8 +48,8 @@ def initialize_preconditioner(params: Any) -> PreconditionerState:
     """
 
     t = jnp.array(0, dtype=jnp.int32)
-    m = tree_map(jnp.zeros_like, params)
-    v = tree_map(jnp.ones_like, params)
+    m = jax.tree.map(jnp.zeros_like, params)
+    v = jax.tree.map(jnp.ones_like, params)
     return PreconditionerState(t=t, m=m, v=v)
 
 
@@ -62,7 +62,7 @@ def update_preconditioner(
 
     # Default values (Vanilla SGLD)
 
-    P_t = tree_map(jnp.ones_like, grad_loss)
+    P_t = jax.tree.map(jnp.ones_like, grad_loss)
     adapted_loss_drift = grad_loss
 
     if config.precond == "none":
@@ -70,13 +70,13 @@ def update_preconditioner(
     elif config.precond == "adam" or config.precond == "rmsprop":
         # Update moments
         if config.precond == "adam":
-            m = tree_map(
+            m = jax.tree.map(
                 lambda m_prev, g: config.beta1 * m_prev + (1 - config.beta1) * g,
                 m,
                 grad_loss,
             )
 
-        v = tree_map(
+        v = jax.tree.map(
             lambda v_prev, g: config.beta2 * v_prev + (1 - config.beta2) * g**2,
             v,
             grad_loss,
@@ -89,11 +89,11 @@ def update_preconditioner(
         # Ensure t is cast to float for exponentiation
         t_float = t.astype(jnp.float32)
         if config.precond == "adam":
-            m_hat = tree_map(lambda m_val: m_val / (1 - config.beta1**t_float), m)
-        v_hat = tree_map(lambda v_val: v_val / (1 - config.beta2**t_float), v)
+            m_hat = jax.tree.map(lambda m_val: m_val / (1 - config.beta1**t_float), m)
+        v_hat = jax.tree.map(lambda v_val: v_val / (1 - config.beta2**t_float), v)
 
         # Compute Preconditioner Tensor P_t = 1 / (sqrt(v_hat) + eps)
-        P_t = tree_map(lambda vh: 1.0 / (jnp.sqrt(vh) + config.eps), v_hat)
+        P_t = jax.tree.map(lambda vh: 1.0 / (jnp.sqrt(vh) + config.eps), v_hat)
 
         # Determine adapted loss drift
         if config.precond == "adam":
@@ -121,39 +121,46 @@ def inference_loop_extended(rng_key, kernel, initial_state, num_samples, aux_fn,
     """
     @jax.jit
     def one_step(carry, rng_key):
-        state, cumulative_work = carry
+        state, cumulative_work, t = carry
         new_state, info = kernel(rng_key, state)
 
         # Update cumulative work (ensure dtype consistency)
         current_work = jnp.asarray(work_per_step, dtype=cumulative_work.dtype)
         new_cumulative_work = cumulative_work + current_work
 
-        # Compute Aux data (e.g., Ln)
-        aux_data = aux_fn(new_state)
+        # Compute Aux only every aux_every steps; reuse last otherwise
+        def do_aux(_):
+            return aux_fn(new_state)
+        def keep_aux(_):
+            return aux_fn(state)
+        aux_data = jax.lax.cond(((t + 1) % aux_every) == 0, do_aux, keep_aux, operand=None)
 
         # Combine data for trace
         trace_data = aux_data.copy()
         trace_data["cumulative_fge"] = new_cumulative_work
 
         # Extract diagnostics robustly
-        trace_data["acceptance_rate"] = getattr(info, "acceptance_rate", jnp.nan)
+        acc = getattr(info, "acceptance_probability", None)
+        if acc is None:
+            acc = getattr(info, "acceptance_rate", jnp.nan)
+        trace_data["acceptance_rate"] = acc
         trace_data["energy"] = getattr(info, "energy", jnp.nan)
         # Standardize divergence key (handle both 'is_divergent' and 'diverging')
         trace_data["is_divergent"] = getattr(info, "is_divergent", getattr(info, "diverging", False))
 
-        return (new_state, new_cumulative_work), trace_data
+        return (new_state, new_cumulative_work, t + 1), trace_data
 
     keys = jax.random.split(rng_key, num_samples)
     # Initialize work accumulation with high precision (float64)
     initial_work = jnp.array(0.0, dtype=jnp.float64)
 
     # Run the scan
-    # The carry tuple is (state, cumulative_work)
-    _, trace = jax.lax.scan(one_step, (initial_state, initial_work), keys)
+    # The carry tuple is (state, cumulative_work, t)
+    _, trace = jax.lax.scan(one_step, (initial_state, initial_work, jnp.array(0, jnp.int32)), keys)
 
     # Apply thinning AFTER the scan (efficient JAX pattern)
     if aux_every > 1:
-        trace = tree_map(lambda x: x[::aux_every], trace)
+        trace = jax.tree.map(lambda x: x[::aux_every], trace)
 
     return trace
 
@@ -315,10 +322,10 @@ def run_sgld(
     def init_chain(key, params_init):
         # Perturb initial position slightly for diversity
 
-        noise = tree_map(
+        noise = jax.tree.map(
             lambda p: 0.01 * jax.random.normal(key, p.shape, dtype=p.dtype), params_init
         )
-        position = tree_map(lambda p, n: p + n, params_init, noise)
+        position = jax.tree.map(lambda p, n: p + n, params_init, noise)
         precond_state = initialize_preconditioner(position)
         return SGLDState(position=position, precond_state=precond_state)
 
@@ -353,11 +360,11 @@ def run_sgld(
         # 4. Calculate localization (prior) term: γ(w_t - w_0)
         # Note: params0 is captured by closure
 
-        localization_term = tree_map(lambda w, w0: gamma_val * (w - w0), w_t, params0)
+        localization_term = jax.tree.map(lambda w, w0: gamma_val * (w - w0), w_t, params0)
 
         # 5. Calculate the total drift term
         # Drift = localization_term + beta_tilde * adapted_loss_drift
-        total_drift = tree_map(
+        total_drift = jax.tree.map(
             lambda loc, loss_drift: loc + beta_tilde * loss_drift,
             localization_term,
             adapted_loss_drift,
@@ -366,17 +373,22 @@ def run_sgld(
         # 6. Calculate adaptive step sizes and apply update
         # Δw_t = -(ε_t/2) * Drift + sqrt(ε_t) * η_t, where ε_t = ε * P_t
 
-        def compute_update(P, drift, w):
+        # Build a PyTree of independent noise keys that matches params structure
+        leaves, treedef = jax.tree_util.tree_flatten(w_t)
+        noise_keys = jax.random.split(key_sgld, len(leaves))
+        noise_key_tree = jax.tree_util.tree_unflatten(treedef, noise_keys)
+
+        def compute_update(P, drift, w, k):
             adaptive_step = base_step_size * P
             # Drift component
             update = -0.5 * adaptive_step * drift
             # Noise component
             noise_scale = jnp.sqrt(adaptive_step)
-            noise = noise_scale * jax.random.normal(key_sgld, w.shape, dtype=w.dtype)
+            noise = noise_scale * jax.random.normal(k, w.shape, dtype=w.dtype)
             return w + update + noise
 
         # Apply update calculation across the PyTree
-        w_next = tree_map(compute_update, P_t, total_drift, w_t)
+        w_next = jax.tree.map(compute_update, P_t, total_drift, w_t, noise_key_tree)
 
         new_state = SGLDState(position=w_next, precond_state=new_precond_state)
         info = SGLDInfo()

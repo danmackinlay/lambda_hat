@@ -71,8 +71,13 @@ def run_hydra_sweep_and_collect_assets():
         log.info(f"Processing Job {job_num} (Seed {seeds[job_num]})")
 
         # Copy Trace Plot (visualization of ArviZ traces)
-        trace_plot = run_dir / "llc_traces.png"
-        if trace_plot.exists():
+        diag_dir = run_dir / "diagnostics"
+        trace_plot = next((p for p in [
+            diag_dir / "sgld_trace.png",
+            diag_dir / "hmc_trace.png",
+            diag_dir / "mclmc_trace.png",
+        ] if p.exists()), None)
+        if trace_plot is not None:
             target_path = ASSET_DIR / f"llc_traces_run_{job_num}.png"
             shutil.copy(trace_plot, target_path)
             log.info(f"Copied: {target_path}")

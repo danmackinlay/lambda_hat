@@ -2,7 +2,7 @@
 """Enhanced analysis functions for Hydra-based LLC experiments with proper visualization"""
 
 from __future__ import annotations
-from typing import Dict, Any, Tuple, Optional
+from typing import Dict, Tuple, Optional
 import jax.numpy as jnp
 import numpy as np
 import arviz as az
@@ -225,7 +225,8 @@ def create_combined_convergence_plot(
         llc_traces = idata.posterior["llc"].values # (C, T)
         C, T = llc_traces.shape
 
-        if T < 2 or C < 1: continue
+        if T < 2 or C < 1:
+            continue
 
         # Calculate running mean for each chain
         running_means = np.cumsum(llc_traces, axis=1) / np.arange(1, T + 1) # (C, T)

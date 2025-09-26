@@ -154,7 +154,7 @@ def main(cfg: Config) -> None:
     log.info(f"Target built: d={target.d}, L0={target.L0:.6f}")
 
     # Run samplers
-    samplers_to_run = ["sgld", "hmc", "mclmc"]  # Test all three samplers
+    samplers_to_run = list(cfg.get("samplers_to_run", ["sgld", "hmc", "mclmc"]))
     results = {}
 
     for sampler_name in samplers_to_run:

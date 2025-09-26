@@ -35,8 +35,7 @@ def save_run_artifacts(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Save configuration
-    with open(output_dir / "config.yaml", "w") as f:
-        OmegaConf.save(cfg, f)
+    OmegaConf.save(cfg, output_dir / "config.yaml")
 
     # Save target info
     target_info = {

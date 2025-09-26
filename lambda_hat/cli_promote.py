@@ -16,8 +16,8 @@ def main() -> None:
     p.add_argument("--outdir", default="assets", type=Path)
     p.add_argument(
         "--plot-name",
-        default="trace.png",
-        help="Which plot to copy from analysis/ (filename only)",
+        default="sgld_trace.png",
+        help="Which plot to copy from diagnostics/ (filename only)",
     )
     args = p.parse_args()
 

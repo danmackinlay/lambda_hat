@@ -34,3 +34,5 @@ posterior:
 output:
   save_plots: true
   show_plots: false
+
+samplers_to_run: [sgld, hmc, mclmc]
