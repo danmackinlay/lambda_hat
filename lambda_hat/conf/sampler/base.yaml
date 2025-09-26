@@ -2,8 +2,8 @@
 chains: 4
 
 sgld:
-  # Increased steps to reach ~10k FGEs (781250 steps * (256/20000) = 10000 FGEs)
-  steps: 781250
+  # reach ~20k FGEs (1436000 steps * (256/20000) = 20000 FGEs)
+  steps: 1436000
   warmup: 50000
   batch_size: 256
   step_size: 0.000001
@@ -17,8 +17,8 @@ sgld:
   eval_every: 100
 
 hmc:
-  # Reduced draws to reach ~10k FGEs (1000 draws * 10 steps = 10000 FGEs)
-  draws: 1000
+  # ~20k FGEs (1000 draws * 10 steps = 10000 FGEs)
+  draws: 2000
   warmup: 200
   num_integration_steps: 10
   step_size: 0.01
@@ -27,13 +27,12 @@ hmc:
   target_acceptance: 0.8
 
 mclmc:
-  # Reduced draws to reach ~10k FGEs (1000 draws * (1.0/0.1) = 10000 FGEs)
-  draws: 1000
+  # ~20k FGEs (1000 draws * (1.0/0.1) = 10000 FGEs)
+  draws: 2000
   L: 1.0
   step_size: 0.1
   dtype: float64
   diagonal_preconditioning: false
-  # Reduced adaptation steps slightly
   num_steps: 500
   frac_tune1: 0.1
   frac_tune2: 0.1
