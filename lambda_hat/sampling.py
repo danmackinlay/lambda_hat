@@ -123,18 +123,22 @@ def inference_loop_extended(
         aux_every: Thinning factor for the trace.
         work_per_step: The amount of work (in FGEs) performed by one call to the kernel.
     """
+    # Seed the aux cache once from the initial state (outside of scan)
+    init_aux = aux_fn(initial_state)
 
     @jax.jit
     def one_step(carry, rng_key):
-        state, cumulative_work = carry
+        state, cumulative_work, t, last_aux = carry
         new_state, info = kernel(rng_key, state)
 
         # Update cumulative work (ensure dtype consistency)
         current_work = jnp.asarray(work_per_step, dtype=cumulative_work.dtype)
         new_cumulative_work = cumulative_work + current_work
 
-        # Compute Aux data (e.g., Ln)
-        aux_data = aux_fn(new_state)
+        # Compute Aux only every aux_every steps; otherwise reuse cached value
+        def do_aux(_):
+            return aux_fn(new_state)
+        aux_data = jax.lax.cond(((t + 1) % aux_every) == 0, do_aux, lambda _: last_aux, operand=None)
 
         # Combine data for trace
         trace_data = aux_data.copy()
@@ -150,15 +154,19 @@ def inference_loop_extended(
             info, "is_divergent", getattr(info, "diverging", False)
         )
 
-        return (new_state, new_cumulative_work), trace_data
+        return (new_state, new_cumulative_work, t + 1, aux_data), trace_data
 
     keys = jax.random.split(rng_key, num_samples)
     # Initialize work accumulation with high precision (float64)
     initial_work = jnp.array(0.0, dtype=jnp.float64)
 
     # Run the scan
-    # The carry tuple is (state, cumulative_work)
-    _, trace = jax.lax.scan(one_step, (initial_state, initial_work), keys)
+    # The carry tuple is (state, cumulative_work, t, last_aux)
+    _, trace = jax.lax.scan(
+        one_step,
+        (initial_state, initial_work, jnp.array(0, jnp.int32), init_aux),
+        keys
+    )
 
     # Apply thinning AFTER the scan (efficient JAX pattern)
     if aux_every > 1:
@@ -224,16 +232,18 @@ def run_hmc(
     key, init_key, sample_key = jax.random.split(rng_key, 3)
     init_keys = jax.random.split(init_key, num_chains)
 
-    # Create initial states for each chain (with slight perturbation)
-    def init_chain(key, params):
-        noise = jax.tree.map(
-            lambda p: 0.01 * jax.random.normal(key, p.shape, dtype=p.dtype), params
+    # 1) diversify initial positions
+    def jitter(key, params):
+        leaves, treedef = jax.tree_util.tree_flatten(params)
+        keys = jax.random.split(key, len(leaves))
+        keytree = jax.tree_util.tree_unflatten(treedef, keys)
+        return jax.tree.map(
+            lambda p, k: p + 0.01 * jax.random.normal(k, p.shape, p.dtype),
+            params, keytree
         )
-        perturbed_params = jax.tree.map(lambda p, n: p + n, params, noise)
-        return perturbed_params
 
     # Map over keys (chains), broadcast params
-    init_positions = jax.vmap(init_chain, in_axes=(0, None))(init_keys, initial_params)
+    init_positions = jax.vmap(jitter, in_axes=(0, None))(init_keys, initial_params)
 
     # Flatten parameters for dimensionality calculation
     D = sum(p.size for p in jax.tree_util.tree_leaves(initial_params))
@@ -266,8 +276,18 @@ def run_hmc(
         # Ensure adaptation is finished before stopping the timer
         jax.block_until_ready(warmup_result)
 
-        # Unpack the result
-        (final_state, (step_size_adapted, inv_mass)), _ = warmup_result
+        # Unpack the result - BlackJAX returns ((state, params), info)
+        (final_state, params), _ = warmup_result
+
+        # Extract adaptation results from BlackJAX 1.2.5 expected format
+        if isinstance(params, dict):
+            step_size_adapted = params.get("step_size", step_size_adapted)
+            inv_mass_adapted = params.get("inverse_mass_matrix", inv_mass)
+            if hasattr(inv_mass_adapted, "ndim") and inv_mass_adapted.ndim in [1, 2]:
+                inv_mass = inv_mass_adapted
+        else:
+            # Handle tuple format (step_size, inv_mass)
+            step_size_adapted, inv_mass = params
 
     # Stop adaptation timer
     adaptation_time = time.time() - adaptation_start_time
