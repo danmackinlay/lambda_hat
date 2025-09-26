@@ -28,7 +28,7 @@ uv run snakemake -j 4
 ## Configuration Options
 
 - `steps`: Total number of SGLD steps (iterations).
-- `warmup`: Number of warmup steps (defined in config, but currently unused by the SGLD loop implementation).
+- `warmup`: Number of warmup steps to discard in analysis (converted to draws as `warmup // eval_every`).
 - `batch_size`: Size of the minibatch used in each iteration.
 - `step_size`: The learning rate (step size) for the SGLD update.
 - `dtype`: Precision (default: `float32`).

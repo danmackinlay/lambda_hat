@@ -4,7 +4,7 @@ Entry point for lambda-hat command (Hydra-based LLC estimation).
 """
 
 import hydra
-from lambda_hat.config import Config, setup_config
+from lambda_hat.config import Config
 from lambda_hat.main import main as main_func
 
 
@@ -16,5 +16,4 @@ def main(cfg: Config) -> None:
 
 
 if __name__ == "__main__":
-    setup_config()
     main()

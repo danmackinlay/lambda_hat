@@ -163,7 +163,7 @@ def inference_loop_extended(
 
     # Apply thinning AFTER the scan (efficient JAX pattern)
     if aux_every > 1:
-        trace = tree_map(lambda x: x[::aux_every], trace)
+        trace = jax.tree.map(lambda x: x[::aux_every], trace)
 
     return trace
 
