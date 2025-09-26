@@ -11,10 +11,20 @@ def gather_latest_runs(
     """Pick the most recent run dir for each sampler type."""
     result: Dict[str, Path] = {}
     for sampler in samplers:
+        # Look for per-sampler file e.g. "{sampler}_trace.png"
+        per_sampler = f"{sampler}_{plot_name}"
         pattern = (
-            runs_root / "samples" / "*" / sampler / "run_*" / "diagnostics" / plot_name
+            runs_root
+            / "samples"
+            / "*"
+            / sampler
+            / "run_*"
+            / "diagnostics"
+            / per_sampler
         )
-        candidates = [p.parent for p in pattern.parent.glob(f"**/{plot_name}")]
+        files = list(pattern.parent.glob(f"**/{per_sampler}"))
+        # Promote the parent of "diagnostics" → the run_* directory
+        candidates = [f.parent.parent for f in files]
         if not candidates:
             raise RuntimeError(f"No runs found for sampler {sampler}")
         # pick newest by mtime
@@ -39,7 +49,7 @@ def promote(
     latest_runs = gather_latest_runs(runs_root, samplers, plot_name)
 
     for sampler, run_dir in latest_runs.items():
-        src = run_dir / "diagnostics" / plot_name
+        src = run_dir / "diagnostics" / f"{sampler}_{plot_name}"
         if not src.exists():
             raise RuntimeError(f"Expected plot {src} not found")
         dst = outdir / f"{sampler}.png"

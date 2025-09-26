@@ -22,7 +22,6 @@ uv run lambda-hat-workflow -m model=small,base sampler=hmc,sgld       # N×M wor
 
 # Testing
 uv run pytest tests/                           # All tests
-uv run pytest tests/test_mclmc_validation.py  # Single test
 
 # lint before commits
 uv run ruff format
