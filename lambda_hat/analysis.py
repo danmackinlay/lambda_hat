@@ -16,7 +16,6 @@ import matplotlib.pyplot as plt
 
 def _debug_print_idata(idata, name: str):
     """Debug helper to identify degenerate arrays in InferenceData."""
-
     def _summ(v):
         arr = np.asarray(v)
         return dict(
