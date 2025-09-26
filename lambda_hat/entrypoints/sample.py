@@ -158,19 +158,24 @@ def run_sampling_logic(cfg: DictConfig) -> None:
         # Determine warmup and recording frequency (needed for analysis)
         sampler_name = cfg.sampler.name
         sampler_specific_cfg = getattr(cfg.sampler, sampler_name, {})
-        warmup = getattr(sampler_specific_cfg, "warmup", 0)
-
         record_every = 1
         if sampler_name == "sgld":
             # SGLD records less frequently
             record_every = getattr(sampler_specific_cfg, "eval_every", 10)
-
-        # Calculate the number of warmup steps present in the recorded trace
-        warmup_steps_in_trace = warmup // record_every
+            warmup = getattr(sampler_specific_cfg, "warmup", 0)
+            warmup_steps_in_trace = warmup // max(1, record_every)
+        else:
+            # HMC/MCLMC traces are already post-warmup
+            warmup_steps_in_trace = 0
 
         # Use the new comprehensive analysis function
         llc_metrics, idata = analyze_traces(
-            traces, L0, n_data=n_data, beta=beta, warmup=warmup_steps_in_trace, timings=timings
+            traces,
+            L0,
+            n_data=n_data,
+            beta=beta,
+            warmup=warmup_steps_in_trace,
+            timings=timings,
         )
 
         metrics.update(llc_metrics)

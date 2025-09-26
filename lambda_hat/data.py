@@ -13,9 +13,9 @@ if TYPE_CHECKING:
 from .models import infer_widths, build_mlp_forward_fn
 
 
-def sample_X(key, cfg: Config, n: int, in_dim: int):
+def sample_X(key, cfg: "Config", n: int, in_dim: int):
     """Sample inputs according to various distributions"""
-    data_cfg = cfg.data  # Access the data configuration group
+    data_cfg = cfg.data if hasattr(cfg, "data") else cfg
 
     if data_cfg.x_dist == "gauss_iso":
         return random.normal(key, (n, in_dim))

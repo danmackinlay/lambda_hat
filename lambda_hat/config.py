@@ -177,3 +177,7 @@ def setup_config():
     # REMOVE ALL OTHER cs.store() CALLS BELOW.
     # Hydra validates YAML presets automatically using the type hints
     # defined in the Config dataclass (e.g., Config.model is ModelConfig).
+
+
+# --- Compatibility shim for legacy tests ---
+TEST_CFG = DataConfig()

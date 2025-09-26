@@ -56,7 +56,9 @@ uv run pytest tests/test_mclmc_validation.py  # Single test
 - we pin package versions rather than introspecting APIs or versions
 
 **JAX Tree**
-- Use `jax.tree.map` exclusively (never `jax.tree_map` or `jax.tree_util.tree_map`)
+
+- Use `jax.tree.map` (never deprecated `jax.tree_map`); eventually migrate from compat layer `jax.tree_util.tree_map`
+- Haiku requires RNG parameter: `model.apply(params, None, X)`
 - Set `vmap` axes explicitly: `in_axes=(0, None)` for `(keys, params)`
 
 **MCMC Integration:**
@@ -87,11 +89,3 @@ uv run pytest tests/test_mclmc_validation.py  # Single test
 - Warmup issues: Adjust if warmup >= total draws
 - BlackJAX API: HMC `warmup.run()` takes `num_steps`, MCLMC `init()` takes no `key`
 
-**JAX Integration:**
-- Use `jax.tree.map` (never deprecated `jax.tree_map`)
-- Haiku requires RNG parameter: `model.apply(params, None, X)`
-
-# important-instruction-reminders
-Do what has been asked; nothing more, nothing less.
-NEVER create files unless they're absolutely necessary for achieving your goal.
-ALWAYS prefer editing an existing file to creating a new one.

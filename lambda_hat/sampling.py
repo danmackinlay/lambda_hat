@@ -110,7 +110,9 @@ def update_preconditioner(
 
 
 # === Optimized Inference Loop ===
-def inference_loop_extended(rng_key, kernel, initial_state, num_samples, aux_fn, aux_every=1, work_per_step=1.0):
+def inference_loop_extended(
+    rng_key, kernel, initial_state, num_samples, aux_fn, aux_every=1, work_per_step=1.0
+):
     """
     Efficient inference loop using jax.lax.scan that records Ln, diagnostics, and cumulative work (FGEs).
 
@@ -119,6 +121,7 @@ def inference_loop_extended(rng_key, kernel, initial_state, num_samples, aux_fn,
         aux_every: Thinning factor for the trace.
         work_per_step: The amount of work (in FGEs) performed by one call to the kernel.
     """
+
     @jax.jit
     def one_step(carry, rng_key):
         state, cumulative_work = carry
@@ -139,7 +142,9 @@ def inference_loop_extended(rng_key, kernel, initial_state, num_samples, aux_fn,
         trace_data["acceptance_rate"] = getattr(info, "acceptance_rate", jnp.nan)
         trace_data["energy"] = getattr(info, "energy", jnp.nan)
         # Standardize divergence key (handle both 'is_divergent' and 'diverging')
-        trace_data["is_divergent"] = getattr(info, "is_divergent", getattr(info, "diverging", False))
+        trace_data["is_divergent"] = getattr(
+            info, "is_divergent", getattr(info, "diverging", False)
+        )
 
         return (new_state, new_cumulative_work), trace_data
 
@@ -165,13 +170,22 @@ def inference_loop_ln_only(
     Legacy function - kept for backwards compatibility.
     Use inference_loop_extended for new implementations.
     """
+
     def aux_fn(state):
         position = state.position
         ln_val = loss_fn(position)
         return {"Ln": ln_val}
 
     # Use the extended loop with work_per_step=1.0 (default)
-    return inference_loop_extended(rng_key, kernel, initial_state, num_samples, aux_fn, aux_every=record_every, work_per_step=1.0)
+    return inference_loop_extended(
+        rng_key,
+        kernel,
+        initial_state,
+        num_samples,
+        aux_fn,
+        aux_every=record_every,
+        work_per_step=1.0,
+    )
 
 
 def run_hmc(
@@ -283,7 +297,9 @@ def run_hmc(
     # Use vmap with the optimized inference loop
     traces = jax.vmap(
         lambda k, s: inference_loop_extended(
-            k, hmc.step, s,
+            k,
+            hmc.step,
+            s,
             num_samples=num_samples,
             aux_fn=aux_fn,
             aux_every=1,  # HMC records every step
@@ -296,9 +312,9 @@ def run_hmc(
     sampling_time = time.time() - sampling_start_time
 
     timings = {
-        'adaptation': adaptation_time,
-        'sampling': sampling_time,
-        'total': adaptation_time + sampling_time
+        "adaptation": adaptation_time,
+        "sampling": sampling_time,
+        "total": adaptation_time + sampling_time,
     }
 
     return SamplerRunResult(traces=traces, timings=timings)
@@ -386,17 +402,15 @@ def run_sgld(
         # 6. Calculate adaptive step sizes and apply update
         # Δw_t = -(ε_t/2) * Drift + sqrt(ε_t) * η_t, where ε_t = ε * P_t
 
-        def compute_update(P, drift, w):
-            adaptive_step = base_step_size * P
-            # Drift component
-            update = -0.5 * adaptive_step * drift
-            # Noise component
-            noise_scale = jnp.sqrt(adaptive_step)
-            noise = noise_scale * jax.random.normal(key_sgld, w.shape, dtype=w.dtype)
-            return w + update + noise
-
-        # Apply update calculation across the PyTree
-        w_next = jax.tree.map(compute_update, P_t, total_drift, w_t)
+        # Flatten parameter tree for independent noise sampling
+        theta_t, unravel = jax.flatten_util.ravel_pytree(w_t)
+        P_flat, _ = jax.flatten_util.ravel_pytree(P_t)
+        drift_flat, _ = jax.flatten_util.ravel_pytree(total_drift)
+        adaptive_step = base_step_size * P_flat
+        update_flat = -0.5 * adaptive_step * drift_flat
+        noise = jax.random.normal(key_sgld, theta_t.shape, dtype=theta_t.dtype)
+        theta_next = theta_t + update_flat + jnp.sqrt(adaptive_step) * noise
+        w_next = unravel(theta_next)
 
         new_state = SGLDState(position=w_next, precond_state=new_precond_state)
         info = SGLDInfo()
@@ -414,7 +428,7 @@ def run_sgld(
     work_per_step = float(batch_size) / float(n_data)
 
     # Use eval_every from config if available, otherwise default to 10 (matches config.py)
-    eval_every = getattr(config, 'eval_every', 10)
+    eval_every = getattr(config, "eval_every", 10)
 
     # Start sampling timer
     sampling_start_time = time.time()
@@ -422,7 +436,9 @@ def run_sgld(
     # Use vmap with the optimized inference loop
     traces = jax.vmap(
         lambda k, s: inference_loop_extended(
-            k, sgld_kernel, s,
+            k,
+            sgld_kernel,
+            s,
             num_samples=config.steps,
             aux_fn=aux_fn,
             aux_every=eval_every,
@@ -435,9 +451,9 @@ def run_sgld(
     sampling_time = time.time() - sampling_start_time
 
     timings = {
-        'adaptation': 0.0,  # SGLD has no separate adaptation phase
-        'sampling': sampling_time,
-        'total': sampling_time
+        "adaptation": 0.0,  # SGLD has no separate adaptation phase
+        "sampling": sampling_time,
+        "total": sampling_time,
     }
 
     return SamplerRunResult(traces=traces, timings=timings)
@@ -576,7 +592,9 @@ def run_mclmc(
     # Use vmap with the optimized loop
     traces = jax.vmap(
         lambda k, s: inference_loop_extended(
-            k, mclmc_sampler.step, s,
+            k,
+            mclmc_sampler.step,
+            s,
             num_samples=num_samples,
             aux_fn=aux_fn,
             aux_every=1,
@@ -590,9 +608,9 @@ def run_mclmc(
 
     timings = {
         # Note: This implementation assumes MCLMC adaptation is not used or timed separately.
-        'adaptation': 0.0,
-        'sampling': sampling_time,
-        'total': sampling_time
+        "adaptation": 0.0,
+        "sampling": sampling_time,
+        "total": sampling_time,
     }
 
     return SamplerRunResult(traces=traces, timings=timings)
