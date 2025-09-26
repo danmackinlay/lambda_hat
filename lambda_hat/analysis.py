@@ -12,6 +12,31 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 
+def _debug_print_idata(idata, name: str):
+    """Debug helper to identify degenerate arrays in InferenceData."""
+    import numpy as np
+    def _summ(v):
+        arr = np.asarray(v)
+        return dict(
+            shape=arr.shape,
+            finite=np.isfinite(arr).sum().item(),
+            nans=np.isnan(arr).sum().item(),
+            min=(np.nanmin(arr) if np.isfinite(arr).any() else np.nan),
+            max=(np.nanmax(arr) if np.isfinite(arr).any() else np.nan),
+            unique=(len(np.unique(arr[np.isfinite(arr)])) if np.isfinite(arr).any() else 0),
+        )
+
+    print(f"\n=== DEBUG {name} ===")
+    if hasattr(idata, "posterior") and "llc" in idata.posterior:
+        print("llc:", _summ(idata.posterior["llc"].values))
+    if hasattr(idata, "posterior") and "L" in idata.posterior:
+        print("L:", _summ(idata.posterior["L"].values))
+    if hasattr(idata, "sample_stats"):
+        for key in ["energy", "acceptance_rate", "cumulative_fge", "cumulative_time", "diverging"]:
+            if key in idata.sample_stats:
+                print(f"{key}:", _summ(idata.sample_stats[key].values))
+
+
 def analyze_traces(
     traces: Dict[str, jnp.ndarray],
     L0: float,
@@ -196,35 +221,55 @@ def create_arviz_diagnostics(
     diag_dir = output_dir / "diagnostics"
     diag_dir.mkdir(exist_ok=True)
 
+    def _has_var(idata, var):
+        """Check if variable has >1 finite value and is not constant."""
+        if hasattr(idata, "posterior") and var in idata.posterior:
+            vals = np.asarray(idata.posterior[var].values)
+            vals = vals[np.isfinite(vals)]
+            return vals.size > 1 and (np.nanmax(vals) != np.nanmin(vals))
+        return False
+
     for sampler_name, idata in inference_data.items():
-        # 1. Trace Plot (Trace + Posterior Density)
+        # 1. Trace Plot (Trace + Posterior Density), only if we have >1 finite value
         try:
-            az.plot_trace(idata, var_names=["llc", "L"], figsize=(12, 8), compact=False)
-            plt.suptitle(f"{sampler_name.upper()} Trace Plot", y=1.02)
-            plt.tight_layout()
-            plt.savefig(diag_dir / f"{sampler_name}_trace.png", dpi=150, bbox_inches="tight")
-            plt.close()
+            vars_to_plot = [v for v in ["llc", "L"] if _has_var(idata, v)]
+            if vars_to_plot:
+                az.plot_trace(idata, var_names=vars_to_plot, figsize=(12, 8), compact=False)
+                plt.suptitle(f"{sampler_name.upper()} Trace Plot", y=1.02)
+                plt.tight_layout()
+                plt.savefig(diag_dir / f"{sampler_name}_trace.png", dpi=150, bbox_inches="tight")
+                plt.close()
+            else:
+                warnings.warn(f"{sampler_name}: skipped trace plot (degenerate or no finite values).")
         except Exception:
             warnings.warn(f"Failed to create trace plot for {sampler_name}")
 
         # 2. Rank Plot (Convergence check)
         try:
-            az.plot_rank(idata, var_names=["llc"], figsize=(12, 5))
-            plt.suptitle(f"{sampler_name.upper()} Rank Plot", y=1.02)
-            plt.tight_layout()
-            plt.savefig(diag_dir / f"{sampler_name}_rank.png", dpi=150, bbox_inches="tight")
-            plt.close()
+            if _has_var(idata, "llc"):
+                az.plot_rank(idata, var_names=["llc"], figsize=(12, 5))
+                plt.suptitle(f"{sampler_name.upper()} Rank Plot", y=1.02)
+                plt.tight_layout()
+                plt.savefig(diag_dir / f"{sampler_name}_rank.png", dpi=150, bbox_inches="tight")
+                plt.close()
+            else:
+                warnings.warn(f"{sampler_name}: skipped rank plot (llc degenerate).")
         except Exception:
              warnings.warn(f"Failed to create rank plot for {sampler_name}")
 
         # 3. Energy Plot (if available, useful for HMC/MCLMC)
         if hasattr(idata, 'sample_stats') and 'energy' in idata.sample_stats:
             try:
-                az.plot_energy(idata, figsize=(12, 6))
-                plt.suptitle(f"{sampler_name.upper()} Energy Plot", y=1.02)
-                plt.tight_layout()
-                plt.savefig(diag_dir / f"{sampler_name}_energy.png", dpi=150, bbox_inches="tight")
-                plt.close()
+                energy = np.asarray(idata.sample_stats["energy"].values)
+                fin = energy[np.isfinite(energy)]
+                if fin.size > 1 and (np.nanmax(fin) != np.nanmin(fin)):
+                    az.plot_energy(idata, figsize=(12, 6))
+                    plt.suptitle(f"{sampler_name.upper()} Energy Plot", y=1.02)
+                    plt.tight_layout()
+                    plt.savefig(diag_dir / f"{sampler_name}_energy.png", dpi=150, bbox_inches="tight")
+                    plt.close()
+                else:
+                    warnings.warn(f"{sampler_name}: skipped energy plot (degenerate energy).")
             except Exception:
                 warnings.warn(f"Failed to create energy plot for {sampler_name}")
 

@@ -216,6 +216,9 @@ def main(cfg: Config) -> None:
                 warmup=warmup_draws,
                 timings=timings,  # Pass timings
             )
+            # Debug instrumentation for degenerate data detection
+            from lambda_hat.analysis import _debug_print_idata
+            _debug_print_idata(idata, sampler_name)
             # Non-degeneracy nudges (post-hoc warnings)
             C = idata.posterior["llc"].sizes.get("chain", 1)
             T = idata.posterior["llc"].sizes.get("draw", 0)
