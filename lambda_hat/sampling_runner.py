@@ -72,6 +72,7 @@ def run_sampler(
             step_size=cfg.sampler.hmc.step_size,
             num_integration_steps=cfg.sampler.hmc.num_integration_steps,
             adaptation_steps=cfg.sampler.hmc.warmup,
+            target_acceptance=cfg.sampler.hmc.target_acceptance,
             loss_full_fn=loss_full,  # Pass loss function for Ln recording
         )
         traces = run_result.traces

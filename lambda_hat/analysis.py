@@ -2,7 +2,7 @@
 """Simplified analysis functions for Hydra-based LLC experiments"""
 
 from __future__ import annotations
-from typing import Dict, Optional, Tuple, Any
+from typing import Dict, Optional, Tuple
 from pathlib import Path
 import jax.numpy as jnp
 import numpy as np

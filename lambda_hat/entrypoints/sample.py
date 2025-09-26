@@ -18,7 +18,6 @@ from lambda_hat.analysis import analyze_traces
 from lambda_hat.models import build_mlp_forward_fn
 from lambda_hat.models import infer_widths
 
-import numpy as np
 
 
 def run_sampling_logic(cfg: DictConfig) -> None:
@@ -183,6 +182,17 @@ def run_sampling_logic(cfg: DictConfig) -> None:
 
         # Save traces using ArviZ InferenceData from analyze_traces
         az.to_netcdf(idata, run_dir / "trace.nc")
+
+        # Create diagnostic plots immediately
+        from lambda_hat.analysis import (
+            create_arviz_diagnostics,
+            create_combined_convergence_plot,
+            create_work_normalized_variance_plot,
+        )
+
+        create_arviz_diagnostics({cfg.sampler.name: idata}, run_dir)
+        create_combined_convergence_plot({cfg.sampler.name: idata}, run_dir)
+        create_work_normalized_variance_plot({cfg.sampler.name: idata}, run_dir)
     else:
         print("[WARNING] No 'Ln' found in traces. Analysis and trace saving skipped.")
 

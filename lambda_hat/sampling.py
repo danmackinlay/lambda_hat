@@ -82,15 +82,17 @@ def update_preconditioner(
             grad_loss,
         )
 
-        # Bias correction (as explicitly used in the paper's algorithms)
+        # Optional bias correction (as explicitly used in the paper's algorithms)
         m_hat = m
         v_hat = v
-
-        # Ensure t is cast to float for exponentiation
-        t_float = t.astype(jnp.float32)
-        if config.precond == "adam":
-            m_hat = jax.tree.map(lambda m_val: m_val / (1 - config.beta1**t_float), m)
-        v_hat = jax.tree.map(lambda v_val: v_val / (1 - config.beta2**t_float), v)
+        if getattr(config, "bias_correction", True):
+            # Ensure t is cast to float for exponentiation
+            t_float = t.astype(jnp.float32)
+            if config.precond == "adam":
+                m_hat = jax.tree.map(
+                    lambda m_val: m_val / (1 - config.beta1**t_float), m
+                )
+            v_hat = jax.tree.map(lambda v_val: v_val / (1 - config.beta2**t_float), v)
 
         # Compute Preconditioner Tensor P_t = 1 / (sqrt(v_hat) + eps)
         P_t = jax.tree.map(lambda vh: 1.0 / (jnp.sqrt(vh) + config.eps), v_hat)
@@ -197,6 +199,7 @@ def run_hmc(
     step_size: float = 0.01,
     num_integration_steps: int = 10,
     adaptation_steps: int = 1000,
+    target_acceptance: float = 0.8,
     loss_full_fn: Optional[Callable] = None,
 ) -> SamplerRunResult:
     """Run HMC with optional adaptation
@@ -246,7 +249,7 @@ def run_hmc(
         wa = blackjax.window_adaptation(
             blackjax.hmc,
             logdensity_fn,
-            target_acceptance_rate=0.8,
+            target_acceptance_rate=target_acceptance,
             num_integration_steps=num_integration_steps,
         )
 
@@ -336,7 +339,6 @@ def run_sgld(
     """Run SGLD or pSGLD (AdamSGLD/RMSPropSGLD) with minibatching."""
     X, Y = data
     n_data = X.shape[0]
-    num_samples = config.steps
     batch_size = config.batch_size
     base_step_size = config.step_size
 
@@ -536,25 +538,30 @@ def run_mclmc(
 
     # Initialize state for the tuner (using the first chain)
     # In BlackJAX 1.2.5, mclmc.init takes (position, logdensity_fn) - no key
-    initial_state_0 = blackjax.mcmc.mclmc.init(initial_positions[0], logdensity_flat)
+    try:
+        init_fn = blackjax.mclmc.init
+    except AttributeError:
+        init_fn = blackjax.mcmc.mclmc.init  # fallback for alt layouts
+    initial_state_0 = init_fn(initial_positions[0], logdensity_flat)
 
     if config.num_steps > 0:
         print("Starting MCLMC adaptation...")
-        (L_adapted, step_size_adapted, sqrt_diag_cov_adapted), _ = (
-            blackjax.mclmc_find_L_and_step_size(
-                mclmc_kernel=kernel_factory,
-                num_steps=config.num_steps,
-                state=initial_state_0,
-                rng_key=adaptation_key,
-                # Pass adaptation parameters from config
-                frac_tune1=config.frac_tune1,
-                frac_tune2=config.frac_tune2,
-                frac_tune3=config.frac_tune3,
-                desired_energy_var=config.desired_energy_var,
-                trust_in_estimate=config.trust_in_estimate,
-                num_effective_samples=config.num_effective_samples,
-                diagonal_preconditioning=config.diagonal_preconditioning,
-            )
+        tuner = getattr(blackjax, "mclmc_find_L_and_step_size", None)
+        if tuner is None:
+            from blackjax.mclmc import find_L_and_step_size as tuner
+        (L_adapted, step_size_adapted, sqrt_diag_cov_adapted), _ = tuner(
+            mclmc_kernel=kernel_factory,
+            num_steps=config.num_steps,
+            state=initial_state_0,
+            rng_key=adaptation_key,
+            # Pass adaptation parameters from config
+            frac_tune1=config.frac_tune1,
+            frac_tune2=config.frac_tune2,
+            frac_tune3=config.frac_tune3,
+            desired_energy_var=config.desired_energy_var,
+            trust_in_estimate=config.trust_in_estimate,
+            num_effective_samples=config.num_effective_samples,
+            diagonal_preconditioning=config.diagonal_preconditioning,
         )
         print(
             f"Adaptation complete. L: {L_adapted:.4f}, Step Size: {step_size_adapted:.4f}"

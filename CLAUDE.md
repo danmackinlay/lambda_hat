@@ -23,6 +23,10 @@ uv run lambda-hat-workflow -m model=small,base sampler=hmc,sgld       # N×M wor
 # Testing
 uv run pytest tests/                           # All tests
 uv run pytest tests/test_mclmc_validation.py  # Single test
+
+# lint before commits
+uv run ruff format
+uv run ruff check --fix
 ```
 
 **Environment Variables:**
@@ -55,13 +59,12 @@ uv run pytest tests/test_mclmc_validation.py  # Single test
 - prefer fail-fast errors.
 - we pin package versions rather than introspecting APIs or versions
 
-**JAX Tree**
-
+**JAX**
 - Use `jax.tree.map` (never deprecated `jax.tree_map`); eventually migrate from compat layer `jax.tree_util.tree_map`
 - Haiku requires RNG parameter: `model.apply(params, None, X)`
 - Set `vmap` axes explicitly: `in_axes=(0, None)` for `(keys, params)`
 
-**MCMC Integration:**
+**MCMC:**
 - JAX 64-bit precision for HMC/MCLMC: `jax.config.update("jax_enable_x64", True)`
 - Haiku models need RNG parameter: `model.apply(params, None, X)`
 - SGLD uses float32, HMC/MCLMC use float64
@@ -83,9 +86,33 @@ uv run pytest tests/test_mclmc_validation.py  # Single test
 - Target ID resolution: Check `${fingerprint:...}` resolver in workflow configs
 - Sampler configs must exist in `lambda_hat/conf/sample/sampler/`
 
-**BlackJAX API:**
-- MCLMC requires RNG keys for init
-- version 1.2.5 is pinned; note that the online documentation is for the `main` branch with many breaking changes
-- Warmup issues: Adjust if warmup >= total draws
-- BlackJAX API: HMC `warmup.run()` takes `num_steps`, MCLMC `init()` takes no `key`
+**BlackJAX API (Version 1.2.5):**
+- **HMC warmup:**
+  ```python
+  wa = blackjax.window_adaptation(blackjax.hmc, logdensity_fn,
+                                  target_acceptance_rate=...,
+                                  num_integration_steps=...)
+  warm = wa.run(rng_key, position, num_steps=adaptation_steps)
+  (final_state, (step_size, inv_mass)), _ = warm
+  ```
+- **HMC sampling:**
+  ```python
+  hmc = blackjax.hmc(logdensity_fn, step_size=..., num_integration_steps=...,
+                     inverse_mass_matrix=inv_mass)
+  state = hmc.init(position)
+  state, info = hmc.step(rng_key, state)
+  ```
+- **MCLMC:**
+  ```python
+  state0 = blackjax.mclmc.init(position, logdensity_fn)  # no rng key
+  kernel = blackjax.mclmc(logdensity_fn, L=L, step_size=eps, sqrt_diag_cov=sqrt_cov)
+  state, info = kernel.step(rng_key, state)
+  # tuner:
+  (L, eps, sqrt_cov), _ = blackjax.mclmc_find_L_and_step_size(
+      mclmc_kernel=kernel_factory, state=state0, rng_key=key, num_steps=...)
+  ```
 
+**JAX API (Version 0.7.1+):**
+- **Trees:** Use `jax.tree.map`, never deprecated `jax.tree_map`
+- **Random:** `jax.random.split(key, n)`, `jax.random.choice(key, n, shape=(k,))`
+- **Utils:** `jax.flatten_util.ravel_pytree`, `jax.lax.scan` with `@jax.jit`

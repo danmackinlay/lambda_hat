@@ -5,21 +5,16 @@ import os
 from typing import Dict
 
 
-def gather_latest_runs(runs_root: Path, samplers: list[str]) -> Dict[str, Path]:
+def gather_latest_runs(
+    runs_root: Path, samplers: list[str], plot_name: str
+) -> Dict[str, Path]:
     """Pick the most recent run dir for each sampler type."""
     result: Dict[str, Path] = {}
     for sampler in samplers:
-        candidates = []
-        for run_dir in runs_root.glob("*/"):
-            analysis_dir = run_dir / "analysis"
-            if not analysis_dir.exists():
-                continue
-            # heuristic: check for an image file for this sampler
-            if any(
-                f.name.startswith(sampler) and f.suffix in (".png", ".jpg")
-                for f in analysis_dir.iterdir()
-            ):
-                candidates.append(run_dir)
+        pattern = (
+            runs_root / "samples" / "*" / sampler / "run_*" / "diagnostics" / plot_name
+        )
+        candidates = [p.parent for p in pattern.parent.glob(f"**/{plot_name}")]
         if not candidates:
             raise RuntimeError(f"No runs found for sampler {sampler}")
         # pick newest by mtime
@@ -41,10 +36,10 @@ def promote(
         plot_name: which plot to copy from analysis/ (default: 'trace.png')
     """
     outdir.mkdir(parents=True, exist_ok=True)
-    latest_runs = gather_latest_runs(runs_root, samplers)
+    latest_runs = gather_latest_runs(runs_root, samplers, plot_name)
 
     for sampler, run_dir in latest_runs.items():
-        src = run_dir / "analysis" / plot_name
+        src = run_dir / "diagnostics" / plot_name
         if not src.exists():
             raise RuntimeError(f"Expected plot {src} not found")
         dst = outdir / f"{sampler}.png"
