@@ -1,57 +1,118 @@
 from __future__ import annotations
+import json
 import shutil
 from pathlib import Path
 import os
-from typing import Dict
+from typing import Dict, List, Tuple
+
+
+def _find_plot_files(runs_root: Path, sampler: str, plot_name: str) -> List[Path]:
+    """
+    Return list of plot files matching:
+      runs/samples/*/<sampler>/run_*/diagnostics/<plot_name>
+    """
+    pattern = (
+        runs_root / "samples" / "*" / sampler / "run_*" / "diagnostics" / plot_name
+    )
+    return list(pattern.parent.glob(f"**/{plot_name}"))
+
+
+def _run_dir_from_plot(plot_file: Path) -> Path:
+    """Given .../run_*/diagnostics/<plot>, return the run_* directory."""
+    return plot_file.parent.parent
+
+
+def _analysis_json(run_dir: Path) -> Path:
+    return run_dir / "analysis.json"
+
+
+def _load_metrics(run_dir: Path) -> Dict:
+    p = _analysis_json(run_dir)
+    if p.exists():
+        try:
+            return json.loads(p.read_text())
+        except Exception:
+            return {}
+    return {}
 
 
 def gather_latest_runs(
-    runs_root: Path, samplers: list[str], plot_name: str
+    runs_root: Path, samplers: List[str], plot_name: str
 ) -> Dict[str, Path]:
-    """Pick the most recent run dir for each sampler type."""
+    """Pick the most recent run_* dir per sampler, assuming generic plot names."""
     result: Dict[str, Path] = {}
     for sampler in samplers:
-        # Look for per-sampler file e.g. "{sampler}_trace.png"
-        per_sampler = f"{sampler}_{plot_name}"
-        pattern = (
-            runs_root
-            / "samples"
-            / "*"
-            / sampler
-            / "run_*"
-            / "diagnostics"
-            / per_sampler
-        )
-        files = list(pattern.parent.glob(f"**/{per_sampler}"))
-        # Promote the parent of "diagnostics" → the run_* directory
-        candidates = [f.parent.parent for f in files]
-        if not candidates:
+        files = _find_plot_files(runs_root, sampler, plot_name)
+        if not files:
             raise RuntimeError(f"No runs found for sampler {sampler}")
-        # pick newest by mtime
-        newest = max(candidates, key=os.path.getmtime)
-        result[sampler] = newest
+        # newest by mtime of the plot file
+        newest_plot = max(files, key=os.path.getmtime)
+        result[sampler] = _run_dir_from_plot(newest_plot)
     return result
 
 
 def promote(
-    runs_root: Path, samplers: list[str], outdir: Path, plot_name: str = "trace.png"
+    runs_root: Path, samplers: List[str], outdir: Path, plot_name: str = "trace.png"
 ) -> None:
     """
-    For each sampler, copy the chosen analysis plot to assets/<sampler>.png.
-
-    Args:
-        runs_root: directory containing runs/<id>/
-        samplers: list of sampler names to promote
-        outdir: destination assets directory
-        plot_name: which plot to copy from analysis/ (default: 'trace.png')
+    Copy diagnostics/<plot_name> from newest run_* per sampler to assets/<sampler>.png
     """
     outdir.mkdir(parents=True, exist_ok=True)
     latest_runs = gather_latest_runs(runs_root, samplers, plot_name)
 
     for sampler, run_dir in latest_runs.items():
-        src = run_dir / "diagnostics" / f"{sampler}_{plot_name}"
+        src = run_dir / "diagnostics" / plot_name
         if not src.exists():
             raise RuntimeError(f"Expected plot {src} not found")
         dst = outdir / f"{sampler}.png"
         shutil.copyfile(src, dst)
         print(f"Promoted {src} -> {dst}")
+
+
+def promote_gallery(
+    runs_root: Path,
+    samplers: List[str],
+    outdir: Path,
+    plot_name: str = "trace.png",
+    md_snippet_out: Path | None = None,
+) -> List[Tuple[str, Path, Dict]]:
+    """
+    1) Promote newest run per sampler -> assets/<sampler>.png
+    2) Optionally write a README-ready markdown snippet showing a simple gallery.
+    Returns a list of (sampler, asset_path, metrics_dict)
+    """
+    outdir.mkdir(parents=True, exist_ok=True)
+    latest_runs = gather_latest_runs(runs_root, samplers, plot_name)
+
+    rows: List[Tuple[str, Path, Dict]] = []
+
+    for sampler, run_dir in latest_runs.items():
+        src = run_dir / "diagnostics" / plot_name
+        if not src.exists():
+            raise RuntimeError(f"Expected plot {src} not found")
+        dst = outdir / f"{sampler}.png"
+        shutil.copyfile(src, dst)
+
+        metrics = _load_metrics(run_dir)
+        rows.append((sampler, dst, metrics))
+        print(f"[gallery] {sampler}: {src} -> {dst}")
+
+    if md_snippet_out is not None:
+        # Write a very small, README-friendly HTML snippet for a 3-across gallery
+        # with alt text showing sampler name and (if present) llc_mean and r_hat.
+        lines = []
+        lines.append("<!-- auto-generated: begin gallery -->")
+        lines.append('<p align="center">')
+        for sampler, asset, metrics in rows:
+            alt = f"{sampler.upper()}"
+            if "llc_mean" in metrics:
+                alt += f" | mean={metrics['llc_mean']:.3f}"
+            if "r_hat" in metrics:
+                alt += f" | R̂={metrics['r_hat']:.3f}"
+            lines.append(f'  <img src="{asset.as_posix()}" alt="{alt}" width="30%"/>')
+        lines.append("</p>")
+        lines.append("<!-- auto-generated: end gallery -->\n")
+        md_snippet_out.write_text("\n".join(lines))
+        print(f"[gallery] Wrote README snippet -> {md_snippet_out}")
+
+    return rows

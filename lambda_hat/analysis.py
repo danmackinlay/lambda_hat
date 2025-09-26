@@ -192,9 +192,7 @@ def create_arviz_diagnostics(
             az.plot_trace(idata, var_names=["llc", "L"], figsize=(12, 8), compact=False)
             plt.suptitle(f"{sampler_name.upper()} Trace Plot", y=1.02)
             plt.tight_layout()
-            plt.savefig(
-                diag_dir / f"{sampler_name}_trace.png", dpi=150, bbox_inches="tight"
-            )
+            plt.savefig(diag_dir / "trace.png", dpi=150, bbox_inches="tight")
             plt.close()
         except Exception:
             warnings.warn(f"Failed to create trace plot for {sampler_name}")
@@ -204,9 +202,7 @@ def create_arviz_diagnostics(
             az.plot_rank(idata, var_names=["llc"], figsize=(12, 5))
             plt.suptitle(f"{sampler_name.upper()} Rank Plot", y=1.02)
             plt.tight_layout()
-            plt.savefig(
-                diag_dir / f"{sampler_name}_rank.png", dpi=150, bbox_inches="tight"
-            )
+            plt.savefig(diag_dir / "rank.png", dpi=150, bbox_inches="tight")
             plt.close()
         except Exception:
             warnings.warn(f"Failed to create rank plot for {sampler_name}")
@@ -218,7 +214,7 @@ def create_arviz_diagnostics(
                 plt.suptitle(f"{sampler_name.upper()} Energy Plot", y=1.02)
                 plt.tight_layout()
                 plt.savefig(
-                    diag_dir / f"{sampler_name}_energy.png",
+                    diag_dir / "energy.png",
                     dpi=150,
                     bbox_inches="tight",
                 )
