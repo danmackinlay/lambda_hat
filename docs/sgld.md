@@ -12,9 +12,9 @@ SGLD is run by default. You can configure its parameters via Hydra overrides und
 
 ```bash
 # Example: Running with specific SGLD settings
-uv run python train.py sampler.sgld.steps=20000 \
-                sampler.sgld.batch_size=512 \
-                sampler.sgld.step_size=1e-7
+uv run lambda-hat sampler.sgld.steps=20000 \
+                  sampler.sgld.batch_size=512 \
+                  sampler.sgld.step_size=1e-7
 ```
 
 ## Configuration Options

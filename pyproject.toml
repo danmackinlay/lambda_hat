@@ -32,12 +32,12 @@ dependencies = [
 
 # Local / macOS / CPU (MPS or CPU-only)
 cpu = [
-  "jax>=0.4.28",               # pulls CPU/MPS wheels from PyPI
+  "jax~=0.7.1",               # pulls CPU/MPS wheels from PyPI
 ]
 
 # CUDA 12.x wheels for Linux (bundled CUDA libs; only needs a recent NVIDIA driver)
 cuda12 = [
-  "jax[cuda12_local]>=0.4.28"
+  "jax[cuda12_local]~=0.7.1"
 ]
 
 dev = [
