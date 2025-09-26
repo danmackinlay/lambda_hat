@@ -55,6 +55,8 @@ def _load_metrics(run_dir: Path) -> Dict:
 def gather_latest_runs(runs_root: Path, samplers: List[str], plot_name: str) -> Dict[str, Path]:
     """Pick the most recent run_* dir per sampler, assuming generic plot names."""
     result: Dict[str, Path] = {}
+    total_scanned = 0
+
     for sampler in samplers:
         files = _find_plot_files(runs_root, sampler, plot_name)
         if not files:
@@ -71,13 +73,22 @@ def promote(
     """
     Copy diagnostics/<plot_name> from newest run_* per sampler to assets/<sampler>.png
     """
+    if verbose:
+        logging.basicConfig(level=logging.INFO, format='%(message)s')
+
     outdir.mkdir(parents=True, exist_ok=True)
     latest_runs = gather_latest_runs(runs_root, samplers, plot_name)
 
     for sampler, run_dir in latest_runs.items():
         src = run_dir / "diagnostics" / plot_name
         if not src.exists():
-            raise RuntimeError(f"Expected plot {src} not found")
+            # Try with sampler prefix if exact filename not found
+            src_alt = run_dir / "diagnostics" / f"{sampler}_{plot_name}"
+            if src_alt.exists():
+                src = src_alt
+            else:
+                raise RuntimeError(f"Expected plot {src} not found (also tried {src_alt})")
+
         dst = outdir / f"{sampler}.png"
         shutil.copyfile(src, dst)
         print(f"Promoted {src} -> {dst}")
