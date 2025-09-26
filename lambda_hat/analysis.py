@@ -138,30 +138,52 @@ def _compute_metrics_from_idata(
     total_time = timings.get('total', 0.0) if timings else 0.0
     metrics["elapsed_time"] = total_time
 
-    # Use ArviZ summary for diagnostics
-    summary = az.summary(idata, var_names=["llc"])
-    if not summary.empty:
-        metrics["ess_bulk"] = float(summary.get("ess_bulk", np.nan).iloc[0])
-        metrics["ess_tail"] = float(summary.get("ess_tail", np.nan).iloc[0])
-        metrics["r_hat"] = float(summary.get("r_hat", np.nan).iloc[0])
-        ess = min(metrics.get("ess_bulk", np.nan), metrics.get("ess_tail", np.nan))
-        metrics["ess"] = ess if not np.isnan(ess) else np.nan
+    # Sizes for simple guardrails
+    C = idata.posterior["llc"].sizes.get("chain", 1)
+    T = idata.posterior["llc"].sizes.get("draw", 0)
 
-        # Calculate Efficiency and WNV
-        if not np.isnan(ess) and ess > 0:
-            # Variance of the estimate (SEM squared) = Var(samples) / ESS
-            variance_estimate = metrics["llc_std"]**2 / ess
-            metrics["llc_sem"] = np.sqrt(variance_estimate)  # Standard Error of the Mean
+    # Defaults
+    metrics["ess_bulk"] = np.nan
+    metrics["ess_tail"] = np.nan
+    metrics["r_hat"] = np.nan
+    metrics["ess"] = np.nan
+    metrics["llc_sem"] = np.nan
 
-            if total_fge > 0:
-                # Efficiency = ESS / Work
-                metrics["efficiency_fge"] = ess / total_fge
-                # WNV = Variance(Estimate) * Work
-                metrics["wnv_fge"] = variance_estimate * total_fge
+    # ESS is available even for 1 chain, but can be noisy for tiny T.
+    # Keep a small threshold to avoid pathological cases.
+    MIN_DRAWS_FOR_ESS = 10
+    if T >= MIN_DRAWS_FOR_ESS:
+        try:
+            bulk = az.ess(idata, var_names=["llc"], method="bulk").to_array().values
+            tail = az.ess(idata, var_names=["llc"], method="tail").to_array().values
+            metrics["ess_bulk"] = float(bulk.flatten()[0]) if bulk.size else np.nan
+            metrics["ess_tail"] = float(tail.flatten()[0]) if tail.size else np.nan
+        except Exception:
+            pass
 
-            if total_time > 0:
-                metrics["efficiency_time"] = ess / total_time
-                metrics["wnv_time"] = variance_estimate * total_time
+    # r-hat is meaningful only with multiple chains and enough draws
+    MIN_DRAWS_FOR_RHAT = 20
+    if C >= 2 and T >= MIN_DRAWS_FOR_RHAT:
+        try:
+            rhat = az.rhat(idata, var_names=["llc"]).to_array().values
+            metrics["r_hat"] = float(rhat.flatten()[0]) if rhat.size else np.nan
+        except Exception:
+            pass
+
+    # Consolidated ESS
+    ess = min(metrics["ess_bulk"], metrics["ess_tail"])
+    if not np.isnan(ess) and ess > 0:
+        metrics["ess"] = ess
+        # Variance of the estimate (SEM^2) = Var(samples) / ESS
+        variance_estimate = metrics["llc_std"] ** 2 / ess
+        metrics["llc_sem"] = float(np.sqrt(variance_estimate))
+
+        if total_fge > 0:
+            metrics["efficiency_fge"] = ess / total_fge
+            metrics["wnv_fge"] = variance_estimate * total_fge
+        if total_time > 0:
+            metrics["efficiency_time"] = ess / total_time
+            metrics["wnv_time"] = variance_estimate * total_time
 
     return metrics
 

@@ -193,15 +193,19 @@ def main(cfg: Config) -> None:
             timings = sampler_data.get("timings", {})
 
             # Determine warmup draws to discard (burn-in)
-            # HMC/MCLMC handle adaptation during sampling (warmup=0 for analysis).
             warmup_draws = 0
             if sampler_name == "sgld":
-                # SGLD requires explicit burn-in. Convert warmup steps to recorded draws based on thinning.
-                # Use the updated default (100) or the configured value
                 eval_every = getattr(cfg.sampler.sgld, 'eval_every', 100)
-                if eval_every > 0:
-                    # cfg.sampler.sgld.warmup is the number of steps to discard.
-                    warmup_draws = cfg.sampler.sgld.warmup // eval_every
+                steps = getattr(cfg.sampler.sgld, 'steps', 0)
+                warmup_steps = getattr(cfg.sampler.sgld, 'warmup', 0)
+                warmup_draws = warmup_steps // max(1, eval_every)
+                recorded_draws = steps // max(1, eval_every)
+                if warmup_draws >= recorded_draws:
+                    log.warning(
+                        f"[sgld] Warmup ({warmup_steps} steps) with eval_every={eval_every} "
+                        f"would leave 0 recorded draws (steps={steps}). "
+                        f"Diagnostics may be undefined."
+                    )
 
             # Updated call to analyze_traces
             metrics, idata = analyze_traces(
@@ -212,6 +216,14 @@ def main(cfg: Config) -> None:
                 warmup=warmup_draws,
                 timings=timings,  # Pass timings
             )
+            # Non-degeneracy nudges (post-hoc warnings)
+            C = idata.posterior["llc"].sizes.get("chain", 1)
+            T = idata.posterior["llc"].sizes.get("draw", 0)
+            if C < 2:
+                log.info(f"[{sampler_name}] Only {C} chain(s); r-hat will be NaN.")
+            if T < 20:
+                log.info(f"[{sampler_name}] Only {T} post-warmup draws; ESS/r-hat may be unreliable.")
+
             analysis_results[sampler_name] = metrics
             inference_data[sampler_name] = idata # Store idata
 

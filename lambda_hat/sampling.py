@@ -13,13 +13,9 @@ import blackjax.mcmc.integrators as bj_int
 if TYPE_CHECKING:
     from lambda_hat.config import SGLDConfig
 
-# === Simplified MCMC Loop ===
 
 
 # === Preconditioner Implementation ===
-
-
-# Define Preconditioner State structure
 class PreconditionerState(NamedTuple):
     t: jnp.ndarray  # Timestep (scalar)
     m: Any  # First moment estimate (PyTree)
@@ -61,7 +57,6 @@ def update_preconditioner(
     t = t + 1
 
     # Default values (Vanilla SGLD)
-
     P_t = jax.tree.map(jnp.ones_like, grad_loss)
     adapted_loss_drift = grad_loss
 

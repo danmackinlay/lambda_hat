@@ -3,8 +3,8 @@
 chains: 2
 
 sgld:
-  steps: 100
-  warmup: 20
+  steps: 500
+  warmup: 100
   batch_size: 32
   step_size: 0.000001
   dtype: float32
@@ -16,8 +16,8 @@ sgld:
   eval_every: 10
 
 hmc:
-  draws: 50
-  warmup: 20
+  draws: 100
+  warmup: 50
   num_integration_steps: 5
   step_size: 0.01
   dtype: float64
@@ -25,7 +25,7 @@ hmc:
   target_acceptance: 0.8
 
 mclmc:
-  draws: 80
+  draws: 100
   L: 1.0
   step_size: 0.1
   dtype: float64
