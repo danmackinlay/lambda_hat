@@ -53,11 +53,11 @@ SAMPLER_SWEEP="sampler=hmc,sgld"
 
 # 1. Ensure Targets Exist (Idempotent Build)
 # Launches N=4 jobs. If a target already exists, the job finishes instantly.
-uv run lambda-hat-build-target -m $TARGET_SWEEP
+uv run lambda-hat-build-target --multirun $TARGET_SWEEP
 
 # 2. Run the Workflow Sweep (N × M = 8 jobs)
 # Uses the unified configuration to dynamically calculate the target_id for each run.
-uv run lambda-hat-workflow -m $TARGET_SWEEP $SAMPLER_SWEEP
+uv run lambda-hat-workflow --multirun $TARGET_SWEEP $SAMPLER_SWEEP
 ```
 
 This approach eliminates manual target ID harvesting and provides fully automated N × M experiments.
@@ -119,14 +119,14 @@ Hydra multirun (`-m`) lets you sweep hyper-parameters:
 
 ```bash
 # Compare all samplers on the same target
-uv run lambda-hat-sample -m target_id=tgt_abcd1234 sampler=sgld,hmc,mclmc
+uv run lambda-hat-sample --multirun target_id=tgt_abcd1234 sampler=sgld,hmc,mclmc
 
 # Sweep HMC step sizes
-uv run lambda-hat-sample -m target_id=tgt_abcd1234 sampler=hmc \
+uv run lambda-hat-sample --multirun target_id=tgt_abcd1234 sampler=hmc \
     sampler.hmc.step_size=0.005,0.01,0.02
 
 # Sweep samplers on a single specific target
-uv run lambda-hat-sample -m target_id=tgt_abcd1234 sampler=sgld,hmc,mclmc
+uv run lambda-hat-sample --multirun target_id=tgt_abcd1234 sampler=sgld,hmc,mclmc
 ```
 
 Results are saved under `runs/samples/<target_id>/<sampler>/run_<hash>/`.
@@ -176,12 +176,14 @@ Use Hydra’s Submitit launcher for SLURM clusters:
 
 ```bash
 # Build multiple targets
-uv run lambda-hat-build-target -m model=small,base target.seed=42,123
+uv run lambda-hat-build-target --multirun model=small,base target.seed=42,123
 
 # Submit sampling sweeps to GPU nodes
-uv run lambda-hat-sample -m target_id=tgt_abc123 sampler=sgld,hmc,mclmc \
-    hydra/launcher=submitit_slurm hydra.launcher.gpus_per_node=1 \
-    hydra.launcher.slurm.additional_parameters.account=OD-228158
+uv run lambda-hat-sample --multirun target_id=tgt_7b63bd0e3feb sampler=sgld,hmc,mclmc \
+    hydra/launcher=submitit_slurm \
+    hydra.launcher.gpus_per_node=1 \
+    +hydra.launcher.additional_parameters.gpus=1 \
+    hydra.launcher.account=OD-228158
 ```
 
 ---

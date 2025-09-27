@@ -42,8 +42,9 @@ uv run lambda-hat-workflow -m hydra/launcher=submitit_slurm \
   hydra.launcher.partition=YOUR_PARTITION_NAME \
   hydra.launcher.timeout_min=480 \
   hydra.launcher.cpus_per_task=8 \
-  hydra.launcher.gpus_per_node=1 # Use 1 for GPU jobs
-  # hydra.launcher.gpus_per_node=0 # Use 0 for CPU-only jobs
+  hydra.launcher.gpus_per_node=1 \
+  +hydra.launcher.additional_parameters.gpus=1 \
+  hydra.launcher.account=OD-228158
 ```
 
 If your cluster requires an account, use `hydra.launcher.account=YOUR_ACCOUNT`.
