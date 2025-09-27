@@ -126,16 +126,21 @@ def run_sampling_logic(cfg: DictConfig) -> None:
 
     dt = time.time() - t0
 
-    # Save outputs to sample-specific directory
-    sample_dir = Path(cfg.store.root) / "samples" / cfg.target_id / cfg.sampler.name
-    sample_dir.mkdir(parents=True, exist_ok=True)
+    # Compute the parent target directory and run directory
+    target_root = Path(cfg.store.root) / "targets" / cfg.target_id
+    target_root.mkdir(parents=True, exist_ok=True)
+
+    # Assert target exists before sampling
+    assert target_root.exists(), f"Missing target at {target_root}"
 
     # Generate unique run ID based on hyperparams
     hp_str = json.dumps(
         OmegaConf.to_container(cfg.sampler, resolve=True), sort_keys=True
     )
-    run_id = md5(hp_str.encode()).hexdigest()[:8]
-    run_dir = sample_dir / f"run_{run_id}"
+    run_hash = md5(hp_str.encode()).hexdigest()[:8]
+
+    # Sampler name is the low-cardinality facet we expose in the folder name
+    run_dir = target_root / f"run_{cfg.sampler.name}_{run_hash}"
     run_dir.mkdir(exist_ok=True)
 
     # --- Analysis and Trace Saving (Enhanced Path) ---

@@ -13,8 +13,9 @@ target:
   # Exclude volatile elements like code_sha. Ensure 'training' is included.
   id: ${fingerprint:${model},${data},${training},${teacher},${.seed}}
 
+# Ensure artifacts root is stable across single runs and multiruns
 store:
-  root: runs
+  root: ${hydra:runtime.cwd}/runs
 
 runtime:
   code_sha: ${git_sha:}

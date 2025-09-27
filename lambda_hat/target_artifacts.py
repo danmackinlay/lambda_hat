@@ -147,8 +147,8 @@ def append_sample_manifest(
     target_id: str,
     record: Dict[str, Any],
 ) -> None:
-    """Append a line to runs/samples/<target_id>/_index.jsonl."""
-    sdir = Path(root) / "samples" / target_id
-    _ensure_dir(sdir)
-    with open(sdir / "_index.jsonl", "a") as f:
+    """Append a line to runs/targets/<target_id>/_runs.jsonl."""
+    tdir = Path(root) / "targets" / target_id
+    _ensure_dir(tdir)
+    with open(tdir / "_runs.jsonl", "a") as f:
         f.write(json.dumps(record, sort_keys=True) + "\n")

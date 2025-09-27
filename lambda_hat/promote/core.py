@@ -6,15 +6,34 @@ import os
 from typing import Dict, List, Tuple
 
 
+def find_run_dirs(runs_root: Path, target_id: str | None, sampler: str | None) -> List[Path]:
+    """Find run directories based on target_id and/or sampler filtering."""
+    base = runs_root / "targets"
+    if target_id:
+        base = base / target_id
+        pat = "run_*" if sampler is None else f"run_{sampler}_*"
+        return sorted([p for p in base.glob(pat) if p.is_dir()])
+    else:
+        # Search across all targets
+        pat = "*/run_*" if sampler is None else f"*/run_{sampler}_*"
+        return sorted([p for p in base.glob(pat) if p.is_dir()])
+
+
+def find_plot_files(runs_root: Path, sampler: str, plot_name: str) -> List[Path]:
+    """Find plot files across all targets for a given sampler."""
+    pattern = runs_root / "targets" / "*" / f"run_{sampler}_*" / "diagnostics" / plot_name
+    return list(runs_root.glob(f"targets/*/run_{sampler}_*/diagnostics/{plot_name}"))
+
+
 def _find_plot_files(runs_root: Path, sampler: str, plot_name: str) -> List[Path]:
     """
     Return list of plot files matching:
-      runs/samples/*/<sampler>/run_*/diagnostics/<plot_name>
+      runs/targets/*/run_<sampler>_*/diagnostics/<plot_name>
     """
     pattern = (
-        runs_root / "samples" / "*" / sampler / "run_*" / "diagnostics" / plot_name
+        runs_root / "targets" / "*" / f"run_{sampler}_*" / "diagnostics" / plot_name
     )
-    return list(pattern.parent.glob(f"**/{plot_name}"))
+    return list(runs_root.glob(f"targets/*/run_{sampler}_*/diagnostics/{plot_name}"))
 
 
 def _run_dir_from_plot(plot_file: Path) -> Path:

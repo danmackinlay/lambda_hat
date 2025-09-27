@@ -16,8 +16,9 @@ defaults:
 jax:
   enable_x64: true
 
+# Ensure artifacts root is stable across single runs and multiruns
 store:
-  root: runs
+  root: ${hydra:runtime.cwd}/runs
 
 runtime:
   seed: 12345  # Used for sampler PRNG splitting (Stage B Seed)

@@ -129,7 +129,7 @@ uv run lambda-hat-sample --multirun target_id=tgt_abcd1234 sampler=hmc \
 uv run lambda-hat-sample --multirun target_id=tgt_abcd1234 sampler=sgld,hmc,mclmc
 ```
 
-Results are saved under `runs/samples/<target_id>/<sampler>/run_<hash>/`.
+Results are saved under `runs/targets/<target_id>/run_<sampler>_<hash>/`.
 
 ---
 
@@ -137,21 +137,24 @@ Results are saved under `runs/samples/<target_id>/<sampler>/run_<hash>/`.
 
 ```
 runs/
-├── targets/
-│   ├── _catalog.jsonl               # registry of all targets
-│   └── tgt_abc123/                  # one target artifact
-│       ├── meta.json                # metadata (config, dims, precision, L0)
-│       ├── data.npz                 # training data
-│       └── params.npz               # trained parameters
-└── samples/
-    └── tgt_abc123/                  # all samples for this target
-        ├── _index.jsonl             # registry of sampler runs
-        ├── sgld/run_def456/         # one sampler run
+└── targets/
+    ├── _catalog.jsonl               # registry of all targets
+    └── tgt_abc123/                  # one target artifact
+        ├── meta.json                # metadata (config, dims, precision, L0)
+        ├── data.npz                 # training data
+        ├── params.npz               # trained parameters
+        ├── _runs.jsonl              # manifest of Stage-B runs
+        ├── run_hmc_ab12cd34/        # one sampler run
         │   ├── trace.nc             # ArviZ trace (preferred)
-        │   └── analysis.json        # metrics
-        ├── hmc/run_ghi789/
-        └── mclmc/run_jkl012/
+        │   ├── analysis.json        # metrics
+        │   └── diagnostics/
+        │       ├── trace.png
+        │       └── rank.png
+        ├── run_sgld_ef567890/
+        └── run_mclmc_gh901234/
 ```
+
+Artifacts are written to `${hydra.runtime.cwd}/runs/...` regardless of Hydra's `outputs/` or `multirun/` job directories. The sampler name is included in the folder name because it's a low-cardinality, human-useful facet; all other hyperparameters live in `_runs.jsonl` and `analysis.json`.
 
 ---
 
@@ -190,7 +193,7 @@ uv run lambda-hat-sample --multirun target_id=tgt_7b63bd0e3feb sampler=sgld,hmc,
 
 ## Asset Promotion
 
-Lambda-Hat includes a utility to copy plots from sampling runs into a stable location for docs:
+Lambda-Hat includes a utility to copy plots from sampling runs into a stable location for docs. It now searches under `runs/targets/**/run_{sampler}_*/diagnostics/`.
 
 ```bash
 # Promote latest trace plots
