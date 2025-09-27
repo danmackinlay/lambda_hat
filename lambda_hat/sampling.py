@@ -395,9 +395,11 @@ def run_sgld(
         w_t = state.position
         precond_state = state.precond_state
 
-        # 1. Sample minibatch
+        # 1. Sample minibatch indices. If the configured batch_size exceeds n_data,
+        # fall back to sampling *with* replacement (static shape; JIT-friendly).
+        replace_flag = batch_size > n_data  # Python bool; static
         indices = jax.random.choice(
-            key_batch, n_data, shape=(batch_size,), replace=False
+            key_batch, n_data, shape=(batch_size,), replace=replace_flag
         )
         minibatch = (X[indices], Y[indices])
 
