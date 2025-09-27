@@ -34,33 +34,46 @@ def _ensure_dir(p: Path) -> None:
     p.mkdir(parents=True, exist_ok=True)
 
 
-# ---------- Simple dict<str, ndarray> serialization for Haiku params ----------
+# ---------- Serialization for Haiku params (Flat NPZ) ----------
 
+# Use '::' as a separator, as it's highly unlikely in module/param names.
+_NPZ_SEP = "::"
 
 def _flatten_params_dict(
     params: Dict[str, Any], prefix: str = ""
 ) -> Dict[str, np.ndarray]:
-    """Flattens a Haiku-style nested dict of arrays into { 'a/b/c': array }."""
-    out: Dict[str, np.ndarray] = {}
-    for k, v in params.items():
-        key = f"{prefix}{k}" if not prefix else f"{prefix}/{k}"
-        if isinstance(v, dict):
-            out.update(_flatten_params_dict(v, key))
-        else:
-            arr = np.asarray(v)  # move to host np
-            out[key] = arr
-    return out
+    """Converts Haiku params {'module': {'param': arr}} to flat NPZ format."""
+    flat = {}
+    # params is {'module_name': {'param_name': array}, ...}
+    for module_name, module_params in params.items():
+        # Ensure module_params is a dictionary (Haiku invariant for parameters)
+        if not isinstance(module_params, dict):
+            continue
+
+        for param_name, param_value in module_params.items():
+            # Basic check that the leaf is an array-like object
+            if hasattr(param_value, 'shape'):
+                key = f"{module_name}{_NPZ_SEP}{param_name}"
+                flat[key] = np.asarray(param_value)  # move to host np
+            else:
+                print(f"Warning: Skipping non-array parameter during save: {module_name}/{param_name}")
+    return flat
 
 
 def _unflatten_params_dict(flat: Dict[str, np.ndarray]) -> Dict[str, Any]:
-    root: Dict[str, Any] = {}
-    for k, arr in flat.items():
-        cur = root
-        parts = k.split("/")
-        for p in parts[:-1]:
-            cur = cur.setdefault(p, {})
-        cur[parts[-1]] = jnp.asarray(arr)
-    return root
+    """Converts flat NPZ format back to Haiku params structure."""
+    params: Dict[str, Dict[str, Any]] = {}
+    # flat is {'module_name::param_name': array, ...}
+    for key, value in flat.items():
+        if _NPZ_SEP not in key:
+            # Since backwards compatibility is not required, we fail fast on old formats.
+            raise ValueError(f"Invalid key format in NPZ: {key}. Expected 'module::param'. Artifact may be legacy format.")
+
+        module_name, param_name = key.split(_NPZ_SEP, 1)
+        if module_name not in params:
+            params[module_name] = {}
+        params[module_name][param_name] = jnp.asarray(value)  # Move back to JAX array
+    return params
 
 
 def _hash_arrays(flat: Dict[str, np.ndarray]) -> str:

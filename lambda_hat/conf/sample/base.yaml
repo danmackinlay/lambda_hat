@@ -20,3 +20,10 @@ runtime:
 sampler:
   chains: 4
   name: hmc  # Will be overridden by sampler config group
+
+posterior:
+  loss: mse
+  beta_mode: 1_over_log_n
+  beta0: 1.0
+  prior_radius: null
+  gamma: 1.0
