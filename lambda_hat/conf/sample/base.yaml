@@ -19,7 +19,6 @@ runtime:
 
 sampler:
   chains: 4
-  name: hmc  # Will be overridden by sampler config group
 
 posterior:
   loss: mse

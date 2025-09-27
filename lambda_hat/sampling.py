@@ -332,6 +332,9 @@ def run_sgld(
 ) -> SamplerRunResult:
     """Run SGLD or pSGLD (AdamSGLD/RMSPropSGLD) with minibatching."""
     X, Y = data
+    # Convert to JAX arrays if they're NumPy arrays (needed for indexing in JIT)
+    X = jnp.asarray(X)
+    Y = jnp.asarray(Y)
     n_data = X.shape[0]
     batch_size = config.batch_size
     base_step_size = config.step_size

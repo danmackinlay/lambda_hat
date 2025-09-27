@@ -99,32 +99,19 @@ def build_target(key, cfg: Config) -> tuple[TargetBundle, list[int], list[int] |
         key, subkey = jax.random.split(key)
         params_init = model.init(subkey, X[:1])  # Use first data point for init
 
-        # Data will be cast to required precision dynamically in sample.py
-
         # Determine loss parameters explicitly (required for make_loss_fns)
         loss_type = cfg.posterior.loss
         noise_scale = cfg.data.noise_scale
         student_df = cfg.data.student_df
 
-        # Train in f64 for precision, then cast to f32 for storage efficiency
-        X_f64, Y_f64 = as_dtype(X, "float64"), as_dtype(Y, "float64")
-        loss_full_f64, _ = make_loss_fns(
-            model.apply,
-            X_f64,
-            Y_f64,
-            loss_type=loss_type,
-            noise_scale=noise_scale,
-            student_df=student_df,
-        )
+        # --- REVISED STRATEGY: Train and Store in F32 ---
+        # Explicitly cast data and initial parameters to F32 to guarantee F32 training,
+        # regardless of global JAX settings (e.g. jax_enable_x64).
+        X_f32 = as_dtype(X, "float32")
+        Y_f32 = as_dtype(Y, "float32")
+        params_init_f32 = as_dtype(params_init, "float32")
 
-        # Train to ERM (θ⋆) in f64 precision
-        params_star_f64, metrics = train_erm(loss_full_f64, params_init, cfg, key)
-
-        # Store in f32 for memory efficiency (precision determined dynamically in sample.py)
-        X_f32, Y_f32 = as_dtype(X, "float32"), as_dtype(Y, "float32")
-        params_star_f32 = as_dtype(params_star_f64, "float32")
-
-        # Create f32 loss functions for the bundle
+        # Create F32 loss functions for training
         loss_full_f32, loss_minibatch_f32 = make_loss_fns(
             model.apply,
             X_f32,
@@ -134,8 +121,13 @@ def build_target(key, cfg: Config) -> tuple[TargetBundle, list[int], list[int] |
             student_df=student_df,
         )
 
-        L0 = float(loss_full_f64(params_star_f64))
-        d = count_params(params_star_f64)
+        # Train to ERM (θ⋆) in F32 precision
+        params_star_f32, metrics = train_erm(loss_full_f32, params_init_f32, cfg, key)
+
+        # L0 is the final loss value from the F32 training
+        # Use the metric if available (computed in train_erm), otherwise recompute.
+        L0 = float(metrics.get("final_loss", loss_full_f32(params_star_f32)))
+        d = count_params(params_star_f32)
 
         return (
             TargetBundle(

@@ -40,7 +40,7 @@ def _ensure_dir(p: Path) -> None:
 _NPZ_SEP = "::"
 
 def _flatten_params_dict(
-    params: Dict[str, Any], prefix: str = ""
+    params: Dict[str, Any]
 ) -> Dict[str, np.ndarray]:
     """Converts Haiku params {'module': {'param': arr}} to flat NPZ format."""
     flat = {}

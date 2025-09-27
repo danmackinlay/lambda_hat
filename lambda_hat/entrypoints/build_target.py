@@ -33,36 +33,6 @@ def _pkg_versions() -> Dict[str, str]:
     }
 
 
-def build_target_components(key, cfg: DictConfig):
-    """Returns (X, Y, model, trained_params, train_info, used_model_widths, used_teacher_widths)."""
-
-    # Convert OmegaConf DictConfig to the project's Config class
-    # For now, we'll just use the existing build_target function
-    # which expects a Config object
-    target_bundle, used_model_widths, used_teacher_widths = build_target(key, cfg)
-
-    # Extract components (using simplified TargetBundle attributes)
-    # Data stored in f32 for efficiency, cast to f64 for precision during build
-    from lambda_hat.losses import as_dtype
-
-    X = as_dtype(target_bundle.X, "float64")
-    Y = as_dtype(target_bundle.Y, "float64")
-    # Params stored in f32, cast to f64 for precision
-    trained_params = as_dtype(target_bundle.params0, "float64")
-    model = target_bundle.model
-
-    train_info = {"L0": float(target_bundle.L0)}
-
-    return (
-        X,
-        Y,
-        model,
-        trained_params,
-        train_info,
-        used_model_widths,
-        used_teacher_widths,
-    )
-
 
 @hydra.main(config_path="../conf", config_name="workflow", version_base=None)
 def main(cfg: DictConfig) -> None:
@@ -105,9 +75,14 @@ def main(cfg: DictConfig) -> None:
     key = jax.random.PRNGKey(cfg.target.seed)
 
     # Build & train
-    X, Y, model, theta, train_info, used_model_widths, used_teacher_widths = (
-        build_target_components(key, cfg)
-    )
+    # Directly use the output of build_target (now guaranteed F32)
+    target_bundle, used_model_widths, used_teacher_widths = build_target(key, cfg)
+
+    # Extract components for saving (already in F32)
+    X = target_bundle.X
+    Y = target_bundle.Y
+    theta = target_bundle.params0
+    L0 = target_bundle.L0
 
     # Log resolved widths for debugging
     print(f"Resolved widths: model={used_model_widths}, teacher={used_teacher_widths}")
@@ -158,14 +133,14 @@ def main(cfg: DictConfig) -> None:
         teacher_cfg=teacher_cfg,
         dims=dims,
         hashes={"theta": theta_hash},
-        metrics={"L0": float(train_info.get("L0", 0))},
+        metrics={"L0": float(L0)},
         hostname=cfg.runtime.hostname,
     )
 
     # Write artifact
     out_dir = save_target_artifact(cfg.store.root, target_id, X, Y, theta, meta)
     print(f"[build-target] wrote {out_dir}")
-    print(f"[build-target] L0 = {train_info.get('L0', 0):.6f}")
+    print(f"[build-target] L0 = {L0:.6f}")
 
 
 if __name__ == "__main__":

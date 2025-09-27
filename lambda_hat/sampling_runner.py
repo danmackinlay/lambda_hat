@@ -63,18 +63,16 @@ def run_sampler(
         logdensity_fn = make_logpost(loss_full, params0_f64, n_data, beta, gamma)
 
         # Run HMC
-        # Handle nested sampler config structure: cfg.sampler.sampler.hmc or cfg.sample.sampler.sampler.hmc
-        hmc_cfg = cfg.sampler.sampler.hmc if hasattr(cfg.sampler, 'sampler') else cfg.sampler.hmc
         run_result = run_hmc(
             key,
             logdensity_fn,
             params0_f64,
-            num_samples=hmc_cfg.draws,
+            num_samples=cfg.sampler.hmc.draws,
             num_chains=cfg.sampler.chains,
-            step_size=hmc_cfg.step_size,
-            num_integration_steps=hmc_cfg.num_integration_steps,
-            adaptation_steps=hmc_cfg.warmup,
-            target_acceptance=hmc_cfg.target_acceptance,
+            step_size=cfg.sampler.hmc.step_size,
+            num_integration_steps=cfg.sampler.hmc.num_integration_steps,
+            adaptation_steps=cfg.sampler.hmc.warmup,
+            target_acceptance=cfg.sampler.hmc.target_acceptance,
             loss_full_fn=loss_full,  # Pass loss function for Ln recording
         )
         traces = run_result.traces
@@ -99,15 +97,13 @@ def run_sampler(
         grad_loss_fn = make_grad_loss_minibatch(loss_mini)
 
         # Run SGLD
-        # Handle nested sampler config structure
-        sgld_cfg = cfg.sampler.sampler.sgld if hasattr(cfg.sampler, 'sampler') else cfg.sampler.sgld
         run_result = run_sgld(
             key,
             grad_loss_fn,
             initial_params=initial_params,
             params0=params0_f32,
             data=(target.X, target.Y),
-            config=sgld_cfg,
+            config=cfg.sampler.sgld,
             num_chains=cfg.sampler.chains,
             beta=beta,
             gamma=gamma,
@@ -135,15 +131,13 @@ def run_sampler(
         logdensity_fn = make_logpost(loss_full, params0_f64, n_data, beta, gamma)
 
         # Run MCLMC
-        # Handle nested sampler config structure
-        mclmc_cfg = cfg.sampler.sampler.mclmc if hasattr(cfg.sampler, 'sampler') else cfg.sampler.mclmc
         run_result = run_mclmc(
             key,
             logdensity_fn,
             params0_f64,
-            num_samples=mclmc_cfg.draws,
+            num_samples=cfg.sampler.mclmc.draws,
             num_chains=cfg.sampler.chains,
-            config=mclmc_cfg,  # Pass the config object
+            config=cfg.sampler.mclmc,  # Pass the config object
             loss_full_fn=loss_full,  # Pass loss function for Ln recording
         )
         traces = run_result.traces
@@ -153,12 +147,10 @@ def run_sampler(
         raise ValueError(f"Unknown sampler: {sampler_name}")
 
     log.info(f"Completed {sampler_name} sampling")
-    # Handle nested sampler config structure for return value
-    sampler_config = getattr(cfg.sampler.sampler, sampler_name) if hasattr(cfg.sampler, 'sampler') else getattr(cfg.sampler, sampler_name)
     return {
         "traces": traces,
         "timings": timings,
-        "sampler_config": sampler_config,
+        "sampler_config": getattr(cfg.sampler, sampler_name),
         "beta": beta,
         "gamma": gamma,
     }
