@@ -49,6 +49,9 @@ training:
   early_stop_tol: 1e-6
   batch_size: null  # Use full batch by default
 
+# Teacher configuration (optional, defaults to empty for teacher-student experiments)
+teacher: null
+
 # --- Dynamic Target ID Resolution ---
 # Exclude volatile elements like code_sha. Ensure 'training' is included.
-target_id: ${fingerprint:${model},${data},${training},${target.seed}}
+target_id: ${fingerprint:${model},${data},${training},${teacher},${target.seed}}

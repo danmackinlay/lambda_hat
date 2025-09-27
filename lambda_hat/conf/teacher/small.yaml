@@ -1,0 +1,5 @@
+# Small teacher configuration
+depth: 2
+widths: null  # Will be inferred
+activation: relu
+dropout_rate: 0.0

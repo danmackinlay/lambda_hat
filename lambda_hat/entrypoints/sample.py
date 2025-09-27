@@ -45,17 +45,9 @@ def run_sampling_logic(cfg: DictConfig) -> None:
     # Recreate forward function from stored model config
     mcfg = meta["model_cfg"]
 
-    # Infer widths if not stored directly
-    if "widths" in mcfg and mcfg["widths"] is not None:
-        widths = mcfg["widths"]
-    else:
-        widths = infer_widths(
-            in_dim=int(X.shape[-1]),
-            out_dim=int(Y.shape[-1] if Y.ndim > 1 else 1),
-            depth=mcfg.get("depth", 2),
-            target_params=mcfg.get("target_params", None),
-            fallback_width=mcfg.get("hidden", 32),
-        )
+    # Use persisted widths (should always be present in new artifacts)
+    widths = mcfg.get("widths")
+    assert widths is not None, "Artifact missing resolved model widths"
 
     model = build_mlp_forward_fn(
         in_dim=int(X.shape[-1]),
@@ -69,7 +61,8 @@ def run_sampling_logic(cfg: DictConfig) -> None:
         layernorm=mcfg.get("layernorm", False),
     )
 
-    # Get L0 from metadata (dangerous fallback removed - fail explicitly)
+
+    # Get L0 from metadata
     L0 = meta.get("metrics", {}).get("L0")
     if L0 is None or L0 == 0:
         raise ValueError(
@@ -84,7 +77,7 @@ def run_sampling_logic(cfg: DictConfig) -> None:
     X_f32 = as_dtype(X, "float32")
     Y_f32 = as_dtype(Y, "float32")
 
-    # Guard: Use model.apply directly. (Removes DummyModel usage, lines 87-95)
+    # Guard: Use model.apply directly. 
     try:
         test_key = jax.random.PRNGKey(0)  # Dummy key for model validation
         _ = model.apply(params_f32, test_key, X_f32[:1])

@@ -30,8 +30,14 @@ class TargetBundle:
     model: Any
 
 
-def build_target(key, cfg: Config) -> TargetBundle:
-    """Return a self-contained target for the pipeline to consume."""
+def build_target(key, cfg: Config) -> tuple[TargetBundle, list[int], list[int] | None]:
+    """Return a self-contained target for the pipeline to consume.
+
+    Returns:
+        TargetBundle: The target bundle for training
+        list[int]: Resolved model widths
+        list[int] | None: Resolved teacher widths (None if no teacher)
+    """
     m_cfg = cfg.model
     # Support both legacy string and new mapping forms for cfg.target
     if isinstance(cfg.target, (dict, DictConfig)):
@@ -44,9 +50,9 @@ def build_target(key, cfg: Config) -> TargetBundle:
         # Generate data
         X, Y, teacher_params, teacher_forward = make_dataset(key, cfg)
 
-        # Build Haiku model
+        # Build Haiku model - compute and store resolved widths
         key, subkey = jax.random.split(key)
-        widths = m_cfg.widths or infer_widths(
+        used_model_widths = m_cfg.widths or infer_widths(
             m_cfg.in_dim,
             m_cfg.out_dim,
             m_cfg.depth,
@@ -54,9 +60,23 @@ def build_target(key, cfg: Config) -> TargetBundle:
             fallback_width=m_cfg.hidden,
         )
 
+        # Extract teacher widths (recompute what was used in data.py)
+        used_teacher_widths = None
+        if hasattr(cfg, "teacher") and cfg.teacher is not None:
+            t_cfg = cfg.teacher
+            t_depth = t_cfg.depth or m_cfg.depth
+            used_teacher_widths = t_cfg.widths
+            if used_teacher_widths is None:
+                used_teacher_widths = infer_widths(
+                    m_cfg.in_dim, m_cfg.out_dim, t_depth, m_cfg.target_params, m_cfg.hidden
+                )
+        else:
+            # No teacher config - teacher uses same widths as model
+            used_teacher_widths = used_model_widths
+
         model = build_mlp_forward_fn(
             in_dim=m_cfg.in_dim,
-            widths=widths,
+            widths=used_model_widths,
             out_dim=m_cfg.out_dim,
             activation=m_cfg.activation,
             bias=m_cfg.bias,
@@ -117,7 +137,7 @@ def build_target(key, cfg: Config) -> TargetBundle:
             Y=Y_f32,
             L0=L0,
             model=model,
-        )
+        ), used_model_widths, used_teacher_widths
 
     elif target_name == "quadratic":
         # ----- Analytic diagnostic: L_n(θ) = 0.5 ||θ||^2 -----
@@ -156,6 +176,6 @@ def build_target(key, cfg: Config) -> TargetBundle:
             Y=Y,
             L0=L0,
             model=model,
-        )
+        ), [], None  # No meaningful widths for quadratic target
     else:
         raise ValueError(f"Unknown target: {target_name}")

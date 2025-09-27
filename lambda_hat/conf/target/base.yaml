@@ -10,7 +10,7 @@ jax:
 target:
   seed: 42
   # Exclude volatile elements like code_sha. Ensure 'training' is included.
-  id: ${fingerprint:${model},${data},${training},${.seed}}
+  id: ${fingerprint:${model},${data},${training},${teacher},${.seed}}
 
 store:
   root: runs
@@ -26,3 +26,6 @@ training:
   steps: 5000
   early_stop_tol: 1e-6
   batch_size: null  # Use full batch by default
+
+# Teacher configuration (optional, defaults to null for standard experiments)
+teacher: null

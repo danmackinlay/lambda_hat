@@ -34,12 +34,12 @@ def _pkg_versions() -> Dict[str, str]:
 
 
 def build_target_components(key, cfg: DictConfig):
-    """Returns (X, Y, model, init_params, loss_fn, trained_params)."""
+    """Returns (X, Y, model, trained_params, train_info, used_model_widths, used_teacher_widths)."""
 
     # Convert OmegaConf DictConfig to the project's Config class
     # For now, we'll just use the existing build_target function
     # which expects a Config object
-    target_bundle = build_target(key, cfg)
+    target_bundle, used_model_widths, used_teacher_widths = build_target(key, cfg)
 
     # Extract components (using simplified TargetBundle attributes)
     # Data stored in f32 for efficiency, cast to f64 for precision during build
@@ -53,7 +53,7 @@ def build_target_components(key, cfg: DictConfig):
 
     train_info = {"L0": float(target_bundle.L0)}
 
-    return X, Y, model, trained_params, train_info
+    return X, Y, model, trained_params, train_info, used_model_widths, used_teacher_widths
 
 
 @hydra.main(config_path="../conf", config_name="workflow", version_base=None)
@@ -97,7 +97,7 @@ def main(cfg: DictConfig) -> None:
     key = jax.random.PRNGKey(cfg.target.seed)
 
     # Build & train
-    X, Y, model, theta, train_info = build_target_components(key, cfg)
+    X, Y, model, theta, train_info, used_model_widths, used_teacher_widths = build_target_components(key, cfg)
 
     # Metadata & hashing
     flat = _flatten_params_dict(theta)
@@ -108,6 +108,16 @@ def main(cfg: DictConfig) -> None:
         "p": sum(v.size for v in flat.values()),
     }
 
+    # Create model_cfg with resolved widths injected
+    model_cfg = OmegaConf.to_container(cfg.model, resolve=True)
+    model_cfg["widths"] = used_model_widths
+
+    # Create teacher_cfg with resolved widths injected (if teacher exists)
+    teacher_cfg = None
+    if hasattr(cfg, "teacher") and cfg.teacher is not None:
+        teacher_cfg = OmegaConf.to_container(cfg.teacher, resolve=True)
+        teacher_cfg["widths"] = used_teacher_widths
+
     meta = TargetMeta(
         target_id=target_id,
         created_at=time.time(),
@@ -115,9 +125,10 @@ def main(cfg: DictConfig) -> None:
         jax_enable_x64=bool(cfg.jax.enable_x64),
         pkg_versions=_pkg_versions(),
         seed=int(cfg.target.seed),
-        model_cfg=OmegaConf.to_container(cfg.model, resolve=True),
+        model_cfg=model_cfg,
         data_cfg=OmegaConf.to_container(cfg.data, resolve=True),
         training_cfg=OmegaConf.to_container(cfg.training, resolve=True),
+        teacher_cfg=teacher_cfg,
         dims=dims,
         hashes={"theta": theta_hash},
         metrics={"L0": float(train_info.get("L0", 0))},

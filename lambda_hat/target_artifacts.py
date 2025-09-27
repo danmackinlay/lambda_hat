@@ -23,6 +23,7 @@ class TargetMeta:
     model_cfg: Dict[str, Any]
     data_cfg: Dict[str, Any]
     training_cfg: Dict[str, Any]
+    teacher_cfg: Dict[str, Any] | None
     dims: Dict[str, int]  # e.g. {"n": 100, "d": 4, "p": 45}
     hashes: Dict[str, str]  # e.g. {"theta": "sha256:..."}
     hostname: str
