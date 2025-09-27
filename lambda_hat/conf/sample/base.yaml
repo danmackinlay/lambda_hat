@@ -19,5 +19,3 @@ runtime:
 sampler:
   chains: 4
   name: hmc  # Will be overridden by sampler config group
-
-# Vestigial fields removed: sigma_w, sigma_b, temp (unused bloat)

@@ -67,5 +67,3 @@ def make_loss_fns(
 
     return full, minibatch
 
-
-# Legacy wrapper make_loss_fns_from_config deleted - use make_loss_fns directly

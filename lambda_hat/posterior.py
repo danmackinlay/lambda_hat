@@ -13,7 +13,6 @@ if TYPE_CHECKING:
     from .config import PosteriorConfig
 
 
-# Updated signature to take PosteriorConfig and n_data explicitly
 def compute_beta_gamma(
     cfg: PosteriorConfig, d: int, n_data: int
 ) -> tuple[float, float]:
@@ -27,7 +26,6 @@ def compute_beta_gamma(
     return float(beta), float(gamma)
 
 
-# Unified function for HMC/MCLMC log density (replaces make_logpost_and_score and make_logdensity_for_mclmc)
 def make_logpost(
     loss_full: Callable, params0, n: int, beta: float, gamma: float
 ) -> Callable:

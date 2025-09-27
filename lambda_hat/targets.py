@@ -11,12 +11,11 @@ from .data import make_dataset
 from .models import infer_widths, build_mlp_forward_fn, count_params
 from .losses import make_loss_fns, as_dtype
 from .training import train_erm
+from lambda_hat.config import validate_teacher_cfg
 
 
 @dataclass
 class TargetBundle:
-    """Simplified TargetBundle - single precision version (memory bloat removed)"""
-
     d: int
     params0: Dict[str, Any]  # Haiku params (single precision)
     # loss(params) -> scalar
@@ -60,19 +59,29 @@ def build_target(key, cfg: Config) -> tuple[TargetBundle, list[int], list[int] |
             fallback_width=m_cfg.hidden,
         )
 
-        # Extract teacher widths (recompute what was used in data.py)
+        # Student dims are the truth for I/O
+        in_dim = m_cfg.in_dim
+        out_dim = m_cfg.out_dim
+
         used_teacher_widths = None
-        if hasattr(cfg, "teacher") and cfg.teacher is not None:
-            t_cfg = cfg.teacher
-            t_depth = t_cfg.depth or m_cfg.depth
-            used_teacher_widths = t_cfg.widths
-            if used_teacher_widths is None:
+        if getattr(cfg, "teacher", None) and cfg.teacher != {}:
+            t = cfg.teacher
+            validate_teacher_cfg(dict(t))
+            if t.widths is not None:
+                used_teacher_widths = t.widths
+            else:
+                # one size driver, or both None -> fallback to model.hidden
+                t_TP = (
+                    t.target_params
+                    if t.target_params is not None
+                    else m_cfg.target_params
+                )
+                t_hid = t.hidden if t.hidden is not None else m_cfg.hidden
                 used_teacher_widths = infer_widths(
-                    m_cfg.in_dim, m_cfg.out_dim, t_depth, m_cfg.target_params, m_cfg.hidden
+                    in_dim, out_dim, t.depth, t_TP, fallback_width=t_hid
                 )
         else:
-            # No teacher config - teacher uses same widths as model
-            used_teacher_widths = used_model_widths
+            used_teacher_widths = None  # no teacher
 
         model = build_mlp_forward_fn(
             in_dim=m_cfg.in_dim,
@@ -128,16 +137,20 @@ def build_target(key, cfg: Config) -> tuple[TargetBundle, list[int], list[int] |
         L0 = float(loss_full_f64(params_star_f64))
         d = count_params(params_star_f64)
 
-        return TargetBundle(
-            d=d,
-            params0=params_star_f32,
-            loss_full=loss_full_f32,
-            loss_minibatch=loss_minibatch_f32,
-            X=X_f32,
-            Y=Y_f32,
-            L0=L0,
-            model=model,
-        ), used_model_widths, used_teacher_widths
+        return (
+            TargetBundle(
+                d=d,
+                params0=params_star_f32,
+                loss_full=loss_full_f32,
+                loss_minibatch=loss_minibatch_f32,
+                X=X_f32,
+                Y=Y_f32,
+                L0=L0,
+                model=model,
+            ),
+            used_model_widths,
+            used_teacher_widths,
+        )
 
     elif target_name == "quadratic":
         # ----- Analytic diagnostic: L_n(θ) = 0.5 ||θ||^2 -----
@@ -167,15 +180,19 @@ def build_target(key, cfg: Config) -> tuple[TargetBundle, list[int], list[int] |
         # Dummy model (not used for quadratic target)
         model = None
 
-        return TargetBundle(
-            d=d,
-            params0=params0,
-            loss_full=_lf,
-            loss_minibatch=_lb,
-            X=X,
-            Y=Y,
-            L0=L0,
-            model=model,
-        ), [], None  # No meaningful widths for quadratic target
+        return (
+            TargetBundle(
+                d=d,
+                params0=params0,
+                loss_full=_lf,
+                loss_minibatch=_lb,
+                X=X,
+                Y=Y,
+                L0=L0,
+                model=model,
+            ),
+            [],
+            None,
+        )  # No meaningful widths for quadratic target
     else:
         raise ValueError(f"Unknown target: {target_name}")

@@ -115,7 +115,7 @@ uv run lambda-hat-sample target_id=tgt_abcd1234 sampler=mclmc sampler.mclmc.draw
 
 #### Parameter Sweeps
 
-Hydra multirun (`-m`) lets you sweep hyper-parameters:
+Hydra multirun (`--multirun`) lets you sweep hyper-parameters:
 
 ```bash
 # Compare all samplers on the same target

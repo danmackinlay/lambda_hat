@@ -11,6 +11,7 @@ if TYPE_CHECKING:
     from .config import Config
 
 from .models import infer_widths, build_mlp_forward_fn
+from lambda_hat.config import validate_teacher_cfg
 
 
 def sample_X(key, cfg: "Config", n: int, in_dim: int):
@@ -57,31 +58,43 @@ def build_teacher(key, cfg: Config):
     """Build teacher network (can differ from student)"""
     m_cfg = cfg.model
 
+    # Student dims are the truth for I/O
+    t_in = m_cfg.in_dim
+    t_out = m_cfg.out_dim
+
     # Use teacher config if present, otherwise fall back to model config
-    if hasattr(cfg, "teacher") and cfg.teacher is not None:
+    if hasattr(cfg, "teacher") and cfg.teacher is not None and cfg.teacher != {}:
         t_cfg = cfg.teacher
-        t_depth = t_cfg.depth or m_cfg.depth
-        t_widths = t_cfg.widths
-        if t_widths is None:
+        validate_teacher_cfg(dict(t_cfg))
+
+        if t_cfg.widths is not None:
+            t_widths = t_cfg.widths
+        else:
+            # one size driver, or both None -> fallback to model.hidden
+            t_TP = (
+                t_cfg.target_params
+                if t_cfg.target_params is not None
+                else m_cfg.target_params
+            )
+            t_hid = t_cfg.hidden if t_cfg.hidden is not None else m_cfg.hidden
             t_widths = infer_widths(
-                m_cfg.in_dim, m_cfg.out_dim, t_depth, m_cfg.target_params, m_cfg.hidden
+                t_in, t_out, t_cfg.depth, t_TP, fallback_width=t_hid
             )
         t_act = t_cfg.activation or m_cfg.activation
     else:
         # No teacher config - use model config directly
-        t_depth = m_cfg.depth
         t_widths = m_cfg.widths
         if t_widths is None:
             t_widths = infer_widths(
-                m_cfg.in_dim, m_cfg.out_dim, t_depth, m_cfg.target_params, m_cfg.hidden
+                t_in, t_out, m_cfg.depth, m_cfg.target_params, m_cfg.hidden
             )
         t_act = m_cfg.activation
 
     # Build Haiku model
     model = build_mlp_forward_fn(
-        in_dim=m_cfg.in_dim,
+        in_dim=t_in,
         widths=t_widths,
-        out_dim=m_cfg.out_dim,
+        out_dim=t_out,
         activation=t_act,
         bias=True,
         init=m_cfg.init,
@@ -91,7 +104,7 @@ def build_teacher(key, cfg: Config):
     )
 
     # Initialize parameters
-    dummy_x = jnp.ones((1, m_cfg.in_dim))
+    dummy_x = jnp.ones((1, t_in))
     params = model.init(key, dummy_x)
 
     def forward(X):

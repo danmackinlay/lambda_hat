@@ -1,5 +1,8 @@
 # Small teacher configuration
 depth: 2
-widths: null  # Will be inferred
+widths: null          # optional; if null we infer
 activation: relu
 dropout_rate: 0.0
+# optional size drivers (choose at most one; both null is allowed -> fallback):
+target_params: 50
+hidden: null

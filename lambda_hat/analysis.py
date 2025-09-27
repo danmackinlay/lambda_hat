@@ -14,6 +14,7 @@ import warnings
 
 def _debug_print_idata(idata, name: str):
     """Debug helper to identify degenerate arrays in InferenceData."""
+
     def _summ(v):
         arr = np.asarray(v)
         return dict(
@@ -22,7 +23,9 @@ def _debug_print_idata(idata, name: str):
             nans=np.isnan(arr).sum().item(),
             min=(np.nanmin(arr) if np.isfinite(arr).any() else np.nan),
             max=(np.nanmax(arr) if np.isfinite(arr).any() else np.nan),
-            unique=(len(np.unique(arr[np.isfinite(arr)])) if np.isfinite(arr).any() else 0),
+            unique=(
+                len(np.unique(arr[np.isfinite(arr)])) if np.isfinite(arr).any() else 0
+            ),
         )
 
     print(f"\n=== DEBUG {name} ===")
@@ -31,7 +34,13 @@ def _debug_print_idata(idata, name: str):
     if hasattr(idata, "posterior") and "L" in idata.posterior:
         print("L:", _summ(idata.posterior["L"].values))
     if hasattr(idata, "sample_stats"):
-        for key in ["energy", "acceptance_rate", "cumulative_fge", "cumulative_time", "diverging"]:
+        for key in [
+            "energy",
+            "acceptance_rate",
+            "cumulative_fge",
+            "cumulative_time",
+            "diverging",
+        ]:
             if key in idata.sample_stats:
                 print(f"{key}:", _summ(idata.sample_stats[key].values))
 
@@ -243,13 +252,17 @@ def create_arviz_diagnostics(
         try:
             vars_to_plot = [v for v in ["llc", "L"] if _has_var(idata, v)]
             if vars_to_plot:
-                az.plot_trace(idata, var_names=vars_to_plot, figsize=(12, 8), compact=False)
+                az.plot_trace(
+                    idata, var_names=vars_to_plot, figsize=(12, 8), compact=False
+                )
                 plt.suptitle(f"{sampler_name.upper()} Trace Plot", y=1.02)
                 plt.tight_layout()
                 plt.savefig(diag_dir / "trace.png", dpi=150, bbox_inches="tight")
                 plt.close()
             else:
-                warnings.warn(f"{sampler_name}: skipped trace plot (degenerate or no finite values).")
+                warnings.warn(
+                    f"{sampler_name}: skipped trace plot (degenerate or no finite values)."
+                )
         except Exception:
             warnings.warn(f"Failed to create trace plot for {sampler_name}")
 

@@ -1,7 +1,6 @@
 # llc/sampling.py
 """Clean, idiomatic JAX/BlackJAX sampling loops"""
 
-# Updated imports
 from typing import Dict, Any, Tuple, Callable, NamedTuple, TYPE_CHECKING, Optional
 import time
 import jax
@@ -12,11 +11,6 @@ import blackjax.mcmc.integrators as bj_integrators
 
 if TYPE_CHECKING:
     from lambda_hat.config import SGLDConfig, MCLMCConfig
-
-# === TraceSpec removed - using optimized inference_loop_ln_only instead ===
-
-
-# === Preconditioner Implementation ===
 
 
 # Define Preconditioner State structure
@@ -138,7 +132,10 @@ def inference_loop_extended(
         # Compute Aux only every aux_every steps; otherwise reuse cached value
         def do_aux(_):
             return aux_fn(new_state)
-        aux_data = jax.lax.cond(((t + 1) % aux_every) == 0, do_aux, lambda _: last_aux, operand=None)
+
+        aux_data = jax.lax.cond(
+            ((t + 1) % aux_every) == 0, do_aux, lambda _: last_aux, operand=None
+        )
 
         # Combine data for trace
         trace_data = aux_data.copy()
@@ -163,9 +160,7 @@ def inference_loop_extended(
     # Run the scan
     # The carry tuple is (state, cumulative_work, t, last_aux)
     _, trace = jax.lax.scan(
-        one_step,
-        (initial_state, initial_work, jnp.array(0, jnp.int32), init_aux),
-        keys
+        one_step, (initial_state, initial_work, jnp.array(0, jnp.int32), init_aux), keys
     )
 
     # Apply thinning AFTER the scan (efficient JAX pattern)
@@ -174,30 +169,6 @@ def inference_loop_extended(
 
     return trace
 
-
-def inference_loop_ln_only(
-    rng_key, kernel, initial_state, num_samples, loss_fn, record_every=1
-):
-    """
-    Legacy function - kept for backwards compatibility.
-    Use inference_loop_extended for new implementations.
-    """
-
-    def aux_fn(state):
-        position = state.position
-        ln_val = loss_fn(position)
-        return {"Ln": ln_val}
-
-    # Use the extended loop with work_per_step=1.0 (default)
-    return inference_loop_extended(
-        rng_key,
-        kernel,
-        initial_state,
-        num_samples,
-        aux_fn,
-        aux_every=record_every,
-        work_per_step=1.0,
-    )
 
 
 def run_hmc(
@@ -239,7 +210,8 @@ def run_hmc(
         keytree = jax.tree_util.tree_unflatten(treedef, keys)
         return jax.tree.map(
             lambda p, k: p + 0.01 * jax.random.normal(k, p.shape, p.dtype),
-            params, keytree
+            params,
+            keytree,
         )
 
     # Map over keys (chains), broadcast params

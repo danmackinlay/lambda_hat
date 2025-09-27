@@ -42,14 +42,36 @@ class DataConfig:
     outlier_scale: float = 2.0
 
 
+def validate_teacher_cfg(tcfg: dict):
+    """Validate teacher config contains only allowed keys."""
+    allowed = {
+        "depth",
+        "widths",
+        "activation",
+        "dropout_rate",
+        "target_params",
+        "hidden",
+    }
+    extra = set(tcfg.keys()) - allowed
+    if extra:
+        raise ValueError(f"Disallowed teacher keys: {sorted(extra)}")
+
+    # Optionally enforce at most one size driver
+    size_drivers = [tcfg.get("target_params"), tcfg.get("hidden")]
+    if sum(x is not None for x in size_drivers) > 1:
+        raise ValueError("Teacher config cannot specify both target_params and hidden")
+
+
 @dataclass
 class TeacherConfig:
     """Teacher network configuration"""
 
     depth: Optional[int] = None
     widths: Optional[List[int]] = None
-    activation: Optional[str] = None
     dropout_rate: float = 0.0
+    activation: str = "relu"
+    target_params: Optional[int] = None
+    hidden: Optional[int] = None
 
 
 @dataclass
@@ -71,7 +93,6 @@ class PosteriorConfig:
     beta0: float = 1.0
     prior_radius: Optional[float] = None
     gamma: float = 1.0
-    # prior_center field removed - unused vestigial parameter
 
 
 @dataclass
@@ -88,7 +109,7 @@ class SGLDConfig:
     beta2: float = 0.999
     eps: float = 1e-8
     bias_correction: bool = True
-    eval_every: int = 100  # Updated default: compute full-data loss every k kept draws
+    eval_every: int = 100
 
 
 @dataclass
@@ -136,11 +157,10 @@ class SamplerConfig:
 
 @dataclass
 class OutputConfig:
-    """Output and visualization configuration (bloat removed)"""
+    """Output and visualization configuration """
 
     save_plots: bool = True
     show_plots: bool = False
-    # Removed unused fields: max_theta_plot_dims, diag_mode, diag_k, diag_seed, record_Ln_every, record_theta_every
 
 
 @dataclass
@@ -178,6 +198,3 @@ def setup_config():
     # Hydra validates YAML presets automatically using the type hints
     # defined in the Config dataclass (e.g., Config.model is ModelConfig).
 
-
-# --- Compatibility shim for legacy tests ---
-TEST_CFG = DataConfig()

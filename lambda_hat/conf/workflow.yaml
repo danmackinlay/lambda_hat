@@ -7,6 +7,7 @@ defaults:
   # Include Stage A configuration groups (Define the Target)
   - model: base
   - data: base
+  - teacher: _null
   # Include Stage B configuration groups (Define the Sampler)
   - sample/sampler: hmc
   - _self_
@@ -39,7 +40,6 @@ posterior:
   beta_mode: 1_over_log_n
   beta0: 1.0
   gamma: 1.0
-  # Vestigial fields removed: sigma_w, sigma_b, temp (unused bloat)
 
 # Training block (used for Stage A target building)
 training:
@@ -49,8 +49,7 @@ training:
   early_stop_tol: 1e-6
   batch_size: null  # Use full batch by default
 
-# Teacher configuration (optional, defaults to empty for teacher-student experiments)
-teacher: null
+# Teacher configuration is loaded via config group defaults (teacher: _null)
 
 # --- Dynamic Target ID Resolution ---
 # Exclude volatile elements like code_sha. Ensure 'training' is included.

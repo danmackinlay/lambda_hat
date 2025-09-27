@@ -53,7 +53,15 @@ def build_target_components(key, cfg: DictConfig):
 
     train_info = {"L0": float(target_bundle.L0)}
 
-    return X, Y, model, trained_params, train_info, used_model_widths, used_teacher_widths
+    return (
+        X,
+        Y,
+        model,
+        trained_params,
+        train_info,
+        used_model_widths,
+        used_teacher_widths,
+    )
 
 
 @hydra.main(config_path="../conf", config_name="workflow", version_base=None)
@@ -97,7 +105,14 @@ def main(cfg: DictConfig) -> None:
     key = jax.random.PRNGKey(cfg.target.seed)
 
     # Build & train
-    X, Y, model, theta, train_info, used_model_widths, used_teacher_widths = build_target_components(key, cfg)
+    X, Y, model, theta, train_info, used_model_widths, used_teacher_widths = (
+        build_target_components(key, cfg)
+    )
+
+    # Log resolved widths for debugging
+    print(f"Resolved widths: model={used_model_widths}, teacher={used_teacher_widths}")
+    if used_teacher_widths is not None:
+        print(f"teacher.widths={used_teacher_widths}")
 
     # Metadata & hashing
     flat = _flatten_params_dict(theta)
@@ -114,8 +129,20 @@ def main(cfg: DictConfig) -> None:
 
     # Create teacher_cfg with resolved widths injected (if teacher exists)
     teacher_cfg = None
-    if hasattr(cfg, "teacher") and cfg.teacher is not None:
+    if hasattr(cfg, "teacher") and cfg.teacher is not None and cfg.teacher != {}:
         teacher_cfg = OmegaConf.to_container(cfg.teacher, resolve=True)
+        # Sanitize: drop any unexpected fields defensively
+        teacher_cfg = {
+            k: teacher_cfg.get(k)
+            for k in [
+                "depth",
+                "widths",
+                "activation",
+                "dropout_rate",
+                "target_params",
+                "hidden",
+            ]
+        }
         teacher_cfg["widths"] = used_teacher_widths
 
     meta = TargetMeta(

@@ -16,7 +16,7 @@ from lambda_hat.targets import TargetBundle
 from lambda_hat.losses import make_loss_fns, as_dtype
 from lambda_hat.analysis import analyze_traces
 from lambda_hat.models import build_mlp_forward_fn
-from lambda_hat.models import infer_widths
+from lambda_hat.config import validate_teacher_cfg
 
 
 def run_sampling_logic(cfg: DictConfig) -> None:
@@ -49,6 +49,10 @@ def run_sampling_logic(cfg: DictConfig) -> None:
     widths = mcfg.get("widths")
     assert widths is not None, "Artifact missing resolved model widths"
 
+    # Validate teacher config if present
+    if meta.get("teacher_cfg"):
+        validate_teacher_cfg(meta["teacher_cfg"])
+
     model = build_mlp_forward_fn(
         in_dim=int(X.shape[-1]),
         widths=widths,
@@ -60,7 +64,6 @@ def run_sampling_logic(cfg: DictConfig) -> None:
         residual_period=mcfg.get("residual_period", 2),
         layernorm=mcfg.get("layernorm", False),
     )
-
 
     # Get L0 from metadata
     L0 = meta.get("metrics", {}).get("L0")
@@ -77,7 +80,7 @@ def run_sampling_logic(cfg: DictConfig) -> None:
     X_f32 = as_dtype(X, "float32")
     Y_f32 = as_dtype(Y, "float32")
 
-    # Guard: Use model.apply directly. 
+    # Guard: Use model.apply directly.
     try:
         test_key = jax.random.PRNGKey(0)  # Dummy key for model validation
         _ = model.apply(params_f32, test_key, X_f32[:1])

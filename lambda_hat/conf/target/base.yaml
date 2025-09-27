@@ -2,6 +2,7 @@
 defaults:
   - model: small
   - data: small
+  - teacher: _null
   - _self_
 
 jax:
@@ -27,5 +28,4 @@ training:
   early_stop_tol: 1e-6
   batch_size: null  # Use full batch by default
 
-# Teacher configuration (optional, defaults to null for standard experiments)
-teacher: null
+# Teacher configuration is loaded via config group defaults (teacher: _null)
