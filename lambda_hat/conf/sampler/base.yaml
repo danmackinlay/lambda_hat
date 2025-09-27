@@ -1,14 +1,15 @@
 # @package _global_.sampler
 chains: 4
 
+# Note: sgld_basic (BlackJAX reference implementation) uses the same config as sgld
 sgld:
   # reach ~20k FGEs (1436000 steps * (256/20000) = 20000 FGEs)
   steps: 1436000
   warmup: 50000
-  batch_size: 256
-  step_size: 0.000001
+  batch_size: 1024
+  step_size: 0.00000025
   dtype: float32
-  precond: none
+  precond: rmsprop
   beta1: 0.9
   beta2: 0.999
   eps: 0.00000001
@@ -17,8 +18,8 @@ sgld:
   eval_every: 100
 
 hmc:
-  # ~20k FGEs (1000 draws * 10 steps = 10000 FGEs)
-  draws: 2000
+  # ~40k FGEs (2000 draws * 10 steps = 10000 FGEs) but actually our acceptance is low so more like 20k
+  draws: 4000
   warmup: 200
   num_integration_steps: 10
   step_size: 0.01
@@ -27,8 +28,8 @@ hmc:
   target_acceptance: 0.8
 
 mclmc:
-  # ~20k FGEs (1000 draws * (1.0/0.1) = 10000 FGEs)
-  draws: 2000
+  # ~40k FGEs (4000 draws * (1.0/0.1) = 10000 FGEs) but actually our acceptance is low so more like 20k
+  draws: 4000
   L: 1.0
   step_size: 0.1
   dtype: float64

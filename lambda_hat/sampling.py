@@ -465,6 +465,88 @@ def run_sgld(
     return SamplerRunResult(traces=traces, timings=timings)
 
 
+def run_sgld_basic(
+    rng_key: jax.random.PRNGKey,
+    grad_loss_fn: Callable,                 # gradient of mean minibatch loss
+    initial_params: Dict[str, Any],
+    params0: Dict[str, Any],                # ERM center w0
+    data: Tuple[jnp.ndarray, jnp.ndarray],
+    config: "SGLDConfig",
+    num_chains: int,
+    beta: float,
+    gamma: float,
+    loss_full_fn: Optional[Callable] = None # for Ln recording
+) -> SamplerRunResult:
+    """Reference SGLD using BlackJAX's sgld kernel (no preconditioning)."""
+    if loss_full_fn is None:
+        raise ValueError("loss_full_fn must be provided for Ln recording in SGLD basic.")
+    X, Y = data
+    n_data = X.shape[0]
+    ref_dtype = jax.tree_util.tree_leaves(initial_params)[0].dtype
+    beta_tilde = jnp.asarray(beta * n_data, dtype=ref_dtype)
+    gamma_val = jnp.asarray(gamma, dtype=ref_dtype)
+    batch_size = config.batch_size
+
+    # Gradient estimator of log posterior: -(γ(w-w0) + nβ * grad_Lmini)
+    def grad_logpost_estimator(w, minibatch):
+        Xb, Yb = minibatch
+        Xb = Xb.astype(ref_dtype); Yb = Yb.astype(ref_dtype)
+        gL = grad_loss_fn(w, (Xb, Yb))  # gradient of mean minibatch loss
+        # -(gamma*(w-w0) + n*beta*gL)
+        return jax.tree.map(lambda wi, w0i, gi: -(gamma_val * (wi - w0i) + beta_tilde * gi),
+                            w, params0, gL)
+
+    sgld = blackjax.sgld(grad_logpost_estimator)
+
+    # Init chains (jitter the start a bit, like run_sgld)
+    key, init_key, sample_key = jax.random.split(rng_key, 3)
+    init_keys = jax.random.split(init_key, num_chains)
+    def init_chain(k, p):
+        noise = jax.tree.map(lambda q: 0.01 * jax.random.normal(k, q.shape, q.dtype), p)
+        return jax.tree.map(lambda q, n: q + n, p, noise)
+    init_positions = jax.vmap(init_chain, in_axes=(0, None))(init_keys, initial_params)
+
+    # Kernel: one step of BlackJAX SGLD with our minibatch
+    def sgld_basic_kernel(rng_key, position):
+        key_batch, key_step = jax.random.split(rng_key)
+        replace_flag = batch_size > n_data
+        idx = jax.random.choice(key_batch, n_data, shape=(batch_size,), replace=replace_flag)
+        minibatch = (X[idx], Y[idx])
+        new_position = sgld.step(key_step, position, minibatch, config.step_size)
+        # Ensure dtype consistency - cast back to ref_dtype if needed
+        new_position = jax.tree.map(lambda x: jnp.asarray(x, dtype=ref_dtype), new_position)
+        # Return position as "state" and a lightweight info
+        return new_position, SGLDInfo()
+
+    # Aux: Ln(position) - ensure dtype consistency
+    loss_full_fn_jitted = jax.jit(loss_full_fn)
+    def aux_fn(position):
+        Ln = loss_full_fn_jitted(position)
+        # Cast to ref_dtype to ensure consistency
+        return {"Ln": jnp.asarray(Ln, dtype=ref_dtype)}
+
+    # Work per step (FGEs)
+    work_per_step = float(batch_size) / float(n_data)
+    eval_every = config.eval_every
+
+    # Drive chains
+    chain_keys = jax.random.split(sample_key, num_chains)
+    sampling_start_time = time.time()
+    traces = jax.vmap(
+        lambda k, s: inference_loop_extended(
+            k, sgld_basic_kernel, s,
+            num_samples=config.steps,
+            aux_fn=aux_fn,
+            aux_every=eval_every,
+            work_per_step=work_per_step)
+    )(chain_keys, init_positions)
+    jax.block_until_ready(traces)
+    sampling_time = time.time() - sampling_start_time
+
+    timings = {'adaptation': 0.0, 'sampling': sampling_time, 'total': sampling_time}
+    return SamplerRunResult(traces=traces, timings=timings)
+
+
 def run_mclmc(
     rng_key,
     logdensity_fn,

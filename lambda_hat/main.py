@@ -19,7 +19,7 @@ from lambda_hat.posterior import (
     compute_beta_gamma,
     make_logpost,
 )
-from lambda_hat.sampling import run_hmc, run_sgld, run_mclmc
+from lambda_hat.sampling import run_hmc, run_sgld, run_sgld_basic, run_mclmc
 from lambda_hat.analysis import analyze_traces
 from lambda_hat.artifacts import save_run_artifacts
 
@@ -99,6 +99,26 @@ def run_sampler(
             loss_full_fn=loss_full_for_recording,
         )
 
+    elif sampler_name == "sgld_basic":
+        # Setup SGLD-basic via BlackJAX (no preconditioning)
+        loss_mini = target.loss_minibatch_f32
+        params0 = target.params0_f32
+        initial_params = params0
+        grad_loss_fn = make_grad_loss_minibatch(loss_mini)
+        loss_full_for_recording = make_loss_full(target.loss_full_f32)
+        run_result = run_sgld_basic(
+            key,
+            grad_loss_fn,
+            initial_params=initial_params,
+            params0=params0,
+            data=(target.X, target.Y),
+            config=cfg.sampler.sgld,     # reuse SGLD config: steps, batch_size, step_size, eval_every
+            num_chains=cfg.sampler.chains,
+            beta=beta,
+            gamma=gamma,
+            loss_full_fn=loss_full_for_recording,
+        )
+
     elif sampler_name == "mclmc":
         # Setup MCLMC
         loss_full = target.loss_full_f64
@@ -125,10 +145,16 @@ def run_sampler(
 
     log.info(f"Completed {sampler_name} sampling")
     # Return the results including the new timings
+    # Handle sgld_basic using sgld config
+    if sampler_name == "sgld_basic":
+        config_to_use = cfg.sampler.sgld
+    else:
+        config_to_use = getattr(cfg.sampler, sampler_name)
+
     return {
         "traces": run_result.traces,
         "timings": run_result.timings,  # Add timings
-        "sampler_config": getattr(cfg.sampler, sampler_name),
+        "sampler_config": config_to_use,
         "beta": beta,
         "gamma": gamma,
     }
@@ -194,7 +220,7 @@ def main(cfg: Config) -> None:
 
             # Determine warmup draws to discard (burn-in)
             warmup_draws = 0
-            if sampler_name == "sgld":
+            if sampler_name in ["sgld", "sgld_basic"]:
                 eval_every = getattr(cfg.sampler.sgld, 'eval_every', 100)
                 steps = getattr(cfg.sampler.sgld, 'steps', 0)
                 warmup_steps = getattr(cfg.sampler.sgld, 'warmup', 0)
