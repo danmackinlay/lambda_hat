@@ -461,30 +461,75 @@ def run_sgld(
 
 
 def run_mclmc(
-    rng_key: jax.random.PRNGKey,
-    logdensity_fn: Callable,
-    initial_params: Dict[str, Any],
-    num_samples: int,
-    num_chains: int,
-    config: "MCLMCConfig",
+    rng_key,
+    logdensity_fn,
+    initial_params,
+    num_samples,
+    num_chains,
+    config,
     loss_full_fn: Optional[Callable] = None,
 ) -> SamplerRunResult:
-    """Run Microcanonical Langevin Monte Carlo (MCLMC)
+    # -- flatten params once for MCLMC's state vector
+    leaves, treedef = jax.tree_util.tree_flatten(initial_params)
+    sizes = [x.size for x in leaves]
+    shapes = [x.shape for x in leaves]
+    theta0 = jnp.concatenate([x.reshape(-1) for x in leaves])  # (d,)
 
-    Args:
-        rng_key: JRNG key
-        logdensity_fn: Log posterior function
-        initial_params: Initial parameter values (Haiku params)
-        num_samples: Number of samples per chain
-        num_chains: Number of chains to run in parallel
-        config: MCLMC configuration object containing all parameters
+    def flatten(params):
+        ls = jax.tree_util.tree_leaves(params)
+        return jnp.concatenate([x.reshape(-1) for x in ls])
 
-    Returns:
-        Dictionary with traces, shape (Chains, Draws, ...)
-    """
-    # Setup keys
-    key, init_key, sample_key = jax.random.split(rng_key, 3)
+    def unflatten(theta):
+        out = []
+        i = 0
+        for shp, sz in zip(shapes, sizes):
+            out.append(theta[i : i + sz].reshape(shp))
+            i += sz
+        return jax.tree_util.tree_unflatten(treedef, out)
+
+    if loss_full_fn is None:
+        raise ValueError("loss_full_fn must be provided for Ln recording in MCLMC.")
+
+    # Create flat loss function (REPLACE existing definition to ensure JIT)
+    # This relies on 'unflatten' being defined earlier in the function scope.
+    def loss_full_flat_raw(theta_flat):
+        params = unflatten(theta_flat)
+        return loss_full_fn(params)
+
+    # JIT this function for use inside the scan loop
+    loss_full_flat = jax.jit(loss_full_flat_raw)
+
+    # diversify starting points
+    key, k_init = jax.random.split(rng_key)
+    init_thetas = theta0 + 0.01 * jax.random.normal(
+        k_init, (num_chains, theta0.size), dtype=theta0.dtype
+    )
+
+    # pick integrator
+    integrators = {
+        "isokinetic_mclachlan": bj_integrators.isokinetic_mclachlan,
+        "isokinetic_velocity_verlet": bj_integrators.isokinetic_velocity_verlet,
+    }
+    integrator = integrators[config.integrator]
+
+    # Create flattened logdensity function
+    def logdensity_flat(theta):
+        params = unflatten(theta)
+        return logdensity_fn(params)
+
+    # BlackJAX MCLMC constructor does not take inverse_mass_matrix. It uses sqrt_diag_cov internally.
+    mclmc = blackjax.mclmc(
+        logdensity_fn=logdensity_flat,
+        L=config.L,
+        step_size=config.step_size,
+        integrator=integrator,
+        # Remove the incorrect inverse_mass_matrix argument from Doc 1 L453
+    )
+
+    # init STATES — BlackJAX 1.2.5 still needs RNG keys
+    key, init_key = jax.random.split(key)
     init_keys = jax.random.split(init_key, num_chains)
+    init_states = jax.vmap(mclmc.init)(init_thetas, init_keys)
 
     # Calculate work per step (FGEs): MCLMC uses full gradients.
     # Number of integration steps is approximately L / step_size.
@@ -492,121 +537,30 @@ def run_mclmc(
     num_integration_steps = jnp.ceil(config.L / config.step_size)
     work_per_step = float(num_integration_steps)
 
-    # Flatten initial params for MCLMC (modernized with ravel_pytree)
-    initial_flat, unflatten_fn = jax.flatten_util.ravel_pytree(initial_params)
-    d = initial_flat.size
+    # Define the aux function for the loop
+    # MCLMC state has 'position' attribute which holds the flattened vector.
+    def aux_fn(st):
+        theta_flat = st.position
+        return {"Ln": loss_full_flat(theta_flat)}
 
-    # Create initial states for each chain
-    def init_chain(key):
-        noise = 0.01 * jax.random.normal(
-            key, initial_flat.shape, dtype=initial_flat.dtype
-        )
-        return initial_flat + noise
-
-    initial_positions = jax.vmap(init_chain)(init_keys)
-
-    # Adapt logdensity to work with flattened params (modernized with unflatten_fn)
-    def logdensity_flat(theta):
-        params = unflatten_fn(theta)
-        return logdensity_fn(params)
-
-    # --- MCLMC Adaptation Phase ---
-    key, adaptation_key = jax.random.split(key)
-
-    # Select integrator
-
-    integrators_map = {
-        "isokinetic_mclachlan": bj_integrators.isokinetic_mclachlan,
-        "isokinetic_velocity_verlet": bj_integrators.isokinetic_velocity_verlet,
-    }
-    integrator = integrators_map.get(config.integrator)
-    if integrator is None:
-        raise ValueError(
-            f"Unknown MCLMC integrator: {config.integrator}. Supported: {list(integrators_map.keys())}"
-        )
-
-    # Create the kernel factory (required by the tuner in BlackJAX 1.2.5)
-    def kernel_factory(L, step_size, sqrt_diag_cov):
-        return blackjax.mclmc(
-            logdensity_fn=logdensity_flat,
-            L=L,
-            step_size=step_size,
-            sqrt_diag_cov=sqrt_diag_cov,
-            integrator=integrator,
-        )
-
-    # Initialize state for the tuner (using the first chain)
-    # In BlackJAX 1.2.5, mclmc.init takes (position, logdensity_fn) - no key
-    try:
-        init_fn = blackjax.mclmc.init
-    except AttributeError:
-        init_fn = blackjax.mcmc.mclmc.init  # fallback for alt layouts
-    initial_state_0 = init_fn(initial_positions[0], logdensity_flat)
-
-    if config.num_steps > 0:
-        print("Starting MCLMC adaptation...")
-        tuner = getattr(blackjax, "mclmc_find_L_and_step_size", None)
-        if tuner is None:
-            from blackjax.mclmc import find_L_and_step_size as tuner
-        (L_adapted, step_size_adapted, sqrt_diag_cov_adapted), _ = tuner(
-            mclmc_kernel=kernel_factory,
-            num_steps=config.num_steps,
-            state=initial_state_0,
-            rng_key=adaptation_key,
-            # Pass adaptation parameters from config
-            frac_tune1=config.frac_tune1,
-            frac_tune2=config.frac_tune2,
-            frac_tune3=config.frac_tune3,
-            desired_energy_var=config.desired_energy_var,
-            trust_in_estimate=config.trust_in_estimate,
-            num_effective_samples=config.num_effective_samples,
-            diagonal_preconditioning=config.diagonal_preconditioning,
-        )
-        print(
-            f"Adaptation complete. L: {L_adapted:.4f}, Step Size: {step_size_adapted:.4f}"
-        )
-    else:
-        # Use fixed values if adaptation is disabled (num_steps=0)
-        L_adapted = config.L
-        step_size_adapted = config.step_size
-        sqrt_diag_cov_adapted = jnp.ones(d)
-
-    # --- MCLMC Sampling Phase ---
-    mclmc_sampler = kernel_factory(L_adapted, step_size_adapted, sqrt_diag_cov_adapted)
-
-    # Initialize states
-    # Per-chain init: mclmc_sampler.init takes (position, logdensity_fn) - no key
-    initial_states = jax.vmap(lambda pos: mclmc_sampler.init(pos, logdensity_flat))(
-        initial_positions
-    )
-
-    # Define aux_fn for recording loss
-    def aux_fn(state):
-        if loss_full_fn is not None:
-            theta_flat = state.position
-            params = unflatten_fn(theta_flat)
-            return {"Ln": loss_full_fn(params)}
-        else:
-            return {"Ln": jnp.nan}
-
-    key, sample_key = jax.random.split(key)
-    sample_keys = jax.random.split(sample_key, num_chains)
+    # run all chains
+    key, k_sample = jax.random.split(key)
+    chain_keys = jax.random.split(k_sample, num_chains)
 
     # Start sampling timer
     sampling_start_time = time.time()
 
-    # Use vmap with the optimized loop
     traces = jax.vmap(
         lambda k, s: inference_loop_extended(
             k,
-            mclmc_sampler.step,
+            mclmc.step,
             s,
             num_samples=num_samples,
             aux_fn=aux_fn,
             aux_every=1,
-            work_per_step=work_per_step,
+            work_per_step=work_per_step,  # Pass work
         )
-    )(sample_keys, initial_states)
+    )(chain_keys, init_states)
 
     # Ensure sampling is finished
     jax.block_until_ready(traces)
@@ -614,9 +568,9 @@ def run_mclmc(
 
     timings = {
         # Note: This implementation assumes MCLMC adaptation is not used or timed separately.
-        "adaptation": 0.0,
-        "sampling": sampling_time,
-        "total": sampling_time,
+        'adaptation': 0.0,
+        'sampling': sampling_time,
+        'total': sampling_time
     }
 
     return SamplerRunResult(traces=traces, timings=timings)

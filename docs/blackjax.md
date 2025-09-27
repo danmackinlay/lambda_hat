@@ -2,6 +2,23 @@
 
 This repository uses BlackJAX (pinned to version 1.2.5) for MCMC sampling. The implementation focuses on clean, idiomatic JAX loops using `jax.lax.scan` within `llc/sampling.py`.
 
+## RNG API Guidelines
+
+* **MCLMC init requires an RNG key.** Use:
+
+  ```python
+  state0 = blackjax.mclmc.init(position, logdensity_fn, rng_key=key)
+  ```
+
+  The Sampling Book tutorial follows this pattern; keep your code and examples consistent.
+* **Adaptation helper**: `mclmc_find_L_and_step_size(...)` expects a *state* from that init, and a kernel factory; your code already matches the documented flow.
+* **HMC warmup**: call `window_adaptation(...)` with `num_integration_steps=...`, then `.run(key, position, num_steps=...)`. Don't pass `num_integration_steps` to `.run(...)` — that's an old pattern that triggers the classic "unexpected keyword arg" error reported upstream. Your HMC code follows the current pattern.
+* **RNGs rule of thumb**:
+
+  * `.init(...)` **may** need `rng_key` (MCLMC does in our target version).
+  * `.step(key, state)` **always** needs an RNG key.
+  * When you vmap over chains, **vmap the RNG split** too (one key per chain).
+
 ## Implementation Overview
 
 ### HMC (Hamiltonian Monte Carlo)
