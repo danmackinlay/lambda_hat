@@ -182,11 +182,15 @@ Use Hydra’s Submitit launcher for SLURM clusters:
 uv run lambda-hat-build-target --multirun model=small,base target.seed=42,123
 
 # Submit sampling sweeps to GPU nodes
-uv run lambda-hat-sample --multirun target_id=tgt_7b63bd0e3feb sampler=sgld,hmc,mclmc \
-    hydra/launcher=submitit_slurm \
+uv run lambda-hat-sample --multirun target_id=tgt_<tartget> sampler=sgld,hmc,mclmc \
+    hydra.launcher=submitit_slurm \
     hydra.launcher.gpus_per_node=1 \
     +hydra.launcher.additional_parameters.gpus=1 \
     hydra.launcher.account=OD-228158
+uv run lambda-hat-sample --multirun   target_id=tgt_917f29400521 \
+    sampler=sgld,hmc,mclmc   \
+    hydra/launcher=submitit_slurm   \
+    +hydra.launcher.additional_parameters.account=abc123
 ```
 
 ---
