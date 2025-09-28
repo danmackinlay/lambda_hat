@@ -6,13 +6,13 @@ from pathlib import Path
 import jax
 from omegaconf import OmegaConf
 
-from lambda_hat.target_artifacts import load_target_artifact, append_sample_manifest
-from lambda_hat.sampling_runner import run_sampler
-from lambda_hat.targets import TargetBundle
-from lambda_hat.losses import make_loss_fns, as_dtype
 from lambda_hat.analysis import analyze_traces
-from lambda_hat.models import build_mlp_forward_fn
 from lambda_hat.config import validate_teacher_cfg
+from lambda_hat.losses import as_dtype, make_loss_fns
+from lambda_hat.models import build_mlp_forward_fn
+from lambda_hat.sampling_runner import run_sampler
+from lambda_hat.target_artifacts import append_sample_manifest, load_target_artifact
+from lambda_hat.targets import TargetBundle
 
 
 def main():
@@ -47,7 +47,8 @@ def main():
     # Guardrails
     if bool(cfg.jax.enable_x64) != bool(meta["jax_enable_x64"]):
         raise RuntimeError(
-            f"Precision mismatch: sampler x64={cfg.jax.enable_x64}, target x64={meta['jax_enable_x64']}"
+            f"Precision mismatch: sampler x64={cfg.jax.enable_x64}, "
+            f"target x64={meta['jax_enable_x64']}"
         )
 
     # Recreate forward function from stored model config
@@ -96,7 +97,7 @@ def main():
         raise RuntimeError(f"Model/params mismatch for target {args.target_id}: {e}")
 
     # Determine loss type from Stage B config (if specified) or from metadata
-    loss_type = getattr(cfg.get("posterior", {}), "loss", "mse")
+    loss_type = OmegaConf.select(cfg, "posterior.loss") or "mse"
 
     # Load necessary data parameters from Stage A metadata
     data_cfg = meta.get("data_cfg", {})

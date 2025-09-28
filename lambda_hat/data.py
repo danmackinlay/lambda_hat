@@ -1,17 +1,19 @@
-# llc/data.py
+# lambda_hat/data.py
 """Data generation utilities for teacher-student experiments"""
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+
 import jax.numpy as jnp
 from jax import random
 
 if TYPE_CHECKING:
     from .config import Config
 
-from .models import infer_widths, build_mlp_forward_fn
 from lambda_hat.config import validate_teacher_cfg
+
+from .models import build_mlp_forward_fn, infer_widths
 
 
 def sample_X(key, cfg: "Config", n: int, in_dim: int):

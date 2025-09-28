@@ -1,13 +1,14 @@
-# llc/sampling.py
+# lambda_hat/sampling.py
 """Clean, idiomatic JAX/BlackJAX sampling loops"""
 
-from typing import Dict, Any, Tuple, Callable, NamedTuple, TYPE_CHECKING, Optional
 import time
+from typing import TYPE_CHECKING, Any, Callable, Dict, NamedTuple, Optional, Tuple
+
+import blackjax
+import blackjax.mcmc.integrators as bj_integrators
 import jax
 import jax.numpy as jnp
 from jax.tree_util import tree_map
-import blackjax
-import blackjax.mcmc.integrators as bj_integrators
 
 if TYPE_CHECKING:
     from lambda_hat.config import SGLDConfig
@@ -110,7 +111,8 @@ def inference_loop_extended(
     rng_key, kernel, initial_state, num_samples, aux_fn, aux_every=1, work_per_step=1.0
 ):
     """
-    Efficient inference loop using jax.lax.scan that records Ln, diagnostics, and cumulative work (FGEs).
+    Efficient inference loop using jax.lax.scan that records Ln, diagnostics,
+    and cumulative work (FGEs).
 
     Args:
         aux_fn: A function that takes the state and returns a dict {"Ln": val}.
@@ -516,7 +518,8 @@ def run_mclmc(
         params = unflatten(theta)
         return logdensity_fn(params)
 
-    # BlackJAX MCLMC constructor does not take inverse_mass_matrix. It uses sqrt_diag_cov internally.
+    # BlackJAX MCLMC constructor does not take inverse_mass_matrix.
+    # It uses sqrt_diag_cov internally.
     mclmc = blackjax.mclmc(
         logdensity_fn=logdensity_flat,
         L=config.L,

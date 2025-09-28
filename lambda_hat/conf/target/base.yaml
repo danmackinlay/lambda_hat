@@ -1,9 +1,4 @@
-# Two-stage: Stage A (build-target)
-defaults:
-  - model: small
-  - data: small
-  - teacher: _null
-  - _self_
+# OmegaConf-only config (no Hydra defaults)
 
 jax:
   enable_x64: true

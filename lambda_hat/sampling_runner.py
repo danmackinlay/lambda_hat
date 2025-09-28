@@ -5,18 +5,18 @@ Extracted from the one-phase workflow to be used by the two-stage sampling proce
 """
 
 import logging
-from typing import Dict, Any
+from typing import Any, Dict
 
 import jax
 from omegaconf import DictConfig
 
+from lambda_hat.losses import as_dtype, make_loss_fns
 from lambda_hat.posterior import (
-    make_grad_loss_minibatch,
     compute_beta_gamma,
+    make_grad_loss_minibatch,
     make_logpost,
 )
-from lambda_hat.sampling import run_hmc, run_sgld, run_mclmc
-from lambda_hat.losses import make_loss_fns, as_dtype
+from lambda_hat.sampling import run_hmc, run_mclmc, run_sgld
 
 log = logging.getLogger(__name__)
 

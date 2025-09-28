@@ -9,17 +9,17 @@ from omegaconf import OmegaConf
 from lambda_hat import hydra_support  # noqa: F401
 from lambda_hat.target_artifacts import (
     TargetMeta,
-    save_target_artifact_explicit,
-    _hash_arrays,
     _flatten_params_dict,
+    _hash_arrays,
+    save_target_artifact_explicit,
 )
 from lambda_hat.targets import build_target
 
 
 def _pkg_versions() -> Dict[str, str]:
+    import blackjax
     import haiku as hk
     import jax
-    import blackjax
     import numpy as np
 
     return {

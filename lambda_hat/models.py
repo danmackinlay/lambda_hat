@@ -1,7 +1,8 @@
-# llc/models.py
+# lambda_hat/models.py
 """Modernized model definitions using Haiku"""
 
-from typing import Optional, List
+from typing import List, Optional
+
 import haiku as hk
 import jax
 import jax.numpy as jnp

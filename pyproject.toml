@@ -45,12 +45,21 @@ dev = [
     "marimo>=0.15.2",
     "pytest>=8.4.2",
     "ruff>=0.13.1",
-    "pytest>=8.4.2",
 ]
 
 [project.scripts]
-lambda-hat-promote = "lambda_hat.entrypoints.promote:main_promote"
+lambda-hat-promote = "lambda_hat.entrypoints.promote:main"
 lambda-hat-build-target = "lambda_hat.entrypoints.build_target:main"
 lambda-hat-sample = "lambda_hat.entrypoints.sample:main"
-lambda-hat-workflow = "lambda_hat.entrypoints.workflow:main_workflow"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+extend-select = ["E","F","I"]
+ignore = []
+
+[tool.ruff.format]
+quote-style = "double"
 

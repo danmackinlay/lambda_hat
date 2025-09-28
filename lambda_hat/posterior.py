@@ -1,9 +1,10 @@
-# llc/posterior.py
+# lambda_hat/posterior.py
 """Posterior construction utilities for tempered local posteriors"""
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Callable
+
 import jax
 import jax.numpy as jnp
 from jax import grad, jit

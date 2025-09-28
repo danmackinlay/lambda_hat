@@ -1,9 +1,10 @@
-# llc/training.py
+# lambda_hat/training.py
 """Training utilities for finding ERM solutions"""
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Tuple, Dict, Any
+from typing import TYPE_CHECKING, Any, Dict, Tuple
+
 import jax
 import jax.numpy as jnp
 import optax

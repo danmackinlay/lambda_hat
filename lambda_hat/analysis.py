@@ -1,15 +1,17 @@
-# llc/analysis.py
+# lambda_hat/analysis.py
 """Enhanced analysis functions for Hydra-based LLC experiments with proper visualization"""
 
 from __future__ import annotations
-from typing import Dict, Optional, Tuple
+
+import warnings
 from pathlib import Path
+from typing import Dict, Optional, Tuple
+
+import arviz as az
 import jax.numpy as jnp
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import arviz as az
-import matplotlib.pyplot as plt
-import warnings
 
 
 def _debug_print_idata(idata, name: str):
@@ -409,7 +411,8 @@ def create_work_normalized_variance_plot(
 
         if T < 5 or C < 2:
             warnings.warn(
-                f"Skipping WNV for {sampler_name}: Requires T>=5 and C>=2 for reliable variance estimate."
+                f"Skipping WNV for {sampler_name}: "
+                f"Requires T>=5 and C>=2 for reliable variance estimate."
             )
             continue
 

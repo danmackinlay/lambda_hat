@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, asdict, field
+from dataclasses import asdict, dataclass, field
+from hashlib import sha256
 from pathlib import Path
-from typing import Dict, Any
+from typing import Any, Dict
 
 import jax.numpy as jnp
 import numpy as np
-from hashlib import sha256
 
 # ---------- Target metadata ----------
 
@@ -69,7 +69,8 @@ def _unflatten_params_dict(flat: Dict[str, np.ndarray]) -> Dict[str, Any]:
         if _NPZ_SEP not in key:
             # Since backwards compatibility is not required, we fail fast on old formats.
             raise ValueError(
-                f"Invalid key format in NPZ: {key}. Expected 'module::param'. Artifact may be legacy format."
+                f"Invalid key format in NPZ: {key}. Expected 'module::param'. "
+                f"Artifact may be legacy format."
             )
 
         module_name, param_name = key.split(_NPZ_SEP, 1)

@@ -138,11 +138,13 @@ Artifacts are written to `runs/...` directly. The sampler name is included in th
 Lambda-Hat includes a utility to copy plots from sampling runs into a stable location for docs. It now searches under `runs/targets/**/run_{sampler}_*/diagnostics/`.
 
 ```bash
-# Promote latest trace plots
-uv run lambda-hat-promote runs_root=runs samplers=sgld,hmc,mclmc plot_name=trace.png
+# Promote newest run of each sampler into runs/promotion and write a README snippet
+uv run lambda-hat-promote gallery --runs-root runs --samplers sgld,hmc,mclmc \
+  --plot-name trace.png --outdir runs/promotion --snippet-out runs/promotion/gallery_snippet.md
 
-# Custom output
-uv run lambda-hat-promote runs_root=runs samplers=sgld outdir=figures plot_name=running_llc.png
+# Copy newest plots without snippet
+uv run lambda-hat-promote single --runs-root runs --samplers sgld --outdir figures \
+  --plot-name running_llc.png
 ```
 
 ---

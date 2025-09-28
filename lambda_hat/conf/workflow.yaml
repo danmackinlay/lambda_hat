@@ -3,14 +3,7 @@
 
 # Unified Workflow Configuration for N x M Sweeps
 
-defaults:
-  # Include Stage A configuration groups (Define the Target)
-  - model: base
-  - data: base
-  - teacher: _null
-  # Include Stage B configuration groups (Define the Sampler)
-  - sample/sampler: hmc
-  - _self_
+# NOTE: This file is consumed via OmegaConf mergers from the Snakefile (no Hydra defaults).
 
 # --- Shared Config ---
 jax:

@@ -1,7 +1,4 @@
-# Two-stage: Stage B (sample)
-defaults:
-  - sampler: hmc
-  - _self_
+# Two-stage: Stage B (sample) — OmegaConf-only (no Hydra defaults)
 
 jax:
   enable_x64: true
@@ -10,8 +7,7 @@ jax:
 store:
   root: runs
 
-# Select the target explicitly (ID or path). No training keys allowed here.
-target_id: ???
+# Target selection is provided via CLI (--target-id). Keep this file agnostic.
 
 runtime:
   seed: 12345  # used to split per-chain keys downstream

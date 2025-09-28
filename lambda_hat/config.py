@@ -1,9 +1,8 @@
-# llc/config.py
-"""Structured configuration using Hydra and dataclasses"""
+# lambda_hat/config.py
+"""Lightweight config helpers (OmegaConf-only). Hydra is not used."""
 
 from dataclasses import dataclass, field
-from typing import Optional, List
-from hydra.core.config_store import ConfigStore
+from typing import List, Optional
 
 
 @dataclass
@@ -187,13 +186,6 @@ class Config:
     profile_adaptation: bool = True
 
 
-def setup_config():
-    """Register configuration schemas with Hydra's ConfigStore"""
-    cs = ConfigStore.instance()
-
-    # Register main config schema. Renaming avoids collision with config.yaml.
-    cs.store(name="base_config", node=Config)
-
-    # REMOVE ALL OTHER cs.store() CALLS BELOW.
-    # Hydra validates YAML presets automatically using the type hints
-    # defined in the Config dataclass (e.g., Config.model is ModelConfig).
+# NOTE:
+# This module deliberately avoids Hydra. Keep dataclasses for documentation/type hints
+# and reuse helpers like `validate_teacher_cfg`.

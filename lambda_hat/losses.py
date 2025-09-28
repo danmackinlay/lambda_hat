@@ -1,9 +1,10 @@
-# llc/losses.py
+# lambda_hat/losses.py
 """Loss function utilities adapted for Haiku models"""
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Callable
+
 import jax
 import jax.numpy as jnp
 
