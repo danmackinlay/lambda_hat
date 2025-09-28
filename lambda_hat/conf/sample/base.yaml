@@ -8,7 +8,7 @@ jax:
 
 # Ensure artifacts root is stable across single runs and multiruns
 store:
-  root: ${hydra:runtime.cwd}/runs
+  root: runs
 
 # Select the target explicitly (ID or path). No training keys allowed here.
 target_id: ???

@@ -18,9 +18,12 @@ slurm_logs/
 .submitit_slurm/
 .submitit_local/
 
-# Hydra outputs
-outputs/
-multirun/
+# Snakemake
+.snakemake/
+logs/
+temp_config/
+
+# Hydra outputs (removed)
 
 # Virtual environments
 .venv

@@ -1,17 +1,13 @@
-from __future__ import annotations
-
-import json
+# lambda_hat/entrypoints/sample.py
+import argparse
 import time
 from pathlib import Path
-from hashlib import md5
 
 import jax
-import hydra
-from omegaconf import DictConfig, OmegaConf
-import arviz as az
+from omegaconf import OmegaConf
 
 from lambda_hat.target_artifacts import load_target_artifact, append_sample_manifest
-from lambda_hat.sampling_runner import run_sampler  # Use extracted sampler runner
+from lambda_hat.sampling_runner import run_sampler
 from lambda_hat.targets import TargetBundle
 from lambda_hat.losses import make_loss_fns, as_dtype
 from lambda_hat.analysis import analyze_traces
@@ -19,28 +15,40 @@ from lambda_hat.models import build_mlp_forward_fn
 from lambda_hat.config import validate_teacher_cfg
 
 
-def run_sampling_logic(cfg: DictConfig) -> None:
-    """Executes the sampling logic. Reusable by different entry points."""
-    if cfg.jax.enable_x64:
-        jax.config.update("jax_enable_x64", True)
+def main():
+    ap = argparse.ArgumentParser("lambda-hat-sample")
+    ap.add_argument("--config-yaml", required=True, help="Path to composed YAML config")
+    ap.add_argument("--target-id", required=True, help="Target ID string")
+    ap.add_argument(
+        "--run-dir", required=True, help="Directory where to write run outputs"
+    )
+    args = ap.parse_args()
+
+    cfg = OmegaConf.load(args.config_yaml)
+
+    # Fail-fast validation
+    assert "sampler" in cfg and "name" in cfg.sampler, "cfg.sampler.name missing"
+    assert "jax" in cfg and "enable_x64" in cfg.jax, "cfg.jax.enable_x64 missing"
+
+    jax.config.update("jax_enable_x64", bool(cfg.jax.enable_x64))
 
     print("=== LLC: Sample ===")
+    print(f"Target ID: {args.target_id}")
+    print(f"Run Dir: {args.run_dir}")
     try:
         print(OmegaConf.to_yaml(cfg, resolve=True))
     except Exception:
         # Fallback to non-resolved view to keep the run alive
         print(OmegaConf.to_yaml(cfg, resolve=False))
 
-    # Load target
-    X, Y, params, meta, tdir = load_target_artifact(cfg.store.root, cfg.target_id)
+    # Load target artifact using store.root and target_id
+    X, Y, params, meta, tdir = load_target_artifact(cfg.store.root, args.target_id)
 
     # Guardrails
     if bool(cfg.jax.enable_x64) != bool(meta["jax_enable_x64"]):
         raise RuntimeError(
             f"Precision mismatch: sampler x64={cfg.jax.enable_x64}, target x64={meta['jax_enable_x64']}"
         )
-
-    # Use the existing targets module to build a target bundle
 
     # Recreate forward function from stored model config
     mcfg = meta["model_cfg"]
@@ -69,7 +77,7 @@ def run_sampling_logic(cfg: DictConfig) -> None:
     L0 = meta.get("metrics", {}).get("L0")
     if L0 is None or L0 == 0:
         raise ValueError(
-            f"L0 reference loss not found or zero in target {cfg.target_id}. "
+            f"L0 reference loss not found or zero in target {args.target_id}. "
             "Target artifact may be corrupted or from an old format. "
             "Please rebuild the target using lambda-hat-build-target."
         )
@@ -85,7 +93,7 @@ def run_sampling_logic(cfg: DictConfig) -> None:
         test_key = jax.random.PRNGKey(0)  # Dummy key for model validation
         _ = model.apply(params_f32, test_key, X_f32[:1])
     except Exception as e:
-        raise RuntimeError(f"Model/params mismatch for target {cfg.target_id}: {e}")
+        raise RuntimeError(f"Model/params mismatch for target {args.target_id}: {e}")
 
     # Determine loss type from Stage B config (if specified) or from metadata
     loss_type = getattr(cfg.get("posterior", {}), "loss", "mse")
@@ -105,118 +113,34 @@ def run_sampling_logic(cfg: DictConfig) -> None:
         student_df=student_df,
     )
 
-    # Build target bundle for compatibility with existing code
-    target = TargetBundle(
-        d=meta["dims"]["p"],
-        params0=params_f32,
-        loss_full=loss_full_f32,
-        loss_minibatch=loss_mini_f32,
+    # Build target bundle for sampling
+    target_bundle = TargetBundle(
         X=X_f32,
         Y=Y_f32,
+        params0=params_f32,
         L0=L0,
-        model=model,  # Pass the Haiku object directly
+        loss_full=loss_full_f32,
+        loss_mini=loss_mini_f32,
     )
 
-    # Run the selected sampler using existing machinery
-    key = jax.random.PRNGKey(cfg.runtime.seed)
+    # Run the sampler
     t0 = time.time()
-
-    # Pass the original cfg object
-    result = run_sampler(cfg.sampler.name, cfg, target, key)
-
+    idata, metrics = run_sampler(cfg, target_bundle)
     dt = time.time() - t0
 
-    # Compute the parent target directory and run directory
-    target_root = Path(cfg.store.root) / "targets" / cfg.target_id
-    target_root.mkdir(parents=True, exist_ok=True)
+    # Save into run_dir (no hashing)
+    run_dir = Path(args.run_dir)
+    run_dir.mkdir(parents=True, exist_ok=True)
 
-    # Assert target exists before sampling
-    assert target_root.exists(), f"Missing target at {target_root}"
+    # Analysis
+    analyze_traces(idata, out_dir=run_dir)
 
-    # Generate unique run ID based on hyperparams
-    hp_str = json.dumps(
-        OmegaConf.to_container(cfg.sampler, resolve=True), sort_keys=True
-    )
-    run_hash = md5(hp_str.encode()).hexdigest()[:8]
+    # Log hyperparameters for the manifest
+    sp = OmegaConf.to_container(cfg.sampler, resolve=True)
 
-    # Sampler name is the low-cardinality facet we expose in the folder name
-    run_dir = target_root / f"run_{cfg.sampler.name}_{run_hash}"
-    run_dir.mkdir(exist_ok=True)
-
-    # --- Analysis and Trace Saving (Enhanced Path) ---
-    traces = result.get("traces", {})
-    timings = result.get("timings", {})
-    metrics = {
-        "elapsed_time": dt,
-        "L0": L0,
-    }
-    n_data = X.shape[0]  # Use X loaded from artifact
-    beta = result["beta"]
-
-    if "Ln" in traces:
-        # Determine warmup and recording frequency (needed for analysis)
-        sampler_name = cfg.sampler.name
-        sampler_specific_cfg = getattr(cfg.sampler, sampler_name, {})
-        record_every = 1
-        if sampler_name == "sgld":
-            # SGLD records less frequently
-            record_every = getattr(sampler_specific_cfg, "eval_every", 10)
-            warmup = getattr(sampler_specific_cfg, "warmup", 0)
-            warmup_steps_in_trace = warmup // max(1, record_every)
-        else:
-            # HMC/MCLMC traces are already post-warmup
-            warmup_steps_in_trace = 0
-
-        # Use the new comprehensive analysis function
-        llc_metrics, idata = analyze_traces(
-            traces,
-            L0,
-            n_data=n_data,
-            beta=beta,
-            warmup=warmup_steps_in_trace,
-            timings=timings,
-        )
-
-        metrics.update(llc_metrics)
-        metrics["n_samples"] = traces["Ln"].shape[1] - warmup_steps_in_trace
-
-        # Save traces using ArviZ InferenceData from analyze_traces
-        az.to_netcdf(idata, run_dir / "trace.nc")
-
-        # Create diagnostic plots immediately
-        from lambda_hat.analysis import (
-            create_arviz_diagnostics,
-            create_combined_convergence_plot,
-            create_work_normalized_variance_plot,
-        )
-
-        create_arviz_diagnostics({cfg.sampler.name: idata}, run_dir)
-        create_combined_convergence_plot({cfg.sampler.name: idata}, run_dir)
-        create_work_normalized_variance_plot({cfg.sampler.name: idata}, run_dir)
-    else:
-        print("[WARNING] No 'Ln' found in traces. Analysis and trace saving skipped.")
-
-    # Add any remaining computed metrics from result
-    for k, v in result.items():
-        if k not in ["traces", "timings", "elapsed_time", "beta"]:
-            if isinstance(v, (int, float, str, bool)):
-                metrics[k] = v
-            elif hasattr(v, "item"):
-                metrics[k] = v.item()
-
-    # Save analysis
-    with open(run_dir / "analysis.json", "w") as f:
-        json.dump(metrics, f, indent=2)
-
-    # Extract just the sampler hyperparams (everything under sampler.* except 'name')
-    sp = OmegaConf.to_container(cfg.sampler, resolve=True) or {}
-    if isinstance(sp, dict):
-        sp.pop("name", None)
-        sp.pop("chains", None)  # chains is workflow config, not sampler hyperparams
-
-    # Record in manifest
+    # Manifest entry
     record = {
-        "target_id": cfg.target_id,
+        "target_id": args.target_id,
         "sampler": cfg.sampler.name,
         "hyperparams": sp,
         "dtype64": bool(cfg.jax.enable_x64),
@@ -226,14 +150,9 @@ def run_sampling_logic(cfg: DictConfig) -> None:
         "code_sha": cfg.runtime.code_sha,
         "created_at": time.time(),
     }
-    append_sample_manifest(cfg.store.root, cfg.target_id, record)
+    append_sample_manifest(cfg.store.root, args.target_id, record)
 
     print(f"[sample] done in {dt:.2f}s → {run_dir}")
-
-
-@hydra.main(config_path="../conf/sample", config_name="base", version_base=None)
-def main(cfg: DictConfig) -> None:
-    run_sampling_logic(cfg)
 
 
 if __name__ == "__main__":

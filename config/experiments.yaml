@@ -1,0 +1,11 @@
+store_root: "runs"
+jax_enable_x64: true
+
+targets:
+  - { model: small, data: small, teacher: _null, seed: 42 }
+  - { model: base,  data: base,  teacher: _null, seed: 43,
+      overrides: { training: { steps: 10000 } } }
+
+samplers:
+  - { name: hmc }
+  - { name: sgld, overrides: { step_size: 1e-6, eval_every: 50 }, seed: 12345 }

@@ -10,7 +10,7 @@ import blackjax
 import blackjax.mcmc.integrators as bj_integrators
 
 if TYPE_CHECKING:
-    from lambda_hat.config import SGLDConfig, MCLMCConfig
+    from lambda_hat.config import SGLDConfig
 
 
 # Define Preconditioner State structure
@@ -168,7 +168,6 @@ def inference_loop_extended(
         trace = tree_map(lambda x: x[::aux_every], trace)
 
     return trace
-
 
 
 def run_hmc(
@@ -568,9 +567,9 @@ def run_mclmc(
 
     timings = {
         # Note: This implementation assumes MCLMC adaptation is not used or timed separately.
-        'adaptation': 0.0,
-        'sampling': sampling_time,
-        'total': sampling_time
+        "adaptation": 0.0,
+        "sampling": sampling_time,
+        "total": sampling_time,
     }
 
     return SamplerRunResult(traces=traces, timings=timings)

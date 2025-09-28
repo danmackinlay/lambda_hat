@@ -18,7 +18,7 @@ jax:
 
 # Ensure artifacts root is stable across single runs and multiruns
 store:
-  root: ${hydra:runtime.cwd}/runs
+  root: runs
 
 runtime:
   seed: 12345  # Used for sampler PRNG splitting (Stage B Seed)
@@ -53,5 +53,4 @@ training:
 # Teacher configuration is loaded via config group defaults (teacher: _null)
 
 # --- Dynamic Target ID Resolution ---
-# Exclude volatile elements like code_sha. Ensure 'training' is included.
-target_id: ${fingerprint:${model},${data},${training},${teacher},${target.seed}}
+# Target ID will be passed from Snakemake

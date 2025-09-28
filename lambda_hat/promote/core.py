@@ -6,7 +6,9 @@ import os
 from typing import Dict, List, Tuple
 
 
-def find_run_dirs(runs_root: Path, target_id: str | None, sampler: str | None) -> List[Path]:
+def find_run_dirs(
+    runs_root: Path, target_id: str | None, sampler: str | None
+) -> List[Path]:
     """Find run directories based on target_id and/or sampler filtering."""
     base = runs_root / "targets"
     if target_id:
@@ -21,7 +23,6 @@ def find_run_dirs(runs_root: Path, target_id: str | None, sampler: str | None) -
 
 def find_plot_files(runs_root: Path, sampler: str, plot_name: str) -> List[Path]:
     """Find plot files across all targets for a given sampler."""
-    pattern = runs_root / "targets" / "*" / f"run_{sampler}_*" / "diagnostics" / plot_name
     return list(runs_root.glob(f"targets/*/run_{sampler}_*/diagnostics/{plot_name}"))
 
 
@@ -30,9 +31,6 @@ def _find_plot_files(runs_root: Path, sampler: str, plot_name: str) -> List[Path
     Return list of plot files matching:
       runs/targets/*/run_<sampler>_*/diagnostics/<plot_name>
     """
-    pattern = (
-        runs_root / "targets" / "*" / f"run_{sampler}_*" / "diagnostics" / plot_name
-    )
     return list(runs_root.glob(f"targets/*/run_{sampler}_*/diagnostics/{plot_name}"))
 
 

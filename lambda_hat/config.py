@@ -157,7 +157,7 @@ class SamplerConfig:
 
 @dataclass
 class OutputConfig:
-    """Output and visualization configuration """
+    """Output and visualization configuration"""
 
     save_plots: bool = True
     show_plots: bool = False
@@ -197,4 +197,3 @@ def setup_config():
     # REMOVE ALL OTHER cs.store() CALLS BELOW.
     # Hydra validates YAML presets automatically using the type hints
     # defined in the Config dataclass (e.g., Config.model is ModelConfig).
-

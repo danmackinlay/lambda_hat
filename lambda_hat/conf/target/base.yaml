@@ -10,12 +10,10 @@ jax:
 
 target:
   seed: 42
-  # Exclude volatile elements like code_sha. Ensure 'training' is included.
-  id: ${fingerprint:${model},${data},${training},${teacher},${.seed}}
 
 # Ensure artifacts root is stable across single runs and multiruns
 store:
-  root: ${hydra:runtime.cwd}/runs
+  root: runs
 
 runtime:
   code_sha: ${git_sha:}

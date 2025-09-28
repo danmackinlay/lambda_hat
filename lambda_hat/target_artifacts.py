@@ -39,9 +39,8 @@ def _ensure_dir(p: Path) -> None:
 # Use '::' as a separator, as it's highly unlikely in module/param names.
 _NPZ_SEP = "::"
 
-def _flatten_params_dict(
-    params: Dict[str, Any]
-) -> Dict[str, np.ndarray]:
+
+def _flatten_params_dict(params: Dict[str, Any]) -> Dict[str, np.ndarray]:
     """Converts Haiku params {'module': {'param': arr}} to flat NPZ format."""
     flat = {}
     # params is {'module_name': {'param_name': array}, ...}
@@ -52,11 +51,13 @@ def _flatten_params_dict(
 
         for param_name, param_value in module_params.items():
             # Basic check that the leaf is an array-like object
-            if hasattr(param_value, 'shape'):
+            if hasattr(param_value, "shape"):
                 key = f"{module_name}{_NPZ_SEP}{param_name}"
                 flat[key] = np.asarray(param_value)  # move to host np
             else:
-                print(f"Warning: Skipping non-array parameter during save: {module_name}/{param_name}")
+                print(
+                    f"Warning: Skipping non-array parameter during save: {module_name}/{param_name}"
+                )
     return flat
 
 
@@ -67,7 +68,9 @@ def _unflatten_params_dict(flat: Dict[str, np.ndarray]) -> Dict[str, Any]:
     for key, value in flat.items():
         if _NPZ_SEP not in key:
             # Since backwards compatibility is not required, we fail fast on old formats.
-            raise ValueError(f"Invalid key format in NPZ: {key}. Expected 'module::param'. Artifact may be legacy format.")
+            raise ValueError(
+                f"Invalid key format in NPZ: {key}. Expected 'module::param'. Artifact may be legacy format."
+            )
 
         module_name, param_name = key.split(_NPZ_SEP, 1)
         if module_name not in params:
@@ -91,6 +94,46 @@ def _hash_arrays(flat: Dict[str, np.ndarray]) -> str:
 
 
 # ---------- Public API ----------
+
+
+# New explicit saver that does NOT reconstruct paths
+def save_target_artifact_explicit(out_dir, X, Y, params0, meta):
+    """Save target artifact to explicit directory (used by new Snakemake entrypoints)."""
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # Arrays
+    np.savez_compressed(out_dir / "data.npz", X=np.asarray(X), Y=np.asarray(Y))
+
+    # Params
+    flat = _flatten_params_dict(params0)
+    np.savez_compressed(out_dir / "params.npz", **flat)
+
+    # Meta
+    with open(out_dir / "meta.json", "w") as f:
+        json.dump(asdict(meta), f, indent=2, sort_keys=True)
+
+    return out_dir
+
+
+# Optional explicit loader for target dir
+def load_target_artifact_from_dir(target_dir):
+    """Load target artifact directly from target directory."""
+    target_dir = Path(target_dir)
+    if not target_dir.exists():
+        raise FileNotFoundError(f"Target directory not found: {target_dir}")
+
+    data = np.load(target_dir / "data.npz")
+    X, Y = data["X"], data["Y"]
+
+    pz = np.load(target_dir / "params.npz")
+    flat = {k: pz[k] for k in pz.files}
+    params = _unflatten_params_dict(flat)
+
+    with open(target_dir / "meta.json") as f:
+        meta = json.load(f)
+
+    return X, Y, params, meta, target_dir
 
 
 def save_target_artifact(

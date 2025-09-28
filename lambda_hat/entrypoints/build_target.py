@@ -1,20 +1,17 @@
-from __future__ import annotations
-
+# lambda_hat/entrypoints/build_target.py
+import argparse
 import time
 from typing import Dict
 
 import jax
-from omegaconf import DictConfig, OmegaConf
-import hydra
+from omegaconf import OmegaConf
 
-# Ensure resolvers are registered before Hydra composes config.
 from lambda_hat import hydra_support  # noqa: F401
 from lambda_hat.target_artifacts import (
     TargetMeta,
-    save_target_artifact,
+    save_target_artifact_explicit,
     _hash_arrays,
     _flatten_params_dict,
-    load_target_artifact,
 )
 from lambda_hat.targets import build_target
 
@@ -33,52 +30,36 @@ def _pkg_versions() -> Dict[str, str]:
     }
 
 
+def main():
+    ap = argparse.ArgumentParser("lambda-hat-build-target")
+    ap.add_argument("--config-yaml", required=True, help="Path to composed YAML config")
+    ap.add_argument("--target-id", required=True, help="Target ID string")
+    ap.add_argument(
+        "--target-dir", required=True, help="Directory where to write artifacts"
+    )
+    args = ap.parse_args()
 
-@hydra.main(config_path="../conf", config_name="workflow", version_base=None)
-def main(cfg: DictConfig) -> None:
-    # Resolve the target ID (prefer unified workflow's 'target_id', fall back to 'target.id')
-    try:
-        target_id = cfg.get("target_id") or cfg.target.id
-    except Exception:
-        print(
-            "Critical Error: Failed to resolve target ID (expected 'target_id' or 'target.id')."
-        )
-        raise
+    cfg = OmegaConf.load(args.config_yaml)
 
-    # --- IDEMPOTENCY CHECK ---
-    try:
-        # Attempt to load the artifact using the resolved target_id
-        _, _, _, _, tdir = load_target_artifact(cfg.store.root, target_id)
-        print(
-            f"[build-target] Target {target_id} already exists at {tdir}. Skipping build."
-        )
-        return  # Exit successfully
-    except FileNotFoundError:
-        # If not found, proceed with building
-        print(f"[build-target] Building new target {target_id}...")
-    except Exception as e:
-        # Handle potential corruption or other I/O errors during load check
-        # We can safely print target_id here as it is already resolved.
-        print(
-            f"[build-target] Error checking for existing target {target_id}: {e}. Proceeding with build."
-        )
-    # -------------------------
+    # Fail-fast validation
+    assert "target" in cfg and "seed" in cfg.target, "cfg.target.seed missing"
+    assert "jax" in cfg and "enable_x64" in cfg.jax, "cfg.jax.enable_x64 missing"
+    assert "store" in cfg and "root" in cfg.store, "cfg.store.root missing"
 
-    # Precision
-    if cfg.jax.enable_x64:
-        jax.config.update("jax_enable_x64", True)
+    jax.config.update("jax_enable_x64", bool(cfg.jax.enable_x64))
 
     print("=== LLC: Build Target ===")
+    print(f"Target ID: {args.target_id}")
+    print(f"Target Dir: {args.target_dir}")
     print(OmegaConf.to_yaml(cfg, resolve=True))
 
     # RNG
-    key = jax.random.PRNGKey(cfg.target.seed)
+    key = jax.random.PRNGKey(int(cfg.target.seed))
 
     # Build & train
-    # Directly use the output of build_target (now guaranteed F32)
     target_bundle, used_model_widths, used_teacher_widths = build_target(key, cfg)
 
-    # Extract components for saving (already in F32)
+    # Extract components for saving
     X = target_bundle.X
     Y = target_bundle.Y
     theta = target_bundle.params0
@@ -121,7 +102,7 @@ def main(cfg: DictConfig) -> None:
         teacher_cfg["widths"] = used_teacher_widths
 
     meta = TargetMeta(
-        target_id=target_id,
+        target_id=args.target_id,
         created_at=time.time(),
         code_sha=cfg.runtime.code_sha,
         jax_enable_x64=bool(cfg.jax.enable_x64),
@@ -137,9 +118,9 @@ def main(cfg: DictConfig) -> None:
         hostname=cfg.runtime.hostname,
     )
 
-    # Write artifact
-    out_dir = save_target_artifact(cfg.store.root, target_id, X, Y, theta, meta)
-    print(f"[build-target] wrote {out_dir}")
+    # Write exactly where Snakemake told us
+    save_target_artifact_explicit(args.target_dir, X, Y, theta, meta)
+    print(f"[build-target] wrote {args.target_dir}")
     print(f"[build-target] L0 = {L0:.6f}")
 
 

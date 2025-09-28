@@ -19,13 +19,13 @@ dependencies = [
     "blackjax==1.2.5",
     "dm-haiku>=0.0.10",
     "flax>=0.12.0",
-    "hydra-core>=1.3.2",
-    "hydra-submitit-launcher>=1.2.0",
     "matplotlib>=3.7.0",
     "numpy>=1.24.0",
+    "omegaconf>=2.3.0",
     "optax>=0.2.5",
     "pyyaml>=6.0",
     "scipy>=1.11",
+    "snakemake>=9.11.6",
 ]
 
 [project.optional-dependencies]
@@ -45,6 +45,7 @@ dev = [
     "marimo>=0.15.2",
     "pytest>=8.4.2",
     "ruff>=0.13.1",
+    "pytest>=8.4.2",
 ]
 
 [project.scripts]
@@ -52,3 +53,4 @@ lambda-hat-promote = "lambda_hat.entrypoints.promote:main_promote"
 lambda-hat-build-target = "lambda_hat.entrypoints.build_target:main"
 lambda-hat-sample = "lambda_hat.entrypoints.sample:main"
 lambda-hat-workflow = "lambda_hat.entrypoints.workflow:main_workflow"
+

@@ -66,4 +66,3 @@ def make_loss_fns(
         raise ValueError(f"Unknown loss: {loss_type}")
 
     return full, minibatch
-
