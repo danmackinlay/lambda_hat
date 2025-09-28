@@ -6,6 +6,7 @@ import shutil
 from pathlib import Path
 from typing import Dict, List, Tuple
 
+DEFAULT_FILENAME = "llc_convergence_combined.png"
 
 def find_run_dirs(runs_root: Path, target_id: str | None, sampler: str | None) -> List[Path]:
     """Find run directories based on target_id and/or sampler filtering."""

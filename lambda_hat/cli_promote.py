@@ -1,36 +1,32 @@
 #!/usr/bin/env python3
-"""
-Entry point for lambda-hat-promote command.
-"""
+"""Entry point for lambda-hat-promote: pick the newest
+`llc_convergence_combined.png` under outputs/ or multirun/
+and copy/symlink it into an assets directory for README use."""
 
 import argparse
 from pathlib import Path
-from lambda_hat.promote.core import promote
+from lambda_hat.promote.core import promote_latest_combined
 
 
 def main() -> None:
-    """Entry point for lambda-hat-promote command."""
     p = argparse.ArgumentParser("lambda-hat-promote")
-    p.add_argument("--runs-root", default="outputs", type=Path,
-                   help="Root directory for run outputs (default: outputs)")
-    p.add_argument("--samplers", default="sgld,hmc,mclmc")
-    p.add_argument("--outdir", default="assets", type=Path)
-    p.add_argument(
-        "--plot-name",
-        default="sgld_trace.png",
-        help="Which plot to copy from diagnostics/ (filename only)",
-    )
-    p.add_argument("--max-dirs", type=int, default=5000,
-                   help="Max run directories to scan before bailing (default: 5000)")
-    p.add_argument("--verbose", action="store_true",
-                   help="Enable verbose output showing scan progress")
+    p.add_argument("--assets-dir", default="assets/readme", type=Path,
+                   help="Destination dir for README assets")
+    p.add_argument("--filename", default="llc_convergence_combined.png",
+                   help="Artifact filename to promote")
+    p.add_argument("--mode", choices=["copy", "link"], default="copy",
+                   help="Copy file (default) or create a symlink")
+    p.add_argument("--roots", nargs="*", default=["outputs", "multirun"],
+                   help="Root directories to search (in order)")
     args = p.parse_args()
 
-    samplers = [s.strip() for s in args.samplers.split(",") if s.strip()]
-    promote(args.runs_root, samplers, args.outdir,
-            plot_name=args.plot_name,
-            max_dirs=args.max_dirs,
-            verbose=args.verbose)
+    roots = [Path(r) for r in args.roots]
+    promote_latest_combined(
+        assets_dir=args.assets_dir,
+        filename=args.filename,
+        mode=args.mode,
+        roots=roots,
+    )
 
 
 if __name__ == "__main__":
