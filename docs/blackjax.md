@@ -1,6 +1,6 @@
 # BlackJAX Usage Notes
 
-This repository uses BlackJAX (pinned to version 1.2.5) for MCMC sampling. The implementation focuses on clean, idiomatic JAX loops using `jax.lax.scan` within `llc/sampling.py`.
+This repository uses BlackJAX (pinned to version 1.2.5) for MCMC sampling. The implementation focuses on clean, idiomatic JAX loops using `jax.lax.scan` within `lambda_hat/sampling.py`.
 
 ## RNG API Guidelines
 

@@ -1,98 +1,196 @@
 # Configuration Details
 
-This project uses Hydra for configuration. The configuration is structured and composable.
+This project uses **OmegaConf** to parse YAML configuration files, orchestrated by **Snakemake**. Hydra is not used. Configs are merged manually in the `Snakefile`.
 
-## Structure
+## How Configs Are Composed
 
-The configuration is split into groups, defined in `conf/`:
+- **Presets** live under `lambda_hat/conf/` (e.g., `model/base.yaml`, `data/small.yaml`).
+- The **`Snakefile`** merges presets to build two types of configs:
+  - **Stage A** (target build): `model` + `data` + `teacher` + `training`
+  - **Stage B** (sampling run): `sampler` + `posterior` + target reference
+- **User experiments** are defined in `config/experiments.yaml`
 
-- `config.yaml`: Main configuration and defaults.
-- `model/`: Model architecture settings.
-- `data/`: Data generation settings.
-- `sampler/`: Sampler settings (HMC, SGLD, MCLMC parameters).
+## User-Facing Experiments
 
-You can create new presets by adding YAML files to these directories.
+Define parameter sweeps in `config/experiments.yaml`:
 
-## Key Configuration Groups
+```yaml
+store_root: "runs"
+jax_enable_x64: true
 
-### Target (`target`)
+targets:
+  - { model: small, data: small, teacher: _null, seed: 42 }
+  - { model: base,  data: base,  teacher: _null, seed: 43 }
+  - { model: wide,  data: large, teacher: _null, seed: 44,
+      overrides: { training: { steps: 10000 } } }
 
-Controls the type of target function for LLC estimation.
-
-- `target=mlp`: Multi-Layer Perceptron (default) using Haiku
-- `target=quadratic`: Simple quadratic target L_n(θ) = 0.5||θ||² for testing
-
-**Example:**
-```bash
-uv run lambda-hat-workflow target=quadratic quad_dim=4
+samplers:
+  - { name: hmc }
+  - { name: sgld, overrides: { step_size: 1e-6, eval_every: 50 }, seed: 12345 }
+  - { name: mclmc, overrides: { draws: 5000 } }
 ```
 
-### Model (`model.*`)
+Then run the full pipeline:
 
-Controls the architecture of the student MLP (when `target=mlp`).
-
-- `model.depth`: Number of hidden layers.
-- `model.target_params`: Approximate total number of parameters (widths are inferred).
-- `model.activation`: Activation function (e.g., `relu`, `tanh`, `gelu`, `identity` for deep-linear).
-
-**Example:**
 ```bash
-uv run lambda-hat-workflow model.depth=4 model.target_params=5000 model.activation=identity
+# View the DAG
+uv run snakemake -n
+
+# Execute locally with 4 cores
+uv run snakemake -j 4
+
+# Execute on HPC with a profile
+uv run snakemake --profile slurm -j 100
 ```
 
-### Data (`data.*`)
+## Configuration Groups
 
-Controls the synthetic data generation process using a teacher-student setup.
+### Model Presets (`lambda_hat/conf/model/`)
 
-- `data.n_data`: Number of data points.
-- `data.x_dist`: Input distribution:
-  - `gauss_iso`: Isotropic Gaussian
-  - `gauss_aniso`: Anisotropic Gaussian
-  - `mixture`: Mixture of Gaussians
-  - `lowdim_manifold`: Low-dimensional manifold
-  - `heavy_tail`: Heavy-tailed distribution
-- `data.noise_model`: Noise model:
-  - `gauss`: Gaussian noise
-  - `hetero`: Heteroscedastic noise
-  - `student_t`: Student-t noise
-  - `outliers`: Noise with outliers
+Controls neural network architecture for target building.
 
-**Example:**
-```bash
-uv run lambda-hat-workflow data.n_data=10000 data.noise_model=student_t data.x_dist=mixture
+Available presets:
+- `small.yaml`: Small networks for quick testing
+- `base.yaml`: Standard architecture
+- `wide.yaml`: Wider networks (if exists)
+
+Key parameters:
+- `depth`: Number of hidden layers
+- `target_params`: Approximate total number of parameters (widths are inferred)
+- `activation`: Activation function (`relu`, `tanh`, `gelu`, `identity`)
+- `bias`: Whether to use bias terms
+- `skip_connections`: Whether to use residual connections
+
+**Example new preset** (`lambda_hat/conf/model/deep.yaml`):
+```yaml
+depth: 6
+target_params: 50000
+activation: relu
+bias: true
+skip_connections: true
 ```
 
-### Training (`training.*`)
+### Data Presets (`lambda_hat/conf/data/`)
 
-Controls the ERM (Empirical Risk Minimization) training process.
+Controls synthetic data generation using teacher-student setup.
 
-- `training.optimizer`: Optimizer (default: `adam`)
-- `training.learning_rate`: Learning rate for optimization
-- `training.erm_steps`: Number of training steps
+Available presets:
+- `small.yaml`: Small datasets for testing
+- `base.yaml`: Standard dataset size
 
-### Posterior (`posterior.*`)
+Key parameters:
+- `n_data`: Number of data points
+- `x_dist`: Input distribution (`gauss_iso`, `gauss_aniso`, `mixture`, `lowdim_manifold`, `heavy_tail`)
+- `noise_model`: Noise model (`gauss`, `hetero`, `student_t`, `outliers`)
+- `noise_scale`: Noise level
 
-Controls the posterior configuration for LLC estimation.
-
-- `posterior.loss`: Loss function (e.g., `mse`)
-- `posterior.beta_mode`: Temperature schedule (e.g., `1_over_log_n`)
-- `posterior.beta0`: Base temperature parameter
-- `posterior.gamma`: Localization strength around w*
-
-### Sampler (`sampler.*`)
-
-Controls the parameters for the MCMC samplers.
-
-- `sampler.chains`: Number of parallel chains.
-- `sampler.hmc.draws`: Number of HMC draws.
-- `sampler.hmc.warmup`: Number of HMC warmup steps.
-- `sampler.sgld.steps`: Total number of SGLD steps.
-- `sampler.sgld.step_size`: SGLD step size.
-- `sampler.sgld.batch_size`: Minibatch size for SGLD.
-- `sampler.mclmc.draws`: Number of MCLMC draws.
-
-**Example:**
-```bash
-uv run lambda-hat-workflow sampler.chains=8 sampler.hmc.draws=5000 sampler.sgld.step_size=1e-6
+**Example new preset** (`lambda_hat/conf/data/large.yaml`):
+```yaml
+n_data: 100000
+x_dist: mixture
+mixture_k: 8
+noise_model: student_t
+noise_scale: 0.05
 ```
 
+### Sampler Presets (`lambda_hat/conf/sample/sampler/`)
+
+Controls MCMC sampler parameters.
+
+Available presets:
+- `hmc.yaml`: Hamiltonian Monte Carlo
+- `sgld.yaml`: Stochastic Gradient Langevin Dynamics
+- `mclmc.yaml`: MCLMC sampler
+
+**HMC parameters:**
+- `draws`: Number of samples to draw
+- `warmup`: Number of warmup steps
+- `num_integration_steps`: Leapfrog steps per sample
+- `step_size`: Step size (tuned automatically if `adapt_step_size: true`)
+- `dtype`: Precision (`float64` recommended)
+
+**SGLD parameters:**
+- `steps`: Total number of gradient steps
+- `warmup`: Number of warmup steps
+- `batch_size`: Minibatch size
+- `step_size`: Step size (needs manual tuning)
+- `dtype`: Precision (`float32` for efficiency)
+
+### Teacher Presets (`lambda_hat/conf/teacher/`)
+
+Controls teacher network architecture (for teacher-student data generation).
+
+- `_null.yaml`: No teacher (direct data generation)
+- Custom teacher configs can specify architecture
+
+## Adding New Configurations
+
+### 1. Create New Presets
+
+Add a new file under the appropriate directory:
+
+```bash
+# New model architecture
+echo "depth: 8
+target_params: 100000
+activation: gelu" > lambda_hat/conf/model/huge.yaml
+
+# New data configuration
+echo "n_data: 200000
+x_dist: heavy_tail
+noise_model: outliers" > lambda_hat/conf/data/challenging.yaml
+```
+
+### 2. Use in Experiments
+
+Reference the new presets in `config/experiments.yaml`:
+
+```yaml
+targets:
+  - { model: huge, data: challenging, seed: 99 }
+```
+
+### 3. Override Specific Parameters
+
+Use the `overrides` section for one-off parameter changes:
+
+```yaml
+targets:
+  - { model: base, data: base, seed: 42,
+      overrides: {
+        model: { activation: identity },
+        training: { steps: 20000, learning_rate: 0.0001 }
+      }}
+
+samplers:
+  - { name: sgld,
+      overrides: {
+        step_size: 5e-7,
+        batch_size: 128,
+        eval_every: 200
+      }}
+```
+
+## Target and Run IDs
+
+- **Target ID**: Content-addressed hash of Stage A config (model + data + training + seed)
+- **Run ID**: Hash of Stage B config (sampler + hyperparameters)
+- Same config → same ID → deterministic reproducibility
+
+Example artifacts:
+```
+runs/targets/tgt_abc123456789/meta.json                    # Target metadata
+runs/targets/tgt_abc123456789/run_hmc_xy789abc/analysis.json # HMC run results
+runs/targets/tgt_abc123456789/run_sgld_mn456def/analysis.json # SGLD run results
+```
+
+## Precision Control
+
+Set precision globally in `config/experiments.yaml`:
+
+```yaml
+jax_enable_x64: true   # Use float64 (recommended for HMC/MCLMC)
+jax_enable_x64: false  # Use float32 (faster, good for SGLD)
+```
+
+Individual samplers can override with `dtype` parameter in their preset files.

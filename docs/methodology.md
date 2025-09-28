@@ -35,7 +35,7 @@ $$
 \hat{\lambda} \approx n\beta(\overline{L} - L_0)
 $$
 
-This calculation is implemented in `llc/analysis.py`.
+This calculation is implemented in `lambda_hat/analysis.py`.
 
 ## Stochastic Gradient Langevin Dynamics (SGLD) Algorithms
 

@@ -28,10 +28,6 @@ uv run ruff format
 uv run ruff check --fix
 ```
 
-**Environment Variables:**
-- `HYDRA_FULL_ERROR=1` - Full error traces for debugging
-- `LAMBDA_HAT_CODE_VERSION=test123` - Version identifier for runs
-
 ## Architecture Overview
 
 **Two-Stage LLC Estimation Pipeline:**
@@ -57,7 +53,6 @@ uv run ruff check --fix
 **No defensive coding or back compat:**
 - prefer fail-fast errors.
 - we pin package versions rather than introspecting APIs or versions
-
 
 **MCMC:**
 - JAX 64-bit precision for HMC/MCLMC: `jax.config.update("jax_enable_x64", True)`

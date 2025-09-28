@@ -8,13 +8,21 @@ The SGLD loop is implemented in `lambda_hat/sampling.py`. It uses a custom kerne
 
 ## Usage
 
-SGLD is run by default. You can configure its parameters via Hydra overrides under the `sampler.sgld` group.
+SGLD is configured via `config/experiments.yaml` using the sampler configuration system.
 
+```yaml
+# Example: Running with specific SGLD settings in config/experiments.yaml
+samplers:
+  - name: sgld
+    overrides:
+      steps: 20000
+      batch_size: 512
+      step_size: 1e-7
+```
+
+Then execute:
 ```bash
-# Example: Running with specific SGLD settings
-uv run lambda-hat-workflow sampler.sgld.steps=20000 \
-                sampler.sgld.batch_size=512 \
-                sampler.sgld.step_size=1e-7
+uv run snakemake -j 4
 ```
 
 ## Configuration Options

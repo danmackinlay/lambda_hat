@@ -1,124 +1,228 @@
-# Output Management and Directory Structure
+# Output Layout
 
-This project relies on Hydra to manage output directories for experiments. Hydra ensures that each run has a unique, isolated working directory, preventing conflicts and maintaining reproducibility.
+This project uses **Snakemake** for orchestration, creating a structured, content-addressed artifact layout. Unlike timestamp-based directories, artifacts are organized by deterministic IDs for reproducibility.
 
 ## Directory Structure
 
-By default, Hydra organizes outputs based on the date and time the experiment was launched.
-
-### Single Runs
-
-When running a single configuration:
-
-```bash
-uv run lambda-hat-workflow model=small
-```
-
-The outputs are saved in the `outputs/` directory:
+The `runs/` directory contains all experimental artifacts:
 
 ```
-outputs/
-└── YYYY-MM-DD/
-    └── HH-MM-SS/
-        ├── config.yaml           # Resolved configuration for this run (saved by llc/artifacts.py)
-        ├── metrics_summary.csv   # Results
-        ├── .hydra/               # Hydra internal logs and configuration copies
-        └── train.log             # Application log
+runs/
+└── targets/
+    ├── _catalog.jsonl               # Registry of all targets
+    └── tgt_abc123456789/            # One target artifact
+        ├── meta.json                # Metadata (config, dims, precision, L0)
+        ├── data.npz                 # Training data (X, Y)
+        ├── params.npz               # Trained parameters (θ*)
+        ├── _runs.jsonl              # Manifest of Stage-B runs
+        ├── run_hmc_xy789abc/        # One sampler run
+        │   ├── trace.nc             # ArviZ trace (preferred format)
+        │   ├── analysis.json        # LLC estimates and metrics
+        │   └── diagnostics/
+        │       ├── trace.png        # Trace plots
+        │       ├── rank.png         # Rank plots
+        │       └── running_llc.png  # Running LLC estimates
+        ├── run_sgld_mn456def/       # Another sampler run
+        │   ├── trace.nc
+        │   ├── analysis.json
+        │   └── diagnostics/
+        └── run_mclmc_gh901234/      # Yet another sampler run
+            └── ...
 ```
 
-The application code (`llc/artifacts.py`) saves artifacts relative to the current working directory, which Hydra sets to this unique output path.
+## Content-Addressed IDs
 
-### Multi-Run Sweeps
+### Target IDs
 
-When running a parameter sweep using `--multirun` (or `-m`):
+**Target IDs** are deterministic SHA256 hashes of the Stage A configuration:
 
-```bash
-uv run lambda-hat-workflow -m model=small,base
+- `tgt_abc123456789` = hash(model + data + training + seed)
+- **Same config → same ID → identical artifacts**
+- Target building is expensive, so targets are cached and reused
+
+### Run IDs
+
+**Run IDs** are SHA1 hashes of the Stage B configuration:
+
+- `xy789abc` = hash(sampler + hyperparameters + runtime_seed)
+- **Same sampler config → same ID → reproducible runs**
+- Multiple samplers can run on the same target
+
+## Manifest Files
+
+### `_catalog.jsonl`
+
+Registry of all targets in the store:
+
+```jsonl
+{"target_id": "tgt_abc123456789", "created_at": 1672531200.0, "model": "base", "data": "small", "seed": 42}
+{"target_id": "tgt_def987654321", "created_at": 1672531800.0, "model": "wide", "data": "large", "seed": 43}
 ```
 
-The outputs are saved in the `multirun/` directory:
+### `_runs.jsonl`
 
-```
-multirun/
-└── YYYY-MM-DD/
-    └── HH-MM-SS/
-        ├── 0/                    # Output directory for Job 0 (model=small)
-        ├── 1/                    # Output directory for Job 1 (model=base)
-        ├── multirun.yaml         # Overview of the sweep parameters
-        └── .hydra/
+Per-target manifest of sampling runs:
+
+```jsonl
+{"target_id": "tgt_abc123456789", "sampler": "hmc", "hyperparams": {...}, "walltime_sec": 120.5, "artifact_path": "runs/targets/tgt_abc123456789/run_hmc_xy789abc", "created_at": 1672531300.0}
+{"target_id": "tgt_abc123456789", "sampler": "sgld", "hyperparams": {...}, "walltime_sec": 450.2, "artifact_path": "runs/targets/tgt_abc123456789/run_sgld_mn456def", "created_at": 1672531400.0}
 ```
 
-## Customizing Output Paths
+## Key Files
 
-You can customize the output directory structure using Hydra configuration overrides.
+### `meta.json` (Target Metadata)
 
-```bash
-# Example: Organize by experiment name instead of timestamp
-uv run lambda-hat-workflow +experiment_name=baseline_test \
-    hydra.run.dir=outputs/\${experiment_name}/\${now:%Y-%m-%d_%H-%M-%S}
+Contains everything needed to reproduce and validate a target:
+
+```json
+{
+  "target_id": "tgt_abc123456789",
+  "created_at": 1672531200.0,
+  "code_sha": "a1b2c3d4e5f6",
+  "jax_enable_x64": true,
+  "pkg_versions": {"jax": "0.7.1", "blackjax": "1.2.5", ...},
+  "seed": 42,
+  "model_cfg": {"depth": 3, "widths": [300, 200, 100], "activation": "relu", ...},
+  "data_cfg": {"n_data": 20000, "noise_scale": 0.1, ...},
+  "training_cfg": {"optimizer": "adam", "steps": 5000, ...},
+  "dims": {"n": 20000, "d": 32, "p": 93501},
+  "metrics": {"L0": 0.045123}
+}
 ```
 
-## Reproducibility and Rerunning Experiments
+### `analysis.json` (Run Results)
 
-Hydra does not automatically cache results. If you run the same command twice, Hydra will create two separate output directories, and the experiment will be executed again.
+Contains LLC estimates and diagnostics for one sampling run:
 
-To reproduce an experiment exactly, you can use the configuration saved in the output directory of a previous run.
-
-```bash
-# Rerun using the configuration from a previous run
-# Note: Point config-dir to the .hydra subdirectory where the run's configs are stored
-uv run lambda-hat-workflow --config-dir outputs/YYYY-MM-DD/HH-MM-SS/.hydra/
+```json
+{
+  "llc_mean": 12.34,
+  "llc_std": 0.56,
+  "ess": 1234.5,
+  "rhat": 1.01,
+  "total_fges": 10000,
+  "walltime_sec": 120.5,
+  "sampler_config": {"draws": 1000, "warmup": 200, ...}
+}
 ```
 
 ## Aggregating Results
 
-After a multi-run sweep completes, the results (e.g., `metrics_summary.csv`) are scattered across the individual job directories (0/, 1/, ...). You will need to aggregate these results for analysis.
+Use Python to aggregate results across multiple runs:
 
 ```python
-# Example aggregation script snippet (Python/Pandas)
+import json
 import pandas as pd
 from pathlib import Path
-from omegaconf import OmegaConf
 
-def aggregate_results(sweep_dir):
-    sweep_path = Path(sweep_dir)
+def aggregate_results(runs_root="runs"):
+    runs_path = Path(runs_root)
     results = []
 
-    for job_dir in sweep_path.iterdir():
-        if job_dir.is_dir() and job_dir.name.isdigit():
-            metrics_file = job_dir / 'metrics_summary.csv'
-            # We load the config saved by llc/artifacts.py
-            config_file = job_dir / 'config.yaml'
+    for target_dir in (runs_path / "targets").iterdir():
+        if not target_dir.is_dir() or not target_dir.name.startswith("tgt_"):
+            continue
 
-            if metrics_file.exists() and config_file.exists():
-                # Load metrics (CSV is indexed by sampler name)
-                metrics = pd.read_csv(metrics_file, index_col=0)
-                metrics_flat = metrics.to_dict('index')
+        # Load target metadata
+        meta_file = target_dir / "meta.json"
+        if not meta_file.exists():
+            continue
 
-                # Load config using OmegaConf
-                config = OmegaConf.load(config_file)
+        with open(meta_file) as f:
+            meta = json.load(f)
 
-                # Extract key parameters (customize as needed)
-                record = {
-                    'job_id': job_dir.name,
-                    'n_data': config.data.n_data,
-                    'target_params': config.model.target_params,
-                    'seed': config.seed,
-                }
+        # Find all sampling runs
+        for run_dir in target_dir.iterdir():
+            if not run_dir.is_dir() or not run_dir.name.startswith("run_"):
+                continue
 
-                # Add LLC means and ESS for each sampler
-                for sampler, data in metrics_flat.items():
-                    record[f'{sampler}_llc_mean'] = data.get('llc_mean')
-                    record[f'{sampler}_ess'] = data.get('ess')
+            analysis_file = run_dir / "analysis.json"
+            if not analysis_file.exists():
+                continue
 
-                results.append(record)
+            with open(analysis_file) as f:
+                analysis = json.load(f)
 
-    if not results:
-        return pd.DataFrame()
+            # Combine target and run information
+            record = {
+                "target_id": meta["target_id"],
+                "model": meta["model_cfg"].get("depth", "unknown"),
+                "n_data": meta["data_cfg"]["n_data"],
+                "target_params": meta["dims"]["p"],
+                "L0": meta["metrics"]["L0"],
+                "seed": meta["seed"],
+                "sampler": run_dir.name.split("_")[1],  # Extract from run_hmc_xyz
+                "llc_mean": analysis["llc_mean"],
+                "llc_std": analysis["llc_std"],
+                "ess": analysis["ess"],
+                "rhat": analysis["rhat"],
+                "walltime_sec": analysis["walltime_sec"],
+            }
+            results.append(record)
 
-    df = pd.DataFrame(results).sort_values(by='job_id').reset_index(drop=True)
-    return df
+    return pd.DataFrame(results)
 
-# Usage:
-# df_summary = aggregate_results('multirun/YYYY-MM-DD/HH-MM-SS')
+# Usage
+df = aggregate_results()
+print(df.groupby(["sampler", "n_data"])["llc_mean"].describe())
+```
+
+## Reproducibility
+
+### Exact Reproduction
+
+Same `config/experiments.yaml` → same target and run IDs → identical results:
+
+```bash
+# These runs are deterministic and cached
+uv run snakemake runs/targets/tgt_abc123456789/meta.json
+uv run snakemake runs/targets/tgt_abc123456789/run_hmc_xy789abc/analysis.json
+```
+
+### Forcing Reruns
+
+Force rebuild of targets or sampling runs:
+
+```bash
+# Force rebuild specific target
+uv run snakemake --forcerun build_target runs/targets/tgt_abc123456789/meta.json
+
+# Force rerun specific sampler
+uv run snakemake --forcerun run_sampler runs/targets/tgt_abc123456789/run_hmc_xy789abc/analysis.json
+
+# Force rerun all samplers (but not targets)
+uv run snakemake --forcerun run_sampler -j 4
+```
+
+### Partial Runs
+
+Run specific outputs:
+
+```bash
+# Build only targets (no sampling)
+uv run snakemake "runs/targets/*/meta.json" -j 4
+
+# Run only HMC (no SGLD)
+uv run snakemake "runs/targets/*/run_hmc_*/analysis.json" -j 4
+
+# Run specific target-sampler combination
+uv run snakemake runs/targets/tgt_abc123456789/run_hmc_xy789abc/analysis.json
+```
+
+## Storage Considerations
+
+- **Targets are expensive**: Neural network training, large datasets
+- **Runs are cheaper**: MCMC on pre-trained targets
+- **Traces can be large**: Consider `--profile` with storage limits on HPC
+- **Promotion**: Use `lambda-hat-promote` to copy key plots to stable locations
+
+Example storage usage:
+```
+runs/targets/tgt_abc123456789/
+├── meta.json           # ~10 KB
+├── data.npz           # ~10 MB (for n_data=20k)
+├── params.npz         # ~1 MB (for 100k params)
+└── run_hmc_xy789abc/
+    ├── trace.nc       # ~50 MB (1000 draws × 100k params)
+    └── analysis.json  # ~5 KB
 ```
