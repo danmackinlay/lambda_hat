@@ -2,9 +2,7 @@
 
 In [Singular Learning Theory (SLT)](https://singularlearningtheory.com), the **Local Learning Coefficient (LLC)** quantifies the effective local dimensionality of a model around a trained optimum.
 
-![Hamiltonian Monte Carlo](assets/hmc.png)
-![Microcanonical Langevin Monte Carlo](assets/mclmc.png)
-![Stochastic Gradient Langevin Dynamics](assets/sgld.png)
+![](assets/readme/llc_convergence_combined.png)
 
 This repo provides benchmark estimators of LLC on small but non-trivial neural networks, using standard industrial tooling:
 
