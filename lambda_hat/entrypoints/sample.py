@@ -1,15 +1,21 @@
 # lambda_hat/entrypoints/sample.py
 import argparse
+import json
 import time
 from pathlib import Path
 
 import jax
 from omegaconf import OmegaConf
 
-from lambda_hat.analysis import analyze_traces
+from lambda_hat.analysis import (
+    analyze_traces,
+    create_arviz_diagnostics,
+    create_combined_convergence_plot,
+    create_work_normalized_variance_plot,
+)
 from lambda_hat.config import validate_teacher_cfg
 from lambda_hat.losses import as_dtype, make_loss_fns
-from lambda_hat.models import build_mlp_forward_fn
+from lambda_hat.models import build_mlp_forward_fn, count_params
 from lambda_hat.sampling_runner import run_sampler
 from lambda_hat.target_artifacts import append_sample_manifest, load_target_artifact
 from lambda_hat.targets import TargetBundle
@@ -87,13 +93,6 @@ def main():
     X_f32 = as_dtype(X, "float32")
     Y_f32 = as_dtype(Y, "float32")
 
-    # Guard: Use model.apply directly.
-    try:
-        test_key = jax.random.PRNGKey(0)  # Dummy key for model validation
-        _ = model.apply(params_f32, test_key, X_f32[:1])
-    except Exception as e:
-        raise RuntimeError(f"Model/params mismatch for target {args.target_id}: {e}")
-
     # Determine loss type from Stage B config (if specified) or from metadata
     loss_type = OmegaConf.select(cfg, "posterior.loss") or "mse"
 
@@ -102,8 +101,8 @@ def main():
     noise_scale = data_cfg.get("noise_scale", 0.1)
     student_df = data_cfg.get("student_df", 4.0)
 
-    # Create loss functions in f32 (precision cast dynamically in sampling_runner)
-    loss_full_f32, loss_mini_f32 = make_loss_fns(
+    # Loss fns (float32)
+    loss_full_f32, loss_minibatch_f32 = make_loss_fns(
         model.apply,
         X_f32,
         Y_f32,
@@ -112,46 +111,65 @@ def main():
         student_df=student_df,
     )
 
-    # Build target bundle for sampling
+    # Build TargetBundle with required fields
+    d = count_params(params_f32)
     target_bundle = TargetBundle(
+        d=d,
+        params0=params_f32,
+        loss_full=loss_full_f32,
+        loss_minibatch=loss_minibatch_f32,
         X=X_f32,
         Y=Y_f32,
-        params0=params_f32,
         L0=L0,
-        loss_full=loss_full_f32,
-        loss_mini=loss_mini_f32,
+        model=model,
     )
 
-    # Run the sampler
+    # Run the sampler via the new runner
+    sampler_name = cfg.sampler.name
+    key = jax.random.PRNGKey(int(cfg.runtime.seed))
     t0 = time.time()
-    idata, metrics = run_sampler(cfg, target_bundle)
+    result = run_sampler(sampler_name, cfg, target_bundle, key)
     dt = time.time() - t0
 
-    # Save into run_dir (no hashing)
+    # Analysis: traces -> (metrics, idata)
+    traces = result["traces"]  # dict of arrays (C, T)
+    timings = result["timings"]  # {"adaptation":..., "sampling":..., "total":...}
+    n_data = X_f32.shape[0]
+    beta = float(result["beta"])
+    metrics, idata = analyze_traces(
+        traces, L0=L0, n_data=n_data, beta=beta, warmup=0, timings=timings
+    )
+
+    # Write artifacts
     run_dir = Path(args.run_dir)
     run_dir.mkdir(parents=True, exist_ok=True)
+    idata.to_netcdf(run_dir / "trace.nc")
+    (run_dir / "analysis.json").write_text(json.dumps(metrics, indent=2, sort_keys=True))
 
-    # Analysis
-    analyze_traces(idata, out_dir=run_dir)
-
-    # Log hyperparameters for the manifest
-    sp = OmegaConf.to_container(cfg.sampler, resolve=True)
+    # Create diagnostic plots
+    create_arviz_diagnostics({sampler_name: idata}, run_dir)
+    create_combined_convergence_plot({sampler_name: idata}, run_dir)
+    create_work_normalized_variance_plot({sampler_name: idata}, run_dir)
 
     # Manifest entry
-    record = {
-        "target_id": args.target_id,
-        "sampler": cfg.sampler.name,
-        "hyperparams": sp,
-        "dtype64": bool(cfg.jax.enable_x64),
-        "walltime_sec": dt,
-        "artifact_path": str(run_dir),
-        "metrics": metrics,
-        "code_sha": cfg.runtime.code_sha,
-        "created_at": time.time(),
-    }
-    append_sample_manifest(cfg.store.root, args.target_id, record)
+    sp = OmegaConf.to_container(cfg.sampler, resolve=True)
+    append_sample_manifest(
+        cfg.store.root,
+        args.target_id,
+        {
+            "target_id": args.target_id,
+            "sampler": sampler_name,
+            "hyperparams": sp,
+            "dtype64": bool(cfg.jax.enable_x64),
+            "walltime_sec": dt,
+            "artifact_path": str(run_dir),
+            "metrics": metrics,
+            "code_sha": cfg.runtime.code_sha,
+            "created_at": time.time(),
+        },
+    )
 
-    print(f"[sample] done in {dt:.2f}s → {run_dir}")
+    print(f"[sample] wrote trace.nc & analysis.json in {dt:.2f}s → {run_dir}")
 
 
 if __name__ == "__main__":

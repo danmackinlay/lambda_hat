@@ -14,9 +14,6 @@ wheels/
 # Slurm cruft
 slurm_logs/
 
-# Submitit logs
-.submitit_slurm/
-.submitit_local/
 
 # Snakemake
 .snakemake/

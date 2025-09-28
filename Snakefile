@@ -39,8 +39,15 @@ def compose_sample_cfg(tid, s):
         cfg = OmegaConf.merge(cfg, {"sampler": {s["name"]: s["overrides"]}})
     return cfg
 
+def _fingerprint_payload_build(cfg):
+    c = OmegaConf.to_container(cfg, resolve=True, enum_to_str=True)
+    # Drop non-semantic / unstable fields
+    for k in ["runtime", "store"]:
+        c.pop(k, None)
+    return c
+
 def target_id_for(cfg):
-    blob = json.dumps(OmegaConf.to_container(cfg, resolve=True, enum_to_str=True), sort_keys=True)
+    blob = json.dumps(_fingerprint_payload_build(cfg), sort_keys=True)
     return "tgt_" + hashlib.sha256(blob.encode()).hexdigest()[:12]
 
 def run_id_for(cfg):
@@ -78,12 +85,13 @@ rule build_target:
     output: meta = f"{STORE}/targets/{{tid}}/meta.json"
     params:
         tid = lambda wc: wc.tid,
-        tdir = lambda wc: f"{STORE}/targets/{wc.tid}"
+        tdir = lambda wc: f"{STORE}/targets/{wc.tid}",
+        jax_x64 = 1 if JAX64 else 0
     log: f"logs/build_target/{{tid}}.log"
     shell:
         r"""
         mkdir -p $(dirname {log})
-        JAX_ENABLE_X64={JAX64} uv run python -m lambda_hat.entrypoints.build_target \
+        JAX_ENABLE_X64={params.jax_x64} uv run python -m lambda_hat.entrypoints.build_target \
           --config-yaml {input.cfg} \
           --target-id {params.tid} \
           --target-dir {params.tdir} > {log} 2>&1
@@ -105,12 +113,13 @@ rule run_sampler:
         analysis = f"{STORE}/targets/{{tid}}/run_{{sampler}}_{{rid}}/analysis.json"
     params:
         tid = lambda wc: wc.tid,
-        rdir = lambda wc: f"{STORE}/targets/{wc.tid}/run_{wc.sampler}_{wc.rid}"
+        rdir = lambda wc: f"{STORE}/targets/{wc.tid}/run_{wc.sampler}_{wc.rid}",
+        jax_x64 = 1 if JAX64 else 0
     log: f"logs/run_sampler/{{tid}}_{{sampler}}_{{rid}}.log"
     shell:
         r"""
         mkdir -p $(dirname {log})
-        JAX_ENABLE_X64={JAX64} uv run python -m lambda_hat.entrypoints.sample \
+        JAX_ENABLE_X64={params.jax_x64} uv run python -m lambda_hat.entrypoints.sample \
           --config-yaml {input.cfg} \
           --target-id {params.tid} \
           --run-dir {params.rdir} > {log} 2>&1
