@@ -8,7 +8,7 @@ sgld:
   steps: 3000000
   warmup: 0
   batch_size: 1024
-  step_size: 0.00000025
+  step_size: 0.0000005
   dtype: float32
   precond: rmsprop
   beta1: 0.9
@@ -21,7 +21,7 @@ sgld:
 hmc:
   # ~40k FGEs (2000 draws * 10 steps = 10000 FGEs) but actually our acceptance is low so more like 20k
   # draws: 4000
-  draws: 8000
+  draws: 12000
   warmup: 200
   num_integration_steps: 10
   step_size: 0.01
@@ -32,7 +32,7 @@ hmc:
 mclmc:
   # ~40k FGEs (4000 draws * (1.0/0.1) = 10000 FGEs) but actually our acceptance is low so more like 20k
   # draws: 4000
-  draws: 8000
+  draws: 16000
   L: 1.0
   step_size: 0.1
   dtype: float64

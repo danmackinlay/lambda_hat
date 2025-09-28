@@ -12,6 +12,9 @@ This repo provides benchmark estimators of LLC on small but non-trivial neural n
 * [Hydra](https://hydra.cc/) for configuration management
 * [Haiku](https://github.com/haiku/haiku) for neural network definitions.
 
+We target networks with dimension up to about $10^5$ which means we can ground-truth against classic samplers like HMC (which we expect to become non-viable in higher dimension or dataset size).
+In this regime we can relu upon classic MCMC to tell us the “true” LLC rather than relying on analytic results for approximate networks such as Deep Linear Networks.
+
 ## Installation
 
 Requires Python 3.11+.
