@@ -1,6 +1,7 @@
 # `lambda_hat`: Local Learning Coefficient (LLC) Estimation
 
 In [Singular Learning Theory (SLT)](https://singularlearningtheory.com), the **Local Learning Coefficient (LLC)** quantifies the effective local dimensionality of a model around a trained optimum.
+Estimating it can be tricky. That is what we explore here.
 
 ![](assets/readme/llc_convergence_combined.png)
 
@@ -92,3 +93,10 @@ Multi-run outputs are saved under `multirun/`.
 - [Configuration Details](./docs/configuration.md)
 - [Running on SLURM](./docs/parallelism.md)
 - [BlackJAX Notes](./docs/blackjax.md)
+
+
+## Background
+
+* [[2308.12108] The Local Learning Coefficient: A Singularity-Aware Complexity Measure](https://arxiv.org/abs/2308.12108)
+* [[2507.21449] From Global to Local: A Scalable Benchmark for Local Posterior Sampling](https://arxiv.org/abs/2507.21449)
+* [singularlearningtheory.com](https://singularlearningtheory.com/)
