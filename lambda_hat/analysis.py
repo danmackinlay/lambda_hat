@@ -1,5 +1,5 @@
 # lambda_hat/analysis.py
-"""Enhanced analysis functions for Hydra-based LLC experiments with proper visualization"""
+"""Analysis functions for LLC experiments with proper visualization"""
 
 from __future__ import annotations
 
@@ -25,9 +25,7 @@ def _debug_print_idata(idata, name: str):
             nans=np.isnan(arr).sum().item(),
             min=(np.nanmin(arr) if np.isfinite(arr).any() else np.nan),
             max=(np.nanmax(arr) if np.isfinite(arr).any() else np.nan),
-            unique=(
-                len(np.unique(arr[np.isfinite(arr)])) if np.isfinite(arr).any() else 0
-            ),
+            unique=(len(np.unique(arr[np.isfinite(arr)])) if np.isfinite(arr).any() else 0),
         )
 
     print(f"\n=== DEBUG {name} ===")
@@ -77,9 +75,7 @@ def analyze_traces(
 
     # Validate and apply warmup (burn-in)
     if warmup >= draws:
-        warnings.warn(
-            f"Warmup draws ({warmup}) >= total draws ({draws}). Using all samples."
-        )
+        warnings.warn(f"Warmup draws ({warmup}) >= total draws ({draws}). Using all samples.")
         warmup = 0
 
     # Select post-warmup data
@@ -100,9 +96,7 @@ def analyze_traces(
     if "cumulative_fge" in traces:
         # Ensure FGE data is extracted as float64 numpy array
         fge_post_warmup = traces["cumulative_fge"][:, warmup:]
-        sample_stats_data["cumulative_fge"] = np.array(
-            fge_post_warmup, dtype=np.float64
-        )
+        sample_stats_data["cumulative_fge"] = np.array(fge_post_warmup, dtype=np.float64)
 
     # Calculate cumulative time using precise timings
     if timings:
@@ -120,12 +114,8 @@ def analyze_traces(
             else:
                 # Case 2: HMC (Separate adaptation). Sampling time covers 'draws_post_warmup'.
                 # Note: For HMC, warmup should be 0 as traces start after adaptation.
-                time_per_draw = (
-                    sampling_time / draws_post_warmup if draws_post_warmup > 0 else 0.0
-                )
-                cumulative_time_post_warmup = (
-                    np.arange(1, draws_post_warmup + 1) * time_per_draw
-                )
+                time_per_draw = sampling_time / draws_post_warmup if draws_post_warmup > 0 else 0.0
+                cumulative_time_post_warmup = np.arange(1, draws_post_warmup + 1) * time_per_draw
                 # Add adaptation time as offset (time starts after adaptation)
                 cumulative_time_post_warmup += adaptation_time
 
@@ -233,9 +223,7 @@ def _compute_metrics_from_idata(
     return metrics
 
 
-def create_arviz_diagnostics(
-    inference_data: Dict[str, az.InferenceData], output_dir: Path
-) -> None:
+def create_arviz_diagnostics(inference_data: Dict[str, az.InferenceData], output_dir: Path) -> None:
     """Create ArviZ diagnostic plots (Trace, Rank, Energy)."""
     # Create a subdirectory for detailed plots
     diag_dir = output_dir / "diagnostics"
@@ -254,9 +242,7 @@ def create_arviz_diagnostics(
         try:
             vars_to_plot = [v for v in ["llc", "L"] if _has_var(idata, v)]
             if vars_to_plot:
-                az.plot_trace(
-                    idata, var_names=vars_to_plot, figsize=(12, 8), compact=False
-                )
+                az.plot_trace(idata, var_names=vars_to_plot, figsize=(12, 8), compact=False)
                 plt.suptitle(f"{sampler_name.upper()} Trace Plot", y=1.02)
                 plt.tight_layout()
                 plt.savefig(diag_dir / "trace.png", dpi=150, bbox_inches="tight")
@@ -344,9 +330,7 @@ def create_combined_convergence_plot(
             # Use mean across chains for the X axis
             fges = idata.sample_stats["cumulative_fge"].values.mean(axis=0)
             if fges.shape[0] == T:
-                ax_fge.plot(
-                    fges, mean_running_mean, label=sampler_name.upper(), color=color
-                )
+                ax_fge.plot(fges, mean_running_mean, label=sampler_name.upper(), color=color)
                 ax_fge.fill_between(
                     fges[start_idx:],
                     ci_lower[start_idx:],
@@ -360,9 +344,7 @@ def create_combined_convergence_plot(
             # Use mean across chains for the X axis
             times = idata.sample_stats["cumulative_time"].values.mean(axis=0)
             if times.shape[0] == T:
-                ax_time.plot(
-                    times, mean_running_mean, label=sampler_name.upper(), color=color
-                )
+                ax_time.plot(times, mean_running_mean, label=sampler_name.upper(), color=color)
                 ax_time.fill_between(
                     times[start_idx:],
                     ci_lower[start_idx:],
@@ -386,9 +368,7 @@ def create_combined_convergence_plot(
     ax_time.set_xscale("log")  # Log scale for Time
 
     plt.tight_layout()
-    plt.savefig(
-        output_dir / "llc_convergence_combined.png", dpi=150, bbox_inches="tight"
-    )
+    plt.savefig(output_dir / "llc_convergence_combined.png", dpi=150, bbox_inches="tight")
     plt.close(fig)
 
 
@@ -512,9 +492,7 @@ def create_summary_table(analysis_results: Dict[str, Dict], output_dir: Path) ->
     for sampler_name, metrics in analysis_results.items():
         summary_text += f"{sampler_name.upper()}:\n"
         summary_text += f"  LLC Mean: {metrics.get('llc_mean', 0.0):.6f}\n"
-        summary_text += (
-            f"  LLC SEM:  {metrics.get('llc_sem', 0.0):.6f}\n"  # Standard Error of Mean
-        )
+        summary_text += f"  LLC SEM:  {metrics.get('llc_sem', 0.0):.6f}\n"  # Standard Error of Mean
         summary_text += f"  R-hat:    {metrics.get('r_hat', 1.0):.4f}\n"
         summary_text += "-" * 20 + "\n"
         summary_text += f"  ESS:      {metrics.get('ess', 0.0):.1f}\n"
@@ -525,9 +503,7 @@ def create_summary_table(analysis_results: Dict[str, Dict], output_dir: Path) ->
         summary_text += f"  WNV (Time): {metrics.get('wnv_time', np.nan):.4f}\n"
         # Efficiency (ESS / Work)
         summary_text += f"  Eff (FGE):  {metrics.get('efficiency_fge', np.nan):.4f}\n"
-        summary_text += (
-            f"  Eff (Time): {metrics.get('efficiency_time', np.nan):.4f}\n\n"
-        )
+        summary_text += f"  Eff (Time): {metrics.get('efficiency_time', np.nan):.4f}\n\n"
 
     # Save summary text
     with open(output_dir / "summary.txt", "w") as f:

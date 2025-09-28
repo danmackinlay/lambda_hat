@@ -91,9 +91,7 @@ class MLP(hk.Module):
 
         # Hidden layers
         for i, width in enumerate(self.widths):
-            linear = hk.Linear(
-                width, with_bias=self.bias, w_init=w_init, name=f"layer_{i}"
-            )
+            linear = hk.Linear(width, with_bias=self.bias, w_init=w_init, name=f"layer_{i}")
             z = linear(h)
 
             if self.layernorm:
@@ -113,9 +111,7 @@ class MLP(hk.Module):
 
         # Output layer (always Xavier initialization for stability)
         output_init = hk.initializers.VarianceScaling(1.0, "fan_in", "truncated_normal")
-        y = hk.Linear(
-            self.out_dim, with_bias=self.bias, w_init=output_init, name="output"
-        )(h)
+        y = hk.Linear(self.out_dim, with_bias=self.bias, w_init=output_init, name="output")(h)
 
         return y
 

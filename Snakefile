@@ -4,7 +4,7 @@ from omegaconf import OmegaConf
 import hashlib, json
 
 # Register OmegaConf resolvers
-from lambda_hat import hydra_support  # noqa: F401
+from lambda_hat import omegaconf_support  # noqa: F401
 
 configfile: "config/experiments.yaml"
 

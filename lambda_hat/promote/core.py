@@ -7,9 +7,7 @@ from pathlib import Path
 from typing import Dict, List, Tuple
 
 
-def find_run_dirs(
-    runs_root: Path, target_id: str | None, sampler: str | None
-) -> List[Path]:
+def find_run_dirs(runs_root: Path, target_id: str | None, sampler: str | None) -> List[Path]:
     """Find run directories based on target_id and/or sampler filtering."""
     base = runs_root / "targets"
     if target_id:
@@ -54,9 +52,7 @@ def _load_metrics(run_dir: Path) -> Dict:
     return {}
 
 
-def gather_latest_runs(
-    runs_root: Path, samplers: List[str], plot_name: str
-) -> Dict[str, Path]:
+def gather_latest_runs(runs_root: Path, samplers: List[str], plot_name: str) -> Dict[str, Path]:
     """Pick the most recent run_* dir per sampler, assuming generic plot names."""
     result: Dict[str, Path] = {}
     for sampler in samplers:

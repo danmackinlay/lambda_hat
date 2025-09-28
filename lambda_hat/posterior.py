@@ -14,9 +14,7 @@ if TYPE_CHECKING:
     from .config import PosteriorConfig
 
 
-def compute_beta_gamma(
-    cfg: PosteriorConfig, d: int, n_data: int
-) -> tuple[float, float]:
+def compute_beta_gamma(cfg: PosteriorConfig, d: int, n_data: int) -> tuple[float, float]:
     """Compute beta and gamma from config and dimension"""
     n_eff = max(3, int(n_data))
     beta = cfg.beta0 / jnp.log(n_eff) if cfg.beta_mode == "1_over_log_n" else cfg.beta0
@@ -27,9 +25,7 @@ def compute_beta_gamma(
     return float(beta), float(gamma)
 
 
-def make_logpost(
-    loss_full: Callable, params0, n: int, beta: float, gamma: float
-) -> Callable:
+def make_logpost(loss_full: Callable, params0, n: int, beta: float, gamma: float) -> Callable:
     """Create the log posterior function: log P(w) = -n*beta*L_n(w) - gamma/2*||w-w0||^2.
 
     This is used by HMC and MCLMC.

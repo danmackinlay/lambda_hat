@@ -74,11 +74,7 @@ def build_target(key, cfg: Config) -> tuple[TargetBundle, list[int], list[int] |
                 used_teacher_widths = t.widths
             else:
                 # one size driver, or both None -> fallback to model.hidden
-                t_TP = (
-                    t.target_params
-                    if t.target_params is not None
-                    else m_cfg.target_params
-                )
+                t_TP = t.target_params if t.target_params is not None else m_cfg.target_params
                 t_hid = t.hidden if t.hidden is not None else m_cfg.hidden
                 used_teacher_widths = infer_widths(
                     in_dim, out_dim, t.depth, t_TP, fallback_width=t_hid

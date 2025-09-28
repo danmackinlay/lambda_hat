@@ -19,9 +19,7 @@ def main():
     ap = argparse.ArgumentParser("lambda-hat-sample")
     ap.add_argument("--config-yaml", required=True, help="Path to composed YAML config")
     ap.add_argument("--target-id", required=True, help="Target ID string")
-    ap.add_argument(
-        "--run-dir", required=True, help="Directory where to write run outputs"
-    )
+    ap.add_argument("--run-dir", required=True, help="Directory where to write run outputs")
     args = ap.parse_args()
 
     cfg = OmegaConf.load(args.config_yaml)

@@ -1,4 +1,4 @@
-# OmegaConf-only config (no Hydra defaults)
+# OmegaConf config
 
 jax:
   enable_x64: true

@@ -6,7 +6,7 @@ from typing import Dict
 import jax
 from omegaconf import OmegaConf
 
-from lambda_hat import hydra_support  # noqa: F401
+from lambda_hat import omegaconf_support  # noqa: F401
 from lambda_hat.target_artifacts import (
     TargetMeta,
     _flatten_params_dict,
@@ -34,9 +34,7 @@ def main():
     ap = argparse.ArgumentParser("lambda-hat-build-target")
     ap.add_argument("--config-yaml", required=True, help="Path to composed YAML config")
     ap.add_argument("--target-id", required=True, help="Target ID string")
-    ap.add_argument(
-        "--target-dir", required=True, help="Directory where to write artifacts"
-    )
+    ap.add_argument("--target-dir", required=True, help="Directory where to write artifacts")
     args = ap.parse_args()
 
     cfg = OmegaConf.load(args.config_yaml)

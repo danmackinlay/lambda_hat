@@ -1,5 +1,5 @@
 # lambda_hat/config.py
-"""Lightweight config helpers (OmegaConf-only). Hydra is not used."""
+"""Lightweight config helpers for OmegaConf-only."""
 
 from dataclasses import dataclass, field
 from typing import List, Optional
@@ -184,8 +184,3 @@ class Config:
     use_tqdm: bool = True
     progress_update_every: int = 50
     profile_adaptation: bool = True
-
-
-# NOTE:
-# This module deliberately avoids Hydra. Keep dataclasses for documentation/type hints
-# and reuse helpers like `validate_teacher_cfg`.

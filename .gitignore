@@ -23,7 +23,6 @@ slurm_logs/
 logs/
 temp_config/
 
-# Hydra outputs (removed)
 
 # Virtual environments
 .venv

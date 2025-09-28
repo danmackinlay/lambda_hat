@@ -84,9 +84,7 @@ def update_preconditioner(
             # Ensure t is cast to float for exponentiation
             t_float = t.astype(jnp.float32)
             if config.precond == "adam":
-                m_hat = jax.tree.map(
-                    lambda m_val: m_val / (1 - config.beta1**t_float), m
-                )
+                m_hat = jax.tree.map(lambda m_val: m_val / (1 - config.beta1**t_float), m)
             v_hat = jax.tree.map(lambda v_val: v_val / (1 - config.beta2**t_float), v)
 
         # Compute Preconditioner Tensor P_t = 1 / (sqrt(v_hat) + eps)
@@ -374,9 +372,7 @@ def run_sgld(
         # 1. Sample minibatch indices. If the configured batch_size exceeds n_data,
         # fall back to sampling *with* replacement (static shape; JIT-friendly).
         replace_flag = batch_size > n_data  # Python bool; static
-        indices = jax.random.choice(
-            key_batch, n_data, shape=(batch_size,), replace=replace_flag
-        )
+        indices = jax.random.choice(key_batch, n_data, shape=(batch_size,), replace=replace_flag)
         minibatch = (X[indices], Y[indices])
 
         # 2. Compute loss gradient (g_t)
@@ -389,9 +385,7 @@ def run_sgld(
 
         # 4. Calculate localization (prior) term: γ(w_t - w_0)
         # Note: params0 is captured by closure
-        localization_term = jax.tree.map(
-            lambda w, w0: gamma_val * (w - w0), w_t, params0
-        )
+        localization_term = jax.tree.map(lambda w, w0: gamma_val * (w - w0), w_t, params0)
 
         # 5. Calculate the total drift term
         # Drift = localization_term + beta_tilde * adapted_loss_drift

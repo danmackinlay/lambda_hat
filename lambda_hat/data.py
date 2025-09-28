@@ -47,9 +47,7 @@ def sample_X(key, cfg: "Config", n: int, in_dim: int):
     elif data_cfg.x_dist == "heavy_tail":
         # Student-t via scaled normal / sqrt(gamma)
         k1, k2 = random.split(key)
-        g = random.gamma(k1, data_cfg.student_df / 2, (n, 1)) / (
-            data_cfg.student_df / 2
-        )
+        g = random.gamma(k1, data_cfg.student_df / 2, (n, 1)) / (data_cfg.student_df / 2)
         Z = random.normal(k2, (n, in_dim)) / jnp.sqrt(g)
         return Z
     else:
@@ -73,23 +71,15 @@ def build_teacher(key, cfg: Config):
             t_widths = t_cfg.widths
         else:
             # one size driver, or both None -> fallback to model.hidden
-            t_TP = (
-                t_cfg.target_params
-                if t_cfg.target_params is not None
-                else m_cfg.target_params
-            )
+            t_TP = t_cfg.target_params if t_cfg.target_params is not None else m_cfg.target_params
             t_hid = t_cfg.hidden if t_cfg.hidden is not None else m_cfg.hidden
-            t_widths = infer_widths(
-                t_in, t_out, t_cfg.depth, t_TP, fallback_width=t_hid
-            )
+            t_widths = infer_widths(t_in, t_out, t_cfg.depth, t_TP, fallback_width=t_hid)
         t_act = t_cfg.activation or m_cfg.activation
     else:
         # No teacher config - use model config directly
         t_widths = m_cfg.widths
         if t_widths is None:
-            t_widths = infer_widths(
-                t_in, t_out, m_cfg.depth, m_cfg.target_params, m_cfg.hidden
-            )
+            t_widths = infer_widths(t_in, t_out, m_cfg.depth, m_cfg.target_params, m_cfg.hidden)
         t_act = m_cfg.activation
 
     # Build Haiku model
@@ -130,12 +120,8 @@ def add_noise(key, y_clean, cfg: Config, X):
     elif data_cfg.noise_model == "student_t":
         # Draw t noise via normal / sqrt(gamma)
         k1, k2 = random.split(key)
-        g = random.gamma(k1, data_cfg.student_df / 2, y_clean.shape) / (
-            data_cfg.student_df / 2
-        )
-        return y_clean + data_cfg.noise_scale * random.normal(
-            k2, y_clean.shape
-        ) / jnp.sqrt(g)
+        g = random.gamma(k1, data_cfg.student_df / 2, y_clean.shape) / (data_cfg.student_df / 2)
+        return y_clean + data_cfg.noise_scale * random.normal(k2, y_clean.shape) / jnp.sqrt(g)
     elif data_cfg.noise_model == "outliers":
         k1, k2, k3 = random.split(key, 3)
         base = data_cfg.noise_scale * random.normal(k1, y_clean.shape)
@@ -156,11 +142,7 @@ def make_dataset(key, cfg: Config):
 
     # Apply dropout if teacher config exists and specifies it
     dropout_rate = 0.0
-    if (
-        hasattr(cfg, "teacher")
-        and cfg.teacher is not None
-        and hasattr(cfg.teacher, "dropout_rate")
-    ):
+    if hasattr(cfg, "teacher") and cfg.teacher is not None and hasattr(cfg.teacher, "dropout_rate"):
         dropout_rate = cfg.teacher.dropout_rate
 
     if dropout_rate > 0.0:

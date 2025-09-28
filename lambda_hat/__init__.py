@@ -2,7 +2,7 @@
 
 # Ensure resolvers are registered for any entrypoint importing lambda_hat.*
 try:
-    from .hydra_support import register_resolvers
+    from .omegaconf_support import register_resolvers
 
     register_resolvers()
 except Exception:

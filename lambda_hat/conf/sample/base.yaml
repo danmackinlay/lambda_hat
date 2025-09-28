@@ -1,4 +1,4 @@
-# Two-stage: Stage B (sample) — OmegaConf-only (no Hydra defaults)
+# Two-stage: Stage B (sample) — OmegaConf config
 
 jax:
   enable_x64: true
