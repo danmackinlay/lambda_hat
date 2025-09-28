@@ -1,6 +1,7 @@
 # Configuration Details
 
-This project uses **OmegaConf** to parse YAML configuration files, orchestrated by **Snakemake**. Hydra is not used. Configs are merged manually in the `Snakefile`.
+This project uses **OmegaConf** to parse YAML configuration files, orchestrated by **Snakemake**.
+Configs are merged manually in the `Snakefile`.
 
 ## How Configs Are Composed
 

@@ -1,6 +1,6 @@
 # Parallel Execution with Snakemake
 
-This project uses **Snakemake** for parallel orchestration, enabling efficient execution locally or on HPC clusters without any Hydra launchers.
+This project uses **Snakemake** for parallel orchestration, enabling efficient execution locally or on HPC clusters.
 
 ## Overview
 

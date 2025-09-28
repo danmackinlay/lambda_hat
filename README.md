@@ -45,7 +45,7 @@ pip install .[cuda12]    # For CUDA 12 (Linux)
 
 ## Orchestration
 
-We use **Snakemake** for the full pipeline. OmegaConf parses our YAML configs; Hydra is **not used**.
+We use **Snakemake** for the full pipeline. OmegaConf parses our YAML configs.
 
 ### Quickstart
 

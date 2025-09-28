@@ -15,10 +15,14 @@ uv sync --extra cuda12       # For CUDA 12 (Linux)
 uv run python -m lambda_hat.entrypoints.sample --help
 uv run python script.py     # Instead of: python script.py
 
-# Entry points
-uv run lambda-hat-build-target -m model=small,base target.seed=42,43  # Build targets
-uv run lambda-hat-sample target_id=tgt_abcd1234 sampler=hmc           # Direct sampling
-uv run lambda-hat-workflow -m model=small,base sampler=hmc,sgld       # N×M workflows
+# Snakemake workflows
+uv run snakemake -n                     # Preview DAG
+uv run snakemake -j 4                   # Run with 4 parallel jobs
+uv run snakemake --profile slurm -j 100 # Run on SLURM cluster
+
+# Direct entry points (low-level, prefer Snakemake)
+uv run python -m lambda_hat.entrypoints.build_target --config-yaml config.yaml --target-id tgt_abc123
+uv run python -m lambda_hat.entrypoints.sample --config-yaml config.yaml --target-id tgt_abc123
 
 # Testing
 uv run pytest tests/                           # All tests
@@ -26,6 +30,14 @@ uv run pytest tests/                           # All tests
 # lint before commits
 uv run ruff format
 uv run ruff check --fix
+```
+
+**Snakemake Workflow:**
+```bash
+# Configure experiments in config/experiments.yaml (N targets × M samplers)
+# Then run the full pipeline:
+uv run snakemake -j 4                    # Local execution
+uv run snakemake --profile slurm -j 100  # HPC cluster
 ```
 
 ## Architecture Overview
@@ -44,9 +56,9 @@ uv run ruff check --fix
 - Enhanced visualization with FGE tracking and efficiency analysis
 
 **Configuration:**
-- Hydra-based hierarchical configs in `lambda_hat/conf/`
+- OmegaConf-based YAML configs in `lambda_hat/conf/` and `config/experiments.yaml`
 - Nested access: `cfg.data.n_data`, `cfg.model.target_params`
-- Dynamic target ID resolution: `${fingerprint:${model},${data},...}`
+- Deterministic target IDs computed by content-addressed fingerprinting
 
 ## Implementation Notes
 
@@ -67,14 +79,15 @@ uv run ruff check --fix
 **Configuration Patterns:**
 - Nested access: `cfg.data.n_data` (not `cfg.n_data`)
 - Warmup handling: Analysis gracefully handles warmup >= draws
-- Output to `HydraConfig.get().run.dir` for proper artifact placement
+- Output to content-addressed `runs/targets/tgt_*/` directories
 
 ## Common Issues
 
 **Configuration:**
 - Use nested access: `cfg.data.n_data`, not `cfg.n_data`
-- Target ID resolution: Check `${fingerprint:...}` resolver in workflow configs
-- Sampler configs must exist in `lambda_hat/conf/sample/sampler/`
+- Target IDs computed deterministically from config fingerprints
+- Sampler configs must exist in `lambda_hat/conf/sampler/`
+- Edit `config/experiments.yaml` to configure N×M sweeps
 
 
 ## API cheat-sheet  (use these, do not “upgrade” them)
