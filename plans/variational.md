@@ -259,23 +259,23 @@ With these ingredients, the **plug‑in variational LLC** is fast (near‑SGD co
 
 Below is a **drop‑in, JAX/Haiku/Optax‑friendly** implementation of the **variational plug‑in LLC estimator**:
 
-* equal‑mean mixture at (w^*),
-* shared diagonal (D) inside each component for PD + Woodbury efficiency,
-* general **rank budget (r\ge 1)** via a *mixture of factor analyzers* parameterization (\Sigma_m = D^{1/2}(I + A_m A_m^\top)D^{1/2}),
+* equal‑mean mixture at $w^*$,
+* shared diagonal $D$ inside each component for PD + Woodbury efficiency,
+* general **rank budget $r\ge 1$** via a *mixture of factor analyzers* parameterization $\Sigma_m = D^{1/2}(I + A_m A_m^\top)D^{1/2}$,
 * **STL** (sticking‑the‑landing) pathwise gradients for continuous params,
 * **Rao–Blackwellized** score gradients for mixture weights,
 * optional **geometry whitening** (using any SPD diagonal preconditioner you pass, e.g., Adam/RMSProp second moment),
 * an **optional control variate** that uses **Hessian‑vector products** (HVPs) only along the learned low‑rank subspace (safe even if curvature is indefinite).
 
 > **Why these choices?**
-> *STL* yields lower‑variance unbiased pathwise gradients for the reparameterized part of the ELBO, so we can ignore (\nabla \log q) for the continuous parameters; RB handles the discrete mixture weights robustly. The factor‑analyzer structure with a shared (D) is the cheapest way to capture highly anisotropic local geometry while keeping all log‑pdf arithmetic (O(M d r)) via Woodbury. The (\beta^*=1/\log n) “hot posterior” comes from **WBIC** and is exactly the temperature that preserves the local free‑energy asymptotics in singular models. ([NeurIPS Papers][1])
+> *STL* yields lower‑variance unbiased pathwise gradients for the reparameterized part of the ELBO, so we can ignore $\nabla \log q$ for the continuous parameters; RB handles the discrete mixture weights robustly. The factor‑analyzer structure with a shared $D$ is the cheapest way to capture highly anisotropic local geometry while keeping all log‑pdf arithmetic $O(Mdr)$ via Woodbury. The $\beta^* = 1/\log n$ “hot posterior” comes from **WBIC** and is exactly the temperature that preserves the local free‑energy asymptotics in singular models. ([NeurIPS Papers][1])
 
 ---
 
 ## 0) Minimal interface you need to provide
 
-* `loss_batch_fn(params, minibatch) -> scalar` — **mean** loss on a minibatch (your (L_n) on a batch).
-* `loss_full_fn(params) -> scalar` — **mean** loss over the **full dataset** (for the final (\widehat\lambda)).
+* `loss_batch_fn(params, minibatch) -> scalar` — **mean** loss on a minibatch (your $L_n$ on a batch).
+* `loss_full_fn(params) -> scalar` — **mean** loss over the **full dataset** (for the final $\widehat{\lambda}$).
 * Optionally: a diagonal preconditioner (e.g., from Optax’ Adam/RMSProp state) to **whiten geometry**.
 
 The code uses Haiku/Optax conventions (PyTrees everywhere) and keeps your style close to the `sampling.py` you shared (scan‑based loops, typed states, etc.). Haiku and Optax docs for reference: ([dm-haiku.readthedocs.io][2])
@@ -718,17 +718,16 @@ def fit_vi_and_estimate_lambda(
 
 ### Key implementation notes (how the math maps to code)
 
-* **Mixture family.** We use (\Sigma_m = D^{1/2}(I+A_mA_m^\top)D^{1/2}) with a **shared** diagonal (D \succ 0) (inside each component), which makes each (\Sigma_m) PD and enables (O(dr)) log‑pdfs and responsibilities via **Woodbury/Sherman–Morrison** (see `logpdf_components_and_resp`). ([Wikipedia][3])
-* **STL (pathwise).** For continuous params ((\rho,A)) we backprop only through the **target term** (-n\beta^*L - \tfrac{\gamma}{2}|\tilde v|^2) via the reparameterization (w = w^* + A^{-1/2}(D^{1/2}A_m z + D^{1/2}\varepsilon)). We **stop‑grad** the (\log q) path, which is the STL trick. It’s unbiased and reduces variance. ([NeurIPS Papers][1])
-* **Rao–Blackwellized mixture weights.** `g_alpha = (r - π) * payoff` where `payoff = (ℓ - log q - baseline)`. This is the classic RB score‑function update using **responsibilities** (r_j(w)) and keeps weight gradients low‑variance. ([cs.princeton.edu][4])
-* **Geometry whitening (optional).** If you pass an SPD diagonal (A) (e.g., (A_{ii}=1/(\sqrt{\hat v_i}+\varepsilon)) from Adam/RMSProp), we whiten coordinates by (\tilde w = A^{1/2}(w-w^*)), use an **isotropic localizer** (\tfrac\gamma2|\tilde w|^2), and define the mixture in (\tilde w)‑space. This helps conditioning and leaves the target unchanged—it is just a reparameterization. ([optax.readthedocs.io][5])
-* **WBIC temperature.** The default (\beta^* = 1/\log n) is exactly the WBIC choice that makes the local free‑energy asymptotics match in singular models; the code takes it as a parameter. ([Journal of Machine Learning Research][6])
+* **Mixture family.** We use $\Sigma_m = D^{1/2}(I + A_m A_m^\top)D^{1/2}$ with a **shared** diagonal $D \succ 0$ (inside each component), which makes each $\Sigma_m$ PD and enables $O(Mdr)$ log-pdfs and responsibilities via **Woodbury/Sherman–Morrison** (see `logpdf_components_and_resp`). ([Wikipedia][3])
+* **STL (pathwise).** For continuous params $(\rho, A)$ we backprop only through the **target term** $-n\beta^* L - \tfrac{\gamma}{2}\lVert \tilde v\rVert^2$ via the reparameterization $w = w^* + A^{-1/2}(D^{1/2}A_m z + D^{1/2}\varepsilon)$. We **stop-grad** the $\log q$ path, which is the STL trick. It’s unbiased and reduces variance. ([NeurIPS Papers][1])
+* **Rao–Blackwellized mixture weights.** $g_{\alpha} = (r - \pi)\,\text{payoff}$ where $\text{payoff} = (\ell - \log q - \text{baseline})$. This is the classic RB score-function update using **responsibilities** $r_j(w)$ and keeps weight gradients low-variance. ([cs.princeton.edu][4])
+* **Geometry whitening (optional).** If you pass an SPD diagonal $A$ (e.g., $A_{ii} = 1/(\sqrt{\hat v_i} + \varepsilon)$) from Adam/RMSProp, we whiten coordinates by $\tilde w = A^{1/2}(w - w^*)$, use an **isotropic localizer** $\tfrac{\gamma}{2}\lVert \tilde w\rVert^2$, and define the mixture in $\tilde w$-space. This helps conditioning and leaves the target unchanged—it is just a reparameterization. ([optax.readthedocs.io][5])
+* **WBIC temperature.** The default $\beta^* = 1/\log n$ is exactly the WBIC choice that makes the local free-energy asymptotics match in singular models; the code takes it as a parameter. ([Journal of Machine Learning Research][6])
 * **Control variate (optional).** We implement the exact identity
-  [
-  \mathbb{E}_q[L] = \mathbb{E}_q!\Big[L - \tfrac12 v^\top H v\Big] + \tfrac12,\mathrm{tr}(H\Sigma_q),
-  ]
-  using HVPs only along the **learned low‑rank subspace** (and, optionally, a tiny **Hutchinson** sketch for the (\mathrm{diag}) part). This remains correct even if (H) is **indefinite** (saddles); it’s a **control variate**, not a Laplace fit. HVP uses `jax.jvp(grad, ...)` as recommended. ([docs.jax.dev][7])
-
+  $$
+  \mathbb{E}_q[L] = \mathbb{E}_q\!\left[L - \tfrac{1}{2} v^\top H v\right] + \tfrac{1}{2}\,\mathrm{tr}(H\Sigma_q),
+  $$
+  using HVPs only along the **learned low-rank subspace** (and, optionally, a tiny Hutchinson sketch for the diagonal part). This remains correct even if $H$ is **indefinite** (saddles); it’s a **control variate**, not a Laplace fit. HVP uses `jax.jvp(grad, ...)` as recommended. ([docs.jax.dev][7])
 ---
 
 ## 2) How to call it with Haiku/Optax models
@@ -782,21 +781,21 @@ If you trained with Adam/RMSProp, you can extract the second moment accumulator 
 
 ## 3) Practical defaults and diagnostics
 
-* Start with **(r=1) or (2)** and **(M=8)**. Increase (r) only if you see poor **radius matching** (track `radius2`) or slow ELBO improvement.
-* Tune **(\gamma)** in whitened units; a grid like ({10^{-4},10^{-3},10^{-2}}) is usually enough.
-* The trace plots in `run.traces` (ELBO‑like, (\log q), radius, minibatch loss) should stabilize quickly. If only one component dominates, the RB gradients will push mixture weights toward sparsity; you can prune small‑(\pi) components at the end if desired.
+* Start with **$r=1$ or $2$** and **$M=8$**. Increase $r$ only if you see poor **radius matching** (track `radius2`) or slow ELBO improvement.
+* Tune **$\gamma$** in whitened units; a grid like $\{10^{-4},10^{-3},10^{-2}\}$ is usually enough.
+* The trace plots in `run.traces` (ELBO‑like, $\log q$, radius, minibatch loss) should stabilize quickly. If only one component dominates, the RB gradients will push mixture weights toward sparsity; you can prune small-$\pi$ components at the end if desired.
 
 ---
 
 ## 4) What if you want **layer‑wise** factors?
 
-For very large (d), you can replace the global (A\in\mathbb{R}^{d\times r}) by **layer‑wise** blocks ({A^{(\ell)}}) (still rank‑(r) each) and keep a shared per‑layer diagonal (D^{(\ell)}). The code above can be extended by flattening **per‑leaf** instead of globally and evaluating the Woodbury formulas on each leaf; all formulas and updates are the same, just applied leaf‑wise.
+For very large $d$, you can replace the global $A\in\mathbb{R}^{d\times r}$ by **layer‑wise** blocks $\{A^{(\ell)}\}$ (still rank-$r$ each) and keep a shared per-layer diagonal $D^{(\ell)}$. The code above can be extended by flattening **per-leaf** instead of globally and evaluating the Woodbury formulas on each leaf; all formulas and updates are the same, just applied leaf-wise.
 
 ---
 
 ### References (selected)
 
-* **WBIC / (\beta^*=1/\log n):** Watanabe, *A Widely Applicable Bayesian Information Criterion*, JMLR 2013. ([Journal of Machine Learning Research][6])
+* **WBIC / $\beta^* = 1/\log n$:** Watanabe, *A Widely Applicable Bayesian Information Criterion*, JMLR 2013. ([Journal of Machine Learning Research][6])
 * **STL (sticking‑the‑landing):** Roeder, Wu & Duvenaud (NeurIPS 2017). ([NeurIPS Papers][1])
 * **Rao–Blackwellized gradients:** e.g., Black‑box VI notes + RB variance reduction; Liu et al. (2018). ([cs.princeton.edu][4])
 * **Mixture of factor analyzers:** Ghahramani & Hinton (1997). ([cs.toronto.edu][8])
@@ -808,15 +807,217 @@ For very large (d), you can replace the global (A\in\mathbb{R}^{d\times r}) by *
 
 ### Final notes
 
-* The **plug‑in** (\widehat\lambda_{\text{VI}} = n\beta^*,(\mathbb{E}*{q*\phi}L_n - L_n(w^*))) is computed at the end from MC under (q) (optionally CV‑corrected). If you want a one‑shot importance‑weighted refinement (closer to the exact local target (p_{\beta^*,\gamma})), it’s easy to add a single pass that reweights the final MC batch with (\exp(-n\beta^* L - \tfrac\gamma2|w-w^*|^2)/q(w)).
+* The **plug‑in** $\widehat{\lambda}_{\text{VI}} = n\beta^*(\mathbb{E}_{q_\phi}[L_n] - L_n(w^*))$ is computed at the end from MC under $q$ (optionally CV-corrected). If you want a one-shot importance-weighted refinement (closer to the exact local target $p_{\beta^*,\gamma}$), it’s easy to add a single pass that reweights the final MC batch with $\exp(-n\beta^* L - \tfrac{\gamma}{2}\lVert w - w^*\rVert^2)/q(w)$.
 * The **HVP control variate** is safe even if the Hessian is **indefinite** (saddles/singularities); it only changes the estimator’s *variance*, not its mean. If you want PSD curvature, swap in Gauss–Newton/empirical Fisher; the API stays the same.
 
 
-[1]: https://papers.neurips.cc/paper/7268-sticking-the-landing-simple-lower-variance-gradient-estimators-for-variational-inference.pdf?utm_source=chatgpt.com "Simple, Lower-Variance Gradient Estimators for Variational ..."
-[2]: https://dm-haiku.readthedocs.io/?utm_source=chatgpt.com "Haiku Documentation — Haiku documentation"
-[3]: https://en.wikipedia.org/wiki/Woodbury_matrix_identity?utm_source=chatgpt.com "Woodbury matrix identity"
-[4]: https://www.cs.princeton.edu/techreports/2017/008.pdf?utm_source=chatgpt.com "Black Box Variational Inference: Scalable, Generic Bayesian ..."
-[5]: https://optax.readthedocs.io/?utm_source=chatgpt.com "Optax — Optax documentation"
-[6]: https://www.jmlr.org/papers/volume14/watanabe13a/watanabe13a.pdf?utm_source=chatgpt.com "A Widely Applicable Bayesian Information Criterion"
-[7]: https://docs.jax.dev/en/latest/_autosummary/jax.jvp.html?utm_source=chatgpt.com "jax.jvp"
-[8]: https://www.cs.toronto.edu/~fritz/absps/tr-96-1.pdf?utm_source=chatgpt.com "The EM Algorithm for Mixtures of Factor Analyzers"
+[1]: https://papers.neurips.cc/paper/7268-sticking-the-landing-simple-lower-variance-gradient-estimators-for-variational-inference.pdf "Simple, Lower-Variance Gradient Estimators for Variational ..."
+[2]: https://dm-haiku.readthedocs.io/ "Haiku Documentation — Haiku documentation"
+[3]: https://en.wikipedia.org/wiki/Woodbury_matrix_identity "Woodbury matrix identity"
+[4]: https://www.cs.princeton.edu/techreports/2017/008.pdf "Black Box Variational Inference: Scalable, Generic Bayesian ..."
+[5]: https://optax.readthedocs.io/ "Optax — Optax documentation"
+[6]: https://www.jmlr.org/papers/volume14/watanabe13a/watanabe13a.pdf "A Widely Applicable Bayesian Information Criterion"
+[7]: https://docs.jax.dev/en/latest/_autosummary/jax.jvp.html "jax.jvp"
+[8]: https://www.cs.toronto.edu/~fritz/absps/tr-96-1.pdf "The EM Algorithm for Mixtures of Factor Analyzers"
+
+-----
+You can keep this rock-solid in pure float32 with a few discipline rules. Here’s a stability checklist + the two parameterizations that make the Woodbury path behave nicely at scale.
+
+# 0) One-liner defaults (do these first)
+
+* **Work in whitened coords** (your `Whitener`) so typical radii are O(1). Pick γ so that `E_q[‖tilde_v‖²]≈d`.
+* **Never invert** anything: only **Cholesky + solves** (you’re already using `cho_solve` 👌).
+* **Always add ridge** before Cholesky: `C = I + AᵀA + εI` with `ε∈[1e-6,1e-4]` (float32).
+* **Use log-sum-exp** for responsibilities (`r = softmax(alpha + logps - logsumexp(...))`).
+* **Clip/scale factors** so `‖A‖₂` can’t explode (see §2–§3).
+* Enable **highest matmul precision** for the tiny r×r linear algebra:
+
+```python
+import jax, jax.numpy as jnp, jax.lax as lax
+matmul_prec = lax.Precision.HIGHEST
+# example: jnp.dot(x, y, precision=matmul_prec)
+# or use: with jax.default_matmul_precision('float32')  # JAX≥0.4.29 – set to 'highest' if available
+```
+
+# 1) Stable Woodbury in float32 (what to compute)
+
+For one component with $Σ = D^{1/2}(I + A A^\top)$ and a whitened displacement `tilde_v`:
+
+```python
+# x = D^{-1/2} tilde_v   (elementwise divide; no inverses)
+x = tilde_v / D_sqrt
+
+# Small r×r matrix, add ridge before Cholesky
+C  = I_r + A.T @ A
+C += eps * jnp.eye(r, dtype=C.dtype)
+
+L = jnp.linalg.cholesky(C)                       # stable in f32 if eps>0
+g = A.T @ x                                      # (r,)
+y = jax.scipy.linalg.cho_solve((L, True), g)     # solve C y = g
+quad    = (x @ x) - (g @ y)                      # vᵀΣ⁻¹v without forming Σ⁻¹
+logdet  = logdet_D + 2.0 * jnp.sum(jnp.log(jnp.diag(L)))
+logN    = -0.5 * (d * log(2π) + logdet + quad)
+```
+
+Notes:
+
+* **No $Σ^{-1}$ anywhere.** Only solves with `C` (r×r) after a Cholesky.
+* `eps`: start `1e-5` (f32); if your `A` grows, increase to `1e-4`.
+* Set `precision=HIGHEST` on the **AᵀA** and **Aᵀx** dot products (these dominate numeric error).
+
+# 2) Parameterization that keeps C well-conditioned (cheap)
+
+### A = U · diag(s), with **column-normalized U**
+
+* Store `U` with columns L2-normalized each step (cheap Gram–Schmidt; r is tiny), and **free scales** `s = softplus(σ)`:
+
+  * `A = U * s[None, :]`
+  * Then `AᵀA = diag(s²)` **if** U is column-orthonormal; even with just normalization (not perfectly orthogonal), C stays tame.
+* Benefits:
+
+  * `C = I + diag(s²)` ⇒ **diagonal** (in the ideal orthonormal case):
+
+    * `L = sqrt(I + diag(s²))` (elementwise),
+    * `y = g / (1 + s²)` (elementwise),
+    * `log|C| = ∑ log(1 + s²_j)` (elementwise).
+  * Even if U isn’t exact Stiefel, normalizing columns + small ridge makes C super well-behaved.
+
+**Snippets**
+
+```python
+def normalize_cols(U, eps=1e-8):
+    # U: (d, r), returns U with unit-norm columns (stop-grad scale to avoid bias if you like)
+    col_norms = jnp.sqrt(jnp.sum(U*U, axis=0) + eps)
+    return U / col_norms
+
+# param:
+U = normalize_cols(U_raw)
+s = jax.nn.softplus(s_raw)          # ≥0, f32-safe
+A = U * s[None, :]
+```
+
+### Extra guard: spectral clip
+
+If you don’t want Gram–Schmidt, clip the per-column norms post-update:
+
+```python
+max_col = 3.0   # cap s * ‖u‖ to keep 1 + s² ≤ 10-ish
+col_norms = jnp.sqrt(jnp.sum(A*A, axis=0) + 1e-8)
+scale = jnp.minimum(1.0, max_col / col_norms)
+A = A * scale[None, :]
+```
+
+# 3) Algebraic whitening inside the family (you already do it)
+
+Use `K = D^{1/2} A`. This:
+
+* avoids multiplying by ill-scaled `K` when `D` has tiny/huge entries,
+* makes `C = I + AᵀA` independent of D (good conditioning),
+* keeps `log|Σ| = log|D| + log|C|` with **no** cross terms.
+
+Keep `D_sqrt = softplus(rho)` (not `exp`) and maybe **clip** it:
+
+```python
+D_sqrt = jnp.clip(jax.nn.softplus(rho), 1e-4, 1e+2)  # float32-friendly band
+```
+
+# 4) Responsibilities without under/overflow
+
+* Compute `logps` as above (already stabilized).
+* Then:
+
+```python
+logits = alpha + logps
+logZ   = jax.nn.logsumexp(logits)
+r      = jnp.exp(logits - logZ)      # responsibilities
+# optional temperature τ≥1 early on to reduce peaky r:
+# r = jax.nn.softmax(logits / tau)
+```
+
+* If a component is numerically identical to another, add tiny per-component jitter to `alpha` during warm-up (e.g., `1e-3 * N(0,1)`).
+
+# 5) Keep gradients calm
+
+* **STL** already helps (don’t backprop through `log q` for continuous params).
+* **Different lrs**: smaller LR for `rho` than for `A` (e.g., ×0.2).
+* **Gradient clipping** per-leaf (Optax `clip_by_global_norm` or `clip`):
+
+```python
+tx = optax.chain(
+    optax.clip_by_global_norm(1.0),
+    optax.adamw(learning_rate=lr, weight_decay=1e-4)  # tiny wd on A helps keep s small
+)
+```
+
+* **EMA baseline** for RB weights (you have it): if variance still high, widen baseline momentum (e.g., 0.995).
+
+# 6) Choose γ so the localizer does the heavy lifting
+
+The worst instabilities appear when samples wander far from the quadratic neighborhood. In whitened coords:
+
+* Target a **typical radius** $E[\lVert \tilde{v}\rVert^2] \approx d$.
+* If radius blows up, **increase γ** (×3); if it collapses, decrease (÷3).
+* With good γ, quad terms (quad, logdet) stay in a numerically safe band.
+
+# 7) Mixed precision (optional—but still “32-bit” where it counts)
+
+If you hit edge cases, a pragmatic trick is **f64 only for r×r** math while keeping model, batches, and A/D in f32:
+
+```python
+def f64_small(mat): return jnp.asarray(mat, jnp.float64)
+C64 = f64_small(jnp.eye(r) + A.T @ A)
+L64 = jnp.linalg.cholesky(C64 + 1e-12*jnp.eye(r))
+# solve in f64, cast result back to f32
+y64 = jax.scipy.linalg.cho_solve((L64, True), f64_small(g))
+y   = jnp.asarray(y64, jnp.float32)
+```
+
+This costs essentially nothing (r≤4), and nukes the last bit of fragility.
+
+# 8) “Orthonormal factors” option (bulletproof)
+
+If you want maximum robustness, parameterize each component’s factor as **orthonormal columns** `Q∈ℝ^{d×r}` (Stiefel) plus scales `s≥0`:
+
+* `A = Q · diag(s)` with **Q orthonormal** (maintained by a tiny r-step retraction or Gram–Schmidt).
+* Then **exactly**: `C = I + diag(s²)` (diagonal), so `logdet`/`solve` are elementwise and perfectly stable in f32.
+* Overhead is tiny because r is tiny.
+
+Minimal retraction (per step, per component):
+
+```python
+# one GS pass; fine for tiny r:
+def orthonormalize(Q, eps=1e-6):
+    for j in range(Q.shape[1]):
+        v = Q[:, j]
+        for k in range(j):
+            v = v - jnp.dot(Q[:, k], v) * Q[:, k]
+        Q = Q.at[:, j].set(v / (jnp.linalg.norm(v) + eps))
+    return Q
+```
+
+# 9) Debug numbers to watch
+
+* `radius2` (‖tilde_v‖²): stays O(d).
+* `logdet_C = ∑ log(1+s²_j)` (or via Cholesky): no NaNs, modest range.
+* `s` (scales): bounded (e.g., ≤3) after a short warm-up.
+* ELBO-like curve: monotone-ish increase; if it jitters violently, increase ridge or clip A columns.
+
+---
+
+## TL;DR template you can paste into your code
+
+```python
+# Before any Cholesky on C = I + A^T A
+C = jnp.eye(r, dtype=A.dtype) + (A.T @ A)
+C = C + (1e-5 * jnp.eye(r, dtype=A.dtype))  # ridge for f32
+L = jnp.linalg.cholesky(C)                   # f32-stable now
+g = A.T @ x                                  # set precision=HIGHEST if needed
+y = jax.scipy.linalg.cho_solve((L, True), g)
+quad   = (x @ x) - (g @ y)
+logdet = logdet_D + 2.0 * jnp.sum(jnp.log(jnp.diag(L)))
+# responsibilities with log-sum-exp
+logits = alpha + logps
+r = jnp.exp(logits - jax.nn.logsumexp(logits))
+```
+
+If you implement **(i)** column-normalized `U` + softplus scales `s`, **(ii)** a tiny ridge on `C`, and **(iii)** Cholesky-solves only, you can keep everything in **float32** and it will behave. The optional “f64 just for r×r” path is free insurance if you ever see a rare NaN during early training.
