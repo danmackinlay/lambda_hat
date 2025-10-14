@@ -825,11 +825,11 @@ You can keep this rock-solid in pure float32 with a few discipline rules. Here�
 
 # 0) One-liner defaults (do these first)
 
-* **Work in whitened coords** (your `Whitener`) so typical radii are O(1). Pick γ so that `E_q[‖tilde_v‖²]≈d`.
+* **Work in whitened coords** (your `Whitener`) so typical radii are O(1). Pick $\gamma$ so that $E_q[\lVert \tilde{v}\rVert^2]\approx d$.
 * **Never invert** anything: only **Cholesky + solves** (you’re already using `cho_solve` 👌).
 * **Always add ridge** before Cholesky: `C = I + AᵀA + εI` with `ε∈[1e-6,1e-4]` (float32).
 * **Use log-sum-exp** for responsibilities (`r = softmax(alpha + logps - logsumexp(...))`).
-* **Clip/scale factors** so `‖A‖₂` can’t explode (see §2–§3).
+* **Clip/scale factors** so $\lVert A\rVert_2$ can’t explode (see §2–§3).
 * Enable **highest matmul precision** for the tiny r×r linear algebra:
 
 ```python
@@ -951,7 +951,7 @@ tx = optax.chain(
 
 * **EMA baseline** for RB weights (you have it): if variance still high, widen baseline momentum (e.g., 0.995).
 
-# 6) Choose γ so the localizer does the heavy lifting
+# 6) Choose $\gamma$ so the localizer does the heavy lifting
 
 The worst instabilities appear when samples wander far from the quadratic neighborhood. In whitened coords:
 
