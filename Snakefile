@@ -19,14 +19,15 @@ def compose_build_cfg(t):
     cfg = OmegaConf.load(CONF / "workflow.yaml")
     cfg = OmegaConf.merge(
         cfg,
-        OmegaConf.load(CONF / "model" / f"{t['model']}.yaml"),
-        OmegaConf.load(CONF / "data" / f"{t['data']}.yaml"),
-        OmegaConf.load(CONF / "teacher" / f"{t.get('teacher','_null')}.yaml"),
+        {"model": OmegaConf.load(CONF / "model" / f"{t['model']}.yaml")},
+        {"data": OmegaConf.load(CONF / "data" / f"{t['data']}.yaml")},
+        {"teacher": OmegaConf.load(CONF / "teacher" / f"{t.get('teacher','_null')}.yaml")},
         {"target": {"seed": t["seed"]},
          "jax": {"enable_x64": JAX64},
          "store": {"root": STORE}}
     )
-    if "overrides" in t: cfg = OmegaConf.merge(cfg, t["overrides"])
+    if "overrides" in t:
+        cfg = OmegaConf.merge(cfg, t["overrides"])
     return cfg
 
 def compose_sample_cfg(tid, s):
