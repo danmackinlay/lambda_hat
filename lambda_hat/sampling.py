@@ -809,7 +809,7 @@ def run_vi(
                     "Ln": Ln,
                     "cumulative_fge": new_fge,
                     "acceptance_rate": jnp.array(1.0, dtype=ref_dtype),  # Always 1.0 for VI
-                    "energy": metrics["elbo_like"],  # Use ELBO as "energy"
+                    "energy": metrics["elbo"],  # TRUE ELBO (target + entropy)
                     "is_divergent": False,
                     "radius2": metrics["radius2"],
                     "logq": metrics["logq"],
@@ -820,7 +820,7 @@ def run_vi(
                     "Ln": jnp.array(jnp.nan, dtype=ref_dtype),
                     "cumulative_fge": new_fge,
                     "acceptance_rate": jnp.array(1.0, dtype=ref_dtype),
-                    "energy": metrics["elbo_like"],
+                    "energy": metrics["elbo"],  # TRUE ELBO (target + entropy)
                     "is_divergent": False,
                     "radius2": metrics["radius2"],
                     "logq": metrics["logq"],

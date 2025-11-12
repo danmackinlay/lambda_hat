@@ -374,6 +374,9 @@ def build_elbo_step(
         updates, new_opt_state = optimizer.update(grads, state.opt_state, params)
         new_params = optax.apply_updates(params, updates)
 
+        # Apply column normalization to A for numerical stability
+        new_params = new_params._replace(A=jax.vmap(normalize_columns)(new_params.A))
+
         # 7) Update baseline (EMA)
         new_baseline = 0.99 * state.baseline + 0.01 * (ell - logq)
 
@@ -385,7 +388,8 @@ def build_elbo_step(
 
         # Metrics for tracing
         metrics = {
-            "elbo_like": ell,  # ELBO-like term (no explicit entropy in STL path)
+            "elbo": ell + logq,  # TRUE ELBO (target + entropy)
+            "elbo_like": ell,  # ELBO-like term (target only, for debugging)
             "logq": logq,
             "radius2": jnp.dot(tilde_v, tilde_v),  # ||tilde_v||^2
             "Ln_batch": Ln_batch,  # Minibatch loss

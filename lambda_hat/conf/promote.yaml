@@ -1,5 +1,5 @@
 # Asset promotion configuration
 runs_root: runs
-samplers: sgld,hmc,mclmc
+samplers: sgld,hmc,mclmc,vi
 outdir: assets
 plot_name: trace.png
