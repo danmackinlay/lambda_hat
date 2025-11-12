@@ -24,6 +24,8 @@ uv run lambda-hat-promote      --help
 
 ## Workflow (Snakemake is canonical)
 
+**Two-stage pipeline:** Stage A builds targets (neural networks + datasets), Stage B runs MCMC samplers. Snakemake orchestrates N targets × M samplers in parallel.
+
 ```bash
 uv run snakemake -n                 # dry run
 uv run snakemake -j 4               # local
@@ -49,11 +51,12 @@ uv run ruff check --fix
 * Edit `config/experiments.yaml`; nested keys only (`cfg.data.n_data`, not `cfg.n_data`).
 * Artifacts live under `runs/targets/tgt_<hash>/`.
 
-## Don’t
+## Don't
 
-* Don’t run `python -m ...` for entry points.
-* Don’t bump BlackJAX/JAX without updating code paths.
-* Don’t add back-compat shims; fail fast.
+* Don't run entry points directly; always use `uv run` and prefer Snakemake for workflows.
+* Don't bump BlackJAX/JAX without updating code paths.
+* Don't add back-compat shims; fail fast.
+* Don't use legacy Hydra CLI (removed); Snakemake + OmegaConf is the only supported workflow.
 
 
 ## API cheat-sheet  (use these, do not “upgrade” them)
