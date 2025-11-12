@@ -284,10 +284,10 @@ The code uses Haiku/Optax conventions (PyTrees everywhere) and keeps your style 
 
 ## 1) Variational plug‑in estimator (ready to paste)
 
-> Save as `llc/vi_plugin.py` (or similar). It’s a single file with no third‑party runtime deps beyond `jax`, `jax.numpy`, and `optax`. Comments flag the key theoretical bits and how they map to code.
+> Save as `lambda_hat/vi_plugin.py` (or similar). It’s a single file with no third‑party runtime deps beyond `jax`, `jax.numpy`, and `optax`. Comments flag the key theoretical bits and how they map to code.
 
 ```python
-# llc/vi_plugin.py
+# lambda_hat/vi_plugin.py
 # Variational plug-in estimator for the Local Learning Coefficient (LLC)
 # Equal-mean mixture of factor analyzers, shared diagonal D, rank r >= 1.
 # STL for continuous params, Rao–Blackwellized gradient for mixture weights.
@@ -735,11 +735,11 @@ def fit_vi_and_estimate_lambda(
 Here’s a minimal usage sketch that mirrors your `sampling.py` “vibe”. You likely already have `loss_batch_fn` and `loss_full_fn`—these stubs just show the shape.
 
 ```python
-# llc/run_vi_llc.py
+# lambda_hat/run_vi_lambda_hat.py
 import jax, jax.numpy as jnp
 import haiku as hk
 import optax
-from llc.vi_plugin import VIConfig, fit_vi_and_estimate_lambda
+from lambda_hat.vi_plugin import VIConfig, fit_vi_and_estimate_lambda
 
 # Your trained weights (PyTree), data, and loss fns:
 # - loss_batch_fn(params, (Xb, Yb)) -> scalar mean loss on minibatch
