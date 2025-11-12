@@ -84,23 +84,41 @@ def softplus(x: jnp.ndarray) -> jnp.ndarray:
     return jax.nn.softplus(x)
 
 
-def diag_from_rho(rho: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray]:
-    """Convert rho parameters to shared diagonal D.
+def diag_from_rho(rho: jnp.ndarray, eps: float = 1e-8) -> Tuple[jnp.ndarray, jnp.ndarray]:
+    """Convert rho parameters to shared diagonal D with stability clipping.
 
     Args:
         rho: (d,) unconstrained parameters
+        eps: Small constant for numerical stability
 
     Returns:
-        D_sqrt: (d,) D^{1/2} where D = softplus(rho)^2
+        D_sqrt: (d,) D^{1/2} where D = softplus(rho)^2, clipped to [1e-4, 1e2]
         logdet_D: scalar log|D| = 2 * sum(log(D_sqrt))
     """
     D_sqrt = softplus(rho)  # (d,)
-    logdet_D = 2.0 * jnp.sum(jnp.log(D_sqrt))
+    # Clip to safe range for float32 stability
+    D_sqrt = jnp.clip(D_sqrt, 1e-4, 1e2)
+    logdet_D = 2.0 * jnp.sum(jnp.log(D_sqrt + eps))  # Add eps for log stability
     return D_sqrt, logdet_D
 
 
+def normalize_columns(A: jnp.ndarray, max_norm: float = 10.0) -> jnp.ndarray:
+    """Normalize columns of A to prevent explosion (stability for float32).
+
+    Args:
+        A: (d, r) matrix
+        max_norm: Maximum allowed column norm
+
+    Returns:
+        A with columns clipped to max_norm
+    """
+    norms = jnp.linalg.norm(A, axis=0, keepdims=True)  # (1, r)
+    scale = jnp.minimum(1.0, max_norm / (norms + 1e-8))
+    return A * scale
+
+
 def init_vi_params(key: jax.random.PRNGKey, params_flat: jnp.ndarray, M: int, r: int) -> VIParams:
-    """Initialize variational parameters.
+    """Initialize variational parameters with stability features.
 
     Args:
         key: JRNG key
@@ -109,7 +127,7 @@ def init_vi_params(key: jax.random.PRNGKey, params_flat: jnp.ndarray, M: int, r:
         r: Rank budget per component
 
     Returns:
-        VIParams with small random initialization
+        VIParams with small random initialization and column normalization
     """
     d = params_flat.size
     dtype = params_flat.dtype
@@ -119,8 +137,10 @@ def init_vi_params(key: jax.random.PRNGKey, params_flat: jnp.ndarray, M: int, r:
     # Shared diagonal: initialize to small positive values (D ≈ I after softplus)
     rho = jnp.zeros((d,), dtype=dtype)
 
-    # Low-rank factors: small random initialization
-    A = 0.05 * jax.random.normal(k1, (M, d, r), dtype=dtype)
+    # Low-rank factors: small random initialization with column normalization
+    A_raw = 0.05 * jax.random.normal(k1, (M, d, r), dtype=dtype)
+    # Normalize columns of each component for stability
+    A = jax.vmap(normalize_columns)(A_raw)
 
     # Mixture logits: near-uniform (alpha ≈ 0 => pi ≈ 1/M)
     alpha = jnp.zeros((M,), dtype=dtype)
@@ -207,8 +227,9 @@ def logpdf_components_and_resp(
 
     def one_component(A_m):
         """Compute log-pdf for one component using Woodbury identity."""
-        # C = I + A^T A (r x r matrix)
-        C = jnp.eye(r, dtype=A_m.dtype) + (A_m.T @ A_m)
+        # C = I + A^T A + eps*I (r x r matrix, ridge for float32 stability)
+        eps_ridge = 1e-6
+        C = jnp.eye(r, dtype=A_m.dtype) * (1.0 + eps_ridge) + (A_m.T @ A_m)
         # Cholesky for stability
         L = jnp.linalg.cholesky(C)
 
