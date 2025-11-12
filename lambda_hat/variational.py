@@ -377,6 +377,7 @@ def build_elbo_step(
     loss_batch_fn: Callable,
     data: Tuple[jnp.ndarray, jnp.ndarray],
     wstar_flat: jnp.ndarray,
+    unravel_fn: Callable,
     n_data: int,
     beta: float,
     gamma: float,
@@ -390,6 +391,7 @@ def build_elbo_step(
         loss_batch_fn: Function (params, minibatch) -> scalar loss
         data: Full dataset (X, Y)
         wstar_flat: (d,) flattened center parameters (w*)
+        unravel_fn: Function to reconstruct PyTree from flat array
         n_data: Number of data points
         beta: Inverse temperature (typically 1/log(n))
         gamma: Localizer strength
@@ -409,10 +411,8 @@ def build_elbo_step(
 
     # Flatten/unflatten utilities (closure over wstar structure)
     def unflatten(flat: jnp.ndarray) -> Any:
-        """Unflatten to match wstar structure."""
-        # For now, assume wstar is already flat (single array)
-        # In full implementation, would use tree_unflatten from wstar's treedef
-        return flat
+        """Unflatten to match wstar PyTree structure."""
+        return unravel_fn(flat)
 
     @jax.jit
     def step_fn(
@@ -436,12 +436,15 @@ def build_elbo_step(
         # 3) ELBO objective: ℓ(w) = -nβ L_batch(w) - ½γ ||tilde_v||^2
         # (STL: no explicit -log q term in gradients for continuous params)
         Ln_batch = loss_batch_fn(w, Xb, Yb)  # Mean loss on batch
-        localizer = 0.5 * gamma_val * jnp.dot(tilde_v, tilde_v)
-        ell = -(beta_tilde * Ln_batch + localizer)
+        half = jnp.asarray(0.5, dtype=ref_dtype)
+        localizer = half * gamma_val * jnp.dot(tilde_v, tilde_v)
+        ell = jnp.asarray(-(beta_tilde * Ln_batch + localizer), dtype=ref_dtype)
 
         # 4) Compute responsibilities and log q(w) for RB
         logps, r = logpdf_components_and_resp(tilde_v, params)
-        logq = jax.nn.logsumexp(jax.nn.log_softmax(params.alpha) + logps)
+        logq = jnp.asarray(
+            jax.nn.logsumexp(jax.nn.log_softmax(params.alpha) + logps), dtype=ref_dtype
+        )
 
         # RB payoff (centered by baseline)
         payoff = (ell - logq) - state.baseline
@@ -459,8 +462,8 @@ def build_elbo_step(
             tilde_v_new = K_m_z + D_sqrt_new * eps
             w_new = unflatten(wstar_flat + whitener.from_tilde(tilde_v_new))
 
-            Ln_b = loss_batch_fn(w_new, minibatch)
-            loc = 0.5 * gamma_val * jnp.dot(tilde_v_new, tilde_v_new)
+            Ln_b = loss_batch_fn(w_new, Xb, Yb)
+            loc = half * gamma_val * jnp.dot(tilde_v_new, tilde_v_new)
             return -(beta_tilde * Ln_b + loc)  # Maximize ell => minimize -ell
 
         # Continuous gradients via STL
@@ -470,7 +473,12 @@ def build_elbo_step(
         pi = jax.nn.softmax(params.alpha)
         g_alpha = (r - pi) * payoff
 
-        grads = VIParams(rho=grads_cont.rho, A=grads_cont.A, alpha=g_alpha)
+        # Cast all gradients to ref_dtype to prevent float64 promotion
+        grads = VIParams(
+            rho=jnp.asarray(grads_cont.rho, dtype=ref_dtype),
+            A=jnp.asarray(grads_cont.A, dtype=ref_dtype),
+            alpha=jnp.asarray(g_alpha, dtype=ref_dtype),
+        )
 
         # 6) Optax update
         updates, new_opt_state = optimizer.update(grads, state.opt_state, params)
@@ -480,7 +488,11 @@ def build_elbo_step(
         new_params = new_params._replace(A=jax.vmap(normalize_columns)(new_params.A))
 
         # 7) Update baseline (EMA)
-        new_baseline = 0.99 * state.baseline + 0.01 * (ell - logq)
+        # Cast constants to ref_dtype to prevent float64 promotion
+        decay = jnp.asarray(0.99, dtype=ref_dtype)
+        rate = jnp.asarray(0.01, dtype=ref_dtype)
+        baseline_update = decay * state.baseline + rate * (ell - logq)
+        new_baseline = jnp.asarray(baseline_update, dtype=ref_dtype)
 
         new_state = VIOptState(
             opt_state=new_opt_state,
@@ -545,14 +557,17 @@ def apply_control_variate(
     Eq_Ln_cv = Eq_Ln_cv_raw + trace_term
 
     # Diagnostics
+    cv_var = jnp.var(cv_samples)
     cv_info = {
         "Eq_Ln_mc": jnp.mean(loss_samples),  # Raw MC estimate (no CV)
         "Eq_Ln_cv": Eq_Ln_cv,  # CV-corrected estimate
         "trace_term": trace_term,  # 0.5 * tr(H Sigma_q)
         "mean_quadratic": jnp.mean(quadratics),  # Mean of 0.5 * v^T H v
-        "variance_reduction": jnp.var(loss_samples) / jnp.var(cv_samples)
-        if jnp.var(cv_samples) > 1e-10
-        else jnp.array(1.0),  # Variance reduction factor
+        "variance_reduction": jnp.where(
+            cv_var > 1e-10,
+            jnp.var(loss_samples) / cv_var,
+            jnp.array(1.0),
+        ),  # Variance reduction factor
     }
 
     return Eq_Ln_cv, cv_info
@@ -566,6 +581,7 @@ def fit_vi_and_estimate_lambda(
     loss_batch_fn: Callable,
     loss_full_fn: Callable,
     wstar_flat: jnp.ndarray,
+    unravel_fn: Callable,
     data: Tuple[jnp.ndarray, jnp.ndarray],
     n_data: int,
     beta: float,
@@ -587,6 +603,7 @@ def fit_vi_and_estimate_lambda(
         loss_batch_fn: Function (params, minibatch) -> scalar loss
         loss_full_fn: Function (params) -> scalar loss on full dataset
         wstar_flat: (d,) flattened ERM parameters (center of local posterior)
+        unravel_fn: Function to reconstruct PyTree from flat array
         data: Tuple of (X, Y)
         n_data: Number of data points
         beta: Inverse temperature (typically 1/log(n))
@@ -622,6 +639,7 @@ def fit_vi_and_estimate_lambda(
         loss_batch_fn=loss_batch_fn,
         data=data,
         wstar_flat=wstar_flat,
+        unravel_fn=unravel_fn,
         n_data=n_data,
         beta=beta,
         gamma=gamma,
@@ -653,7 +671,8 @@ def fit_vi_and_estimate_lambda(
 
     # Flatten/unflatten utilities
     def unflatten(flat: jnp.ndarray) -> Any:
-        return flat  # Assume flat structure for now
+        """Unflatten to match wstar PyTree structure."""
+        return unravel_fn(flat)
 
     # Final MC estimation on FULL dataset with HVP control variate
     eval_keys = jax.random.split(key_eval, eval_samples)
@@ -663,7 +682,8 @@ def fit_vi_and_estimate_lambda(
         """Sample from trained q and evaluate full-dataset loss."""
         w_flat, aux = sample_q(eval_key, final_params, wstar_flat, whitener)
         # Get perturbation in model coordinates: v = w - w*
-        v = w_flat - wstar_flat
+        # Cast to match wstar_flat dtype
+        v = jnp.asarray(w_flat - wstar_flat, dtype=wstar_flat.dtype)
         w = unflatten(w_flat)
         loss = loss_full_fn(w)
         return v, loss

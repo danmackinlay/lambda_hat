@@ -768,6 +768,7 @@ def run_vi(
             loss_batch_fn=loss_batch_fn,
             loss_full_fn=loss_full_fn,
             wstar_flat=params_flat,
+            unravel_fn=unravel_fn,
             data=data,
             n_data=n_data,
             beta=beta,
