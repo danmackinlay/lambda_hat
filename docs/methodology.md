@@ -2,6 +2,8 @@
 
 This document details the mathematical formulation of the Local Learning Coefficient (LLC) estimator $\hat{\lambda}$ and the implementation details of the Stochastic Gradient Langevin Dynamics (SGLD) algorithms used in this project, following the approach in Hitchcock and Hoogland.
 
+**Note**: This project also implements Variational Inference (VI) as an alternative to MCMC sampling. See [`vi.md`](vi.md) for VI-specific methodology.
+
 ## Local Learning Coefficient (LLC) Estimator ($\hat\lambda$)
 
 In Singular Learning Theory (SLT), the LLC $\lambda(w_0)$ characterizes the volume scaling rate of the loss landscape near a minimum $w_0$. We estimate this quantity using the estimator $\hat\lambda(w_0)$.

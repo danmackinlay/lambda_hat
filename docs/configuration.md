@@ -29,6 +29,7 @@ samplers:
   - { name: hmc }
   - { name: sgld, overrides: { step_size: 1e-6, eval_every: 50 }, seed: 12345 }
   - { name: mclmc, overrides: { draws: 5000 } }
+  - { name: vi, overrides: { M: 8, r: 2, gamma: 0.001 }, seed: 54321 }
 ```
 
 Then run the full pipeline:
