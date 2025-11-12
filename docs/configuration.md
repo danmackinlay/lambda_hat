@@ -61,7 +61,6 @@ Key parameters:
 - `target_params`: Approximate total number of parameters (widths are inferred)
 - `activation`: Activation function (`relu`, `tanh`, `gelu`, `identity`)
 - `bias`: Whether to use bias terms
-- `skip_connections`: Whether to use residual connections
 
 **Example new preset** (`lambda_hat/conf/model/deep.yaml`):
 ```yaml
@@ -69,7 +68,6 @@ depth: 6
 target_params: 50000
 activation: relu
 bias: true
-skip_connections: true
 ```
 
 ### Data Presets (`lambda_hat/conf/data/`)

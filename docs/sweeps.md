@@ -182,10 +182,6 @@ targets:
   # Baseline
   - { model: base, data: base, seed: 42 }
 
-  # No skip connections
-  - { model: base, data: base, seed: 42,
-      overrides: { model: { skip_connections: false } }}
-
   # No bias terms
   - { model: base, data: base, seed: 42,
       overrides: { model: { bias: false } }}

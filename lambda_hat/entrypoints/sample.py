@@ -73,8 +73,6 @@ def main():
         activation=mcfg.get("activation", "relu"),
         bias=mcfg.get("bias", True),
         init=mcfg.get("init", "he"),
-        skip=mcfg.get("skip_connections", False),
-        residual_period=mcfg.get("residual_period", 2),
         layernorm=mcfg.get("layernorm", False),
     )
 

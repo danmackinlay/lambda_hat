@@ -94,16 +94,7 @@ class MLP(hk.Module):
                 z = hk.LayerNorm(axis=-1, create_scale=True, create_offset=True)(z)
 
             h_new = act(z)
-
-            # Skip connections with dimension compatibility check
-            if (
-                self.skip
-                and (i % self.residual_period == self.residual_period - 1)
-                and h.shape[-1] == h_new.shape[-1]
-            ):
-                h = h + h_new
-            else:
-                h = h_new
+            h = h_new
 
         # Output layer (always Xavier initialization for stability)
         output_init = hk.initializers.VarianceScaling(1.0, "fan_in", "truncated_normal")
