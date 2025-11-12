@@ -1,92 +1,59 @@
+Minimal rules for this repo. Deviations break CI.
 
-# CLAUDE.md
+## Versions (hard pins)
+- **Python ≥ 3.11**
+- **JAX ≥ 0.7.1** (use `jax.tree.map`, `jax.lax.scan`, etc.)
+- **BlackJAX == 1.2.5** (don’t import newer APIs)
+- Use **uv** for everything; use **Snakemake** for workflows.
 
-Critical guidance for working with this LLC estimation codebase.
-
-## Essential Commands
+## Install
 
 ```bash
-# Setup (Python 3.11+ required)
-uv sync --extra cpu          # For CPU/macOS
-uv sync --extra cuda12       # For CUDA 12 (Linux)
+uv sync --extra cpu        # CPU/macOS
+uv sync --extra cuda12     # CUDA 12 (Linux)
+```
 
-# Direct Python execution (always use uv run)
-uv run python -m lambda_hat.entrypoints.sample --help
-uv run python script.py     # Instead of: python script.py
+## Run (always via uv)
 
-# Snakemake workflows
-uv run snakemake -n                     # Preview DAG
-uv run snakemake -j 4                   # Run with 4 parallel jobs
-uv run snakemake --profile slurm -j 100 # Run on SLURM cluster
+```bash
+# Console scripts from pyproject.toml
+uv run lambda-hat-build-target --config-yaml config.yaml --target-id tgt_abc123
+uv run lambda-hat-sample       --config-yaml config.yaml --target-id tgt_abc123
+uv run lambda-hat-promote      --help
+```
 
-# Direct entry points (low-level, prefer Snakemake)
-uv run python -m lambda_hat.entrypoints.build_target --config-yaml config.yaml --target-id tgt_abc123
-uv run python -m lambda_hat.entrypoints.sample --config-yaml config.yaml --target-id tgt_abc123
+## Workflow (Snakemake is canonical)
 
-# Testing
-uv run pytest tests/                           # All tests
+```bash
+uv run snakemake -n                 # dry run
+uv run snakemake -j 4               # local
+uv run snakemake --profile slurm -j 100   # cluster
+```
 
-# lint before commits
+## Testing & Lint
+
+```bash
+uv run pytest -q
 uv run ruff format
 uv run ruff check --fix
 ```
 
-**Snakemake Workflow:**
-```bash
-# Configure experiments in config/experiments.yaml (N targets × M samplers)
-# Then run the full pipeline:
-uv run snakemake -j 4                    # Local execution
-uv run snakemake --profile slurm -j 100  # HPC cluster
-```
+## Precision & APIs
 
-## Architecture Overview
+* SGLD: `float32`; HMC/MCLMC: `float64`.
+* Haiku call shape: `model.apply(params, None, X)`.
+* Use `jax.tree.map` (not deprecated `tree_map`), `jax.flatten_util.ravel_pytree`, `jax.random.split`.
 
-**Two-Stage LLC Estimation Pipeline:**
+## Config
 
-**Stage A (Target Building):**
-- `lambda_hat/targets.py`: Neural network target creation (Haiku)
-- `lambda_hat/data.py`: Synthetic dataset generation
-- `lambda_hat/training.py`: ERM optimization to find L₀ reference loss
-- Content-addressed artifact storage with deterministic fingerprinting
+* Edit `config/experiments.yaml`; nested keys only (`cfg.data.n_data`, not `cfg.n_data`).
+* Artifacts live under `runs/targets/tgt_<hash>/`.
 
-**Stage B (MCMC Sampling):**
-- `lambda_hat/sampling.py`: SGLD, HMC, MCLMC sampling (BlackJAX)
-- `lambda_hat/analysis.py`: LLC computation: λ̂ = n × β × (E[Lₙ(w)] - L₀)
-- Enhanced visualization with FGE tracking and efficiency analysis
+## Don’t
 
-**Configuration:**
-- OmegaConf-based YAML configs in `lambda_hat/conf/` and `config/experiments.yaml`
-- Nested access: `cfg.data.n_data`, `cfg.model.target_params`
-- Deterministic target IDs computed by content-addressed fingerprinting
-
-## Implementation Notes
-
-**No defensive coding or back compat:**
-- prefer fail-fast errors.
-- we pin package versions rather than introspecting APIs or versions
-
-**MCMC:**
-- JAX 64-bit precision for HMC/MCLMC: `jax.config.update("jax_enable_x64", True)`
-- Haiku models need RNG parameter: `model.apply(params, None, X)`
-- SGLD uses float32, HMC/MCLMC use float64
-
-**Analysis Pipeline:**
-- Use `analyze_traces()` with pre-computed Ln values (memory efficient)
-- Samplers track Full-Data Gradient Evaluations (FGEs) and precise timing
-- Enhanced visualization includes convergence plots, WNV analysis, and ArviZ diagnostics
-
-**Configuration Patterns:**
-- Nested access: `cfg.data.n_data` (not `cfg.n_data`)
-- Warmup handling: Analysis gracefully handles warmup >= draws
-- Output to content-addressed `runs/targets/tgt_*/` directories
-
-## Common Issues
-
-**Configuration:**
-- Use nested access: `cfg.data.n_data`, not `cfg.n_data`
-- Target IDs computed deterministically from config fingerprints
-- Sampler configs must exist in `lambda_hat/conf/sampler/`
-- Edit `config/experiments.yaml` to configure N×M sweeps
+* Don’t run `python -m ...` for entry points.
+* Don’t bump BlackJAX/JAX without updating code paths.
+* Don’t add back-compat shims; fail fast.
 
 
 ## API cheat-sheet  (use these, do not “upgrade” them)
