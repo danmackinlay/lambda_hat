@@ -780,6 +780,7 @@ def run_vi(
             lr=config.lr,
             eval_samples=config.eval_samples,
             whitener=whitener,
+            eps=config.eps,
         )
 
     # Vmap across chains: returns (lambda_hats, all_traces, all_extras)
@@ -822,6 +823,9 @@ def run_vi(
         "Eq_Ln_mean": float(jnp.mean(Eq_Ln_values)),
         "Eq_Ln_std": float(jnp.std(Eq_Ln_values)),
         "Ln_wstar": float(Ln_wstar),
+        # Radius² diagnostics (final value from each chain)
+        "radius2_mean": float(jnp.mean(all_traces["radius2"][:, -1])),
+        "radius2_std": float(jnp.std(all_traces["radius2"][:, -1])),
     }
 
     return SamplerRunResult(traces=traces, timings=timings, work=work)
