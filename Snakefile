@@ -33,12 +33,16 @@ def compose_build_cfg(t):
 def compose_sample_cfg(tid, s):
     base = OmegaConf.load(CONF / "sample" / "base.yaml")
     smpl = OmegaConf.load(CONF / "sample" / "sampler" / f"{s['name']}.yaml")
-    cfg = OmegaConf.merge(base, smpl, {
-        "target_id": tid,
-        "jax": {"enable_x64": JAX64},
-        "store": {"root": STORE},
-        "runtime": {"seed": s.get("seed", 12345)}
-    })
+    cfg = OmegaConf.merge(
+        base,
+        {"sampler": smpl},
+        {
+            "target_id": tid,
+            "jax": {"enable_x64": JAX64},
+            "store": {"root": STORE},
+            "runtime": {"seed": s.get("seed", 12345)}
+        }
+    )
     if "overrides" in s:
         cfg = OmegaConf.merge(cfg, {"sampler": {s["name"]: s["overrides"]}})
     return cfg
