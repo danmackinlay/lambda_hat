@@ -6,22 +6,22 @@ Main LLC estimation function using optimized samplers.
 import logging
 import time
 from pathlib import Path
-from typing import Dict, Any
+from typing import Any, Dict
 
 import jax
-from omegaconf import OmegaConf
 from hydra.core.hydra_config import HydraConfig
+from omegaconf import OmegaConf
 
-from lambda_hat.config import Config
-from lambda_hat.targets import build_target, make_loss_full
-from lambda_hat.posterior import (
-    make_grad_loss_minibatch,
-    compute_beta_gamma,
-    make_logpost,
-)
-from lambda_hat.sampling import run_hmc, run_sgld, run_sgld_basic, run_mclmc
 from lambda_hat.analysis import analyze_traces
 from lambda_hat.artifacts import save_run_artifacts
+from lambda_hat.config import Config
+from lambda_hat.posterior import (
+    compute_beta_gamma,
+    make_grad_loss_minibatch,
+    make_logpost,
+)
+from lambda_hat.sampling import run_hmc, run_mclmc, run_sgld, run_sgld_basic
+from lambda_hat.targets import build_target, make_loss_full
 
 # Setup logging
 log = logging.getLogger(__name__)
@@ -39,9 +39,7 @@ def setup_jax_environment():
         log.info("Using CPU backend")
 
 
-def run_sampler(
-    sampler_name: str, cfg: Config, target, key: jax.random.PRNGKey
-) -> Dict[str, Any]:
+def run_sampler(sampler_name: str, cfg: Config, target, key: jax.random.PRNGKey) -> Dict[str, Any]:
     """Run a specific sampler and return results"""
     log.info(f"Running {sampler_name} sampler...")
 
@@ -112,7 +110,7 @@ def run_sampler(
             initial_params=initial_params,
             params0=params0,
             data=(target.X, target.Y),
-            config=cfg.sampler.sgld,     # reuse SGLD config: steps, batch_size, step_size, eval_every
+            config=cfg.sampler.sgld,  # reuse SGLD config: steps, batch_size, step_size, eval_every
             num_chains=cfg.sampler.chains,
             beta=beta,
             gamma=gamma,
@@ -192,13 +190,17 @@ def main(cfg: Config) -> None:
             elapsed_external = time.time() - start_time
 
             # Use internal precise timings if available
-            if 'timings' in sampler_results and sampler_results['timings']:
-                timings = sampler_results['timings']
-                log.info(f"{sampler_name} completed. Total (Internal): {timings.get('total', 0.0):.2f}s | Adaptation: {timings.get('adaptation', 0.0):.2f}s | Sampling: {timings.get('sampling', 0.0):.2f}s")
+            if "timings" in sampler_results and sampler_results["timings"]:
+                timings = sampler_results["timings"]
+                log.info(
+                    f"{sampler_name} completed. Total (Internal): {timings.get('total', 0.0):.2f}s | Adaptation: {timings.get('adaptation', 0.0):.2f}s | Sampling: {timings.get('sampling', 0.0):.2f}s"
+                )
                 # We prioritize internal timing for the final result structure
-                sampler_results["elapsed_time"] = timings.get('total', elapsed_external)
+                sampler_results["elapsed_time"] = timings.get("total", elapsed_external)
             else:
-                log.info(f"{sampler_name} completed in {elapsed_external:.2f}s (external measurement)")
+                log.info(
+                    f"{sampler_name} completed in {elapsed_external:.2f}s (external measurement)"
+                )
                 sampler_results["elapsed_time"] = elapsed_external
 
             results[sampler_name] = sampler_results
@@ -210,7 +212,7 @@ def main(cfg: Config) -> None:
     # Analyze results
     log.info("Analyzing results...")
     analysis_results = {}
-    inference_data = {} # Store InferenceData objects
+    inference_data = {}  # Store InferenceData objects
 
     for sampler_name, sampler_data in results.items():
         try:
@@ -221,9 +223,9 @@ def main(cfg: Config) -> None:
             # Determine warmup draws to discard (burn-in)
             warmup_draws = 0
             if sampler_name in ["sgld", "sgld_basic"]:
-                eval_every = getattr(cfg.sampler.sgld, 'eval_every', 100)
-                steps = getattr(cfg.sampler.sgld, 'steps', 0)
-                warmup_steps = getattr(cfg.sampler.sgld, 'warmup', 0)
+                eval_every = getattr(cfg.sampler.sgld, "eval_every", 100)
+                steps = getattr(cfg.sampler.sgld, "steps", 0)
+                warmup_steps = getattr(cfg.sampler.sgld, "warmup", 0)
                 warmup_draws = warmup_steps // max(1, eval_every)
                 recorded_draws = steps // max(1, eval_every)
                 if warmup_draws >= recorded_draws:
@@ -244,6 +246,7 @@ def main(cfg: Config) -> None:
             )
             # Debug instrumentation for degenerate data detection
             from lambda_hat.analysis import _debug_print_idata
+
             _debug_print_idata(idata, sampler_name)
             # Non-degeneracy nudges (post-hoc warnings)
             C = idata.posterior["llc"].sizes.get("chain", 1)
@@ -251,10 +254,12 @@ def main(cfg: Config) -> None:
             if C < 2:
                 log.info(f"[{sampler_name}] Only {C} chain(s); r-hat will be NaN.")
             if T < 20:
-                log.info(f"[{sampler_name}] Only {T} post-warmup draws; ESS/r-hat may be unreliable.")
+                log.info(
+                    f"[{sampler_name}] Only {T} post-warmup draws; ESS/r-hat may be unreliable."
+                )
 
             analysis_results[sampler_name] = metrics
-            inference_data[sampler_name] = idata # Store idata
+            inference_data[sampler_name] = idata  # Store idata
 
             # Update logging terminology
             log.info(f"{sampler_name} LLC (hat{{lambda}}) metrics:")
@@ -277,7 +282,7 @@ def main(cfg: Config) -> None:
         save_run_artifacts(
             results=results,
             analysis_results=analysis_results,
-            inference_data=inference_data, # Pass the new inference_data
+            inference_data=inference_data,  # Pass the new inference_data
             target=target,
             cfg=cfg,
             output_dir=hydra_output_dir,

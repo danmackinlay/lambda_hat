@@ -2,6 +2,7 @@
 """Analysis functions for LLC experiments with proper visualization"""
 
 from __future__ import annotations
+
 import warnings
 from pathlib import Path
 from typing import Dict, Optional, Tuple
@@ -11,11 +12,11 @@ import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
 
 
 def _debug_print_idata(idata, name: str):
     """Debug helper to identify degenerate arrays in InferenceData."""
+
     def _summ(v):
         arr = np.asarray(v)
         return dict(
@@ -281,6 +282,7 @@ def create_arviz_diagnostics(inference_data: Dict[str, az.InferenceData], output
             except Exception:
                 warnings.warn(f"Failed to create energy plot for {sampler_name}")
 
+
 def create_combined_convergence_plot(
     inference_data: Dict[str, az.InferenceData], output_dir: Path
 ) -> None:
@@ -368,13 +370,14 @@ def create_combined_convergence_plot(
     # Use log scale for X axis if the range is large
     # Check the last value of the first chain (or the draws axis)
     if use_fge and fges.shape[1] > 0 and fges[0, -1] > 5000:
-        ax.set_xscale('log')
+        ax.set_xscale("log")
     elif not use_fge and T > 5000:
-        ax.set_xscale('log')
+        ax.set_xscale("log")
 
     plt.tight_layout()
     plt.savefig(output_dir / "llc_convergence_combined.png", dpi=150, bbox_inches="tight")
     plt.close(fig)
+
 
 def create_work_normalized_variance_plot(
     inference_data: Dict[str, az.InferenceData], output_dir: Path

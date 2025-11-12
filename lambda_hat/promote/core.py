@@ -8,6 +8,7 @@ from typing import Dict, List, Tuple
 
 DEFAULT_FILENAME = "llc_convergence_combined.png"
 
+
 def find_run_dirs(runs_root: Path, target_id: str | None, sampler: str | None) -> List[Path]:
     """Find run directories based on target_id and/or sampler filtering."""
     base = runs_root / "targets"
@@ -75,7 +76,7 @@ def promote(
     Copy diagnostics/<plot_name> from newest run_* per sampler to assets/<sampler>.png
     """
     if verbose:
-        logging.basicConfig(level=logging.INFO, format='%(message)s')
+        logging.basicConfig(level=logging.INFO, format="%(message)s")
 
     outdir.mkdir(parents=True, exist_ok=True)
     latest_runs = gather_latest_runs(runs_root, samplers, plot_name)

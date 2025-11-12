@@ -8,7 +8,6 @@ import blackjax
 import blackjax.mcmc.integrators as bj_integrators
 import jax
 import jax.numpy as jnp
-from jax.tree_util import tree_map
 
 if TYPE_CHECKING:
     from lambda_hat.config import SGLDConfig
@@ -146,7 +145,9 @@ def inference_loop_extended(
         )
         trace_data["energy"] = getattr(info, "energy", jnp.nan)
         # Standardize divergence key (handle both 'is_divergent' and 'diverging')
-        trace_data["is_divergent"] = getattr(info, "is_divergent", getattr(info, "diverging", False))
+        trace_data["is_divergent"] = getattr(
+            info, "is_divergent", getattr(info, "diverging", False)
+        )
 
         return (new_state, new_cumulative_work, t + 1, aux_data), trace_data
 
@@ -374,9 +375,7 @@ def run_sgld(
         precond_state = state.precond_state
 
         # 1. Sample minibatch (potentially in f64)
-        indices = jax.random.choice(
-            key_batch, n_data, shape=(batch_size,), replace=True
-        )
+        indices = jax.random.choice(key_batch, n_data, shape=(batch_size,), replace=True)
         minibatch_raw = (X[indices], Y[indices])
 
         # 1.5 Cast minibatch to required dtype (e.g., f32 for SGLD)
@@ -467,15 +466,15 @@ def run_sgld(
 
 def run_sgld_basic(
     rng_key: jax.random.PRNGKey,
-    grad_loss_fn: Callable,                 # gradient of mean minibatch loss
+    grad_loss_fn: Callable,  # gradient of mean minibatch loss
     initial_params: Dict[str, Any],
-    params0: Dict[str, Any],                # ERM center w0
+    params0: Dict[str, Any],  # ERM center w0
     data: Tuple[jnp.ndarray, jnp.ndarray],
     config: "SGLDConfig",
     num_chains: int,
     beta: float,
     gamma: float,
-    loss_full_fn: Optional[Callable] = None # for Ln recording
+    loss_full_fn: Optional[Callable] = None,  # for Ln recording
 ) -> SamplerRunResult:
     """Reference SGLD using BlackJAX's sgld kernel (no preconditioning)."""
     if loss_full_fn is None:
@@ -490,20 +489,24 @@ def run_sgld_basic(
     # Gradient estimator of log posterior: -(γ(w-w0) + nβ * grad_Lmini)
     def grad_logpost_estimator(w, minibatch):
         Xb, Yb = minibatch
-        Xb = Xb.astype(ref_dtype); Yb = Yb.astype(ref_dtype)
+        Xb = Xb.astype(ref_dtype)
+        Yb = Yb.astype(ref_dtype)
         gL = grad_loss_fn(w, (Xb, Yb))  # gradient of mean minibatch loss
         # -(gamma*(w-w0) + n*beta*gL)
-        return jax.tree.map(lambda wi, w0i, gi: -(gamma_val * (wi - w0i) + beta_tilde * gi),
-                            w, params0, gL)
+        return jax.tree.map(
+            lambda wi, w0i, gi: -(gamma_val * (wi - w0i) + beta_tilde * gi), w, params0, gL
+        )
 
     sgld = blackjax.sgld(grad_logpost_estimator)
 
     # Init chains (jitter the start a bit, like run_sgld)
     key, init_key, sample_key = jax.random.split(rng_key, 3)
     init_keys = jax.random.split(init_key, num_chains)
+
     def init_chain(k, p):
         noise = jax.tree.map(lambda q: 0.01 * jax.random.normal(k, q.shape, q.dtype), p)
         return jax.tree.map(lambda q, n: q + n, p, noise)
+
     init_positions = jax.vmap(init_chain, in_axes=(0, None))(init_keys, initial_params)
 
     # Kernel: one step of BlackJAX SGLD with our minibatch
@@ -520,6 +523,7 @@ def run_sgld_basic(
 
     # Aux: Ln(position) - ensure dtype consistency
     loss_full_fn_jitted = jax.jit(loss_full_fn)
+
     def aux_fn(position):
         Ln = loss_full_fn_jitted(position)
         # Cast to ref_dtype to ensure consistency
@@ -534,16 +538,19 @@ def run_sgld_basic(
     sampling_start_time = time.time()
     traces = jax.vmap(
         lambda k, s: inference_loop_extended(
-            k, sgld_basic_kernel, s,
+            k,
+            sgld_basic_kernel,
+            s,
             num_samples=config.steps,
             aux_fn=aux_fn,
             aux_every=eval_every,
-            work_per_step=work_per_step)
+            work_per_step=work_per_step,
+        )
     )(chain_keys, init_positions)
     jax.block_until_ready(traces)
     sampling_time = time.time() - sampling_start_time
 
-    timings = {'adaptation': 0.0, 'sampling': sampling_time, 'total': sampling_time}
+    timings = {"adaptation": 0.0, "sampling": sampling_time, "total": sampling_time}
     return SamplerRunResult(traces=traces, timings=timings)
 
 

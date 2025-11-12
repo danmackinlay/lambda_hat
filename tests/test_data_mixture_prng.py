@@ -1,10 +1,12 @@
 """Test mixture data generation PRNG coupling."""
 
+from dataclasses import replace
+
+import jax.numpy as jnp
+from jax import random
+
 from lambda_hat.config import Config
 from lambda_hat.data import sample_X
-from jax import random
-import jax.numpy as jnp
-from dataclasses import replace
 
 
 def test_mixture_prng_no_coupling():

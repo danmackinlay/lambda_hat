@@ -4,6 +4,7 @@ Entry point for lambda-hat command (Hydra-based LLC estimation).
 """
 
 import hydra
+
 from lambda_hat.config import Config
 from lambda_hat.main import main as main_func
 
