@@ -632,14 +632,19 @@ def fit_vi_and_estimate_lambda(
 
     # Run optimization loop
     def scan_body(carry, step_idx):
-        params, state = carry
+        params, state, cumulative_fge = carry
         step_key = jax.random.fold_in(key_opt, step_idx)
         (new_params, new_state), metrics = step_fn(step_key, params, state)
-        return (new_params, new_state), metrics
+        new_fge = cumulative_fge + metrics["work_fge"]
+        # Add cumulative FGE to metrics for tracing
+        metrics_with_fge = {**metrics, "cumulative_fge": new_fge}
+        return (new_params, new_state, new_fge), metrics_with_fge
 
-    init_carry = (vi_params, vi_state)
+    init_carry = (vi_params, vi_state, jnp.array(0.0, dtype=jnp.float64))
     step_indices = jnp.arange(steps)
-    (final_params, final_state), trace_metrics = jax.lax.scan(scan_body, init_carry, step_indices)
+    (final_params, final_state, _), trace_metrics = jax.lax.scan(
+        scan_body, init_carry, step_indices
+    )
 
     # Extract final variational parameters
     rho_final, A_final, alpha_final = final_params
@@ -656,9 +661,9 @@ def fit_vi_and_estimate_lambda(
     # Sample perturbations and compute losses
     def sample_perturbation_and_loss(eval_key):
         """Sample from trained q and evaluate full-dataset loss."""
-        w_flat, tilde_v = sample_q(eval_key, final_params, wstar_flat, whitener)
-        # Get perturbation in original (non-whitened) coordinates
-        v = whitener.from_tilde(tilde_v)
+        w_flat, aux = sample_q(eval_key, final_params, wstar_flat, whitener)
+        # Get perturbation in model coordinates: v = w - w*
+        v = w_flat - wstar_flat
         w = unflatten(w_flat)
         loss = loss_full_fn(w)
         return v, loss
