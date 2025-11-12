@@ -15,6 +15,7 @@ from typing import Any, Callable, Dict, NamedTuple, Optional, Tuple
 
 import jax
 import jax.numpy as jnp
+import optax
 
 # === Whitening Infrastructure ===
 
@@ -233,3 +234,143 @@ def logpdf_components_and_resp(
     r = jax.nn.softmax(alpha + logps - logmix)
 
     return logps, r
+
+
+# === Optimizer State ===
+
+
+class VIOptState(NamedTuple):
+    """Optimizer state for VI training."""
+
+    opt_state: optax.OptState  # Optax optimizer state
+    baseline: jnp.ndarray  # Scalar EMA baseline for RB estimator
+    step: jnp.ndarray  # int32 step counter
+
+
+# === ELBO Optimization ===
+
+
+def build_elbo_step(
+    loss_batch_fn: Callable,
+    data: Tuple[jnp.ndarray, jnp.ndarray],
+    wstar_flat: jnp.ndarray,
+    n_data: int,
+    beta: float,
+    gamma: float,
+    batch_size: int,
+    whitener: Whitener,
+    optimizer: optax.GradientTransformation,
+) -> Callable:
+    """Build one ELBO optimization step with STL and RB gradients.
+
+    Args:
+        loss_batch_fn: Function (params, minibatch) -> scalar loss
+        data: Full dataset (X, Y)
+        wstar_flat: (d,) flattened center parameters (w*)
+        n_data: Number of data points
+        beta: Inverse temperature (typically 1/log(n))
+        gamma: Localizer strength
+        batch_size: Minibatch size
+        whitener: Geometry whitening transformation
+        optimizer: Optax optimizer
+
+    Returns:
+        JIT-compiled step function: (key, params, state) -> ((params, state), metrics)
+    """
+    X, Y = data
+    ref_dtype = wstar_flat.dtype
+
+    # Precompute constants
+    beta_tilde = jnp.asarray(beta * n_data, dtype=ref_dtype)
+    gamma_val = jnp.asarray(gamma, dtype=ref_dtype)
+
+    # Flatten/unflatten utilities (closure over wstar structure)
+    def unflatten(flat: jnp.ndarray) -> Any:
+        """Unflatten to match wstar structure."""
+        # For now, assume wstar is already flat (single array)
+        # In full implementation, would use tree_unflatten from wstar's treedef
+        return flat
+
+    @jax.jit
+    def step_fn(
+        key: jax.random.PRNGKey, params: VIParams, state: VIOptState
+    ) -> Tuple[Tuple[VIParams, VIOptState], Dict[str, jnp.ndarray]]:
+        """One ELBO optimization step."""
+
+        # 1) Sample w ~ q (pathwise)
+        w_flat, aux = sample_q(key, params, wstar_flat, whitener)
+        w = unflatten(w_flat)
+        tilde_v = aux["tilde_v"]
+        m = aux["m"]
+        z = aux["z"]
+        eps = aux["eps"]
+
+        # 2) Draw minibatch
+        key_batch = jax.random.split(key)[0]
+        idx = jax.random.choice(key_batch, X.shape[0], shape=(batch_size,), replace=True)
+        minibatch = (X[idx], Y[idx])
+
+        # 3) ELBO objective: ℓ(w) = -nβ L_batch(w) - ½γ ||tilde_v||^2
+        # (STL: no explicit -log q term in gradients for continuous params)
+        Ln_batch = loss_batch_fn(w, minibatch)  # Mean loss on batch
+        localizer = 0.5 * gamma_val * jnp.dot(tilde_v, tilde_v)
+        ell = -(beta_tilde * Ln_batch + localizer)
+
+        # 4) Compute responsibilities and log q(w) for RB
+        logps, r = logpdf_components_and_resp(tilde_v, params)
+        logq = jax.nn.logsumexp(jax.nn.log_softmax(params.alpha) + logps)
+
+        # RB payoff (centered by baseline)
+        payoff = (ell - logq) - state.baseline
+
+        # 5) Gradients:
+        # - Continuous (rho, A): STL pathwise via w -> ell, stop-grad for log q
+        # - Mixture logits (alpha): RB score gradient (r - pi) * payoff
+
+        def ell_only(p: VIParams) -> jnp.ndarray:
+            """Rebuild sample with new params, stop-grad for log q path."""
+            rho, A, alpha = p  # noqa: F841 (alpha not used, but needed for signature)
+            D_sqrt_new = softplus(rho)
+            A_m = A[m]
+            K_m_z = (D_sqrt_new[:, None] * A_m) @ z
+            tilde_v_new = K_m_z + D_sqrt_new * eps
+            w_new = unflatten(wstar_flat + whitener.from_tilde(tilde_v_new))
+
+            Ln_b = loss_batch_fn(w_new, minibatch)
+            loc = 0.5 * gamma_val * jnp.dot(tilde_v_new, tilde_v_new)
+            return -(beta_tilde * Ln_b + loc)  # Maximize ell => minimize -ell
+
+        # Continuous gradients via STL
+        loss_val, grads_cont = jax.value_and_grad(ell_only)(params)
+
+        # RB gradient for alpha
+        pi = jax.nn.softmax(params.alpha)
+        g_alpha = (r - pi) * payoff
+
+        grads = VIParams(rho=grads_cont.rho, A=grads_cont.A, alpha=g_alpha)
+
+        # 6) Optax update
+        updates, new_opt_state = optimizer.update(grads, state.opt_state, params)
+        new_params = optax.apply_updates(params, updates)
+
+        # 7) Update baseline (EMA)
+        new_baseline = 0.99 * state.baseline + 0.01 * (ell - logq)
+
+        new_state = VIOptState(
+            opt_state=new_opt_state,
+            baseline=new_baseline,
+            step=state.step + jnp.array(1, dtype=jnp.int32),
+        )
+
+        # Metrics for tracing
+        metrics = {
+            "elbo_like": ell,  # ELBO-like term (no explicit entropy in STL path)
+            "logq": logq,
+            "radius2": jnp.dot(tilde_v, tilde_v),  # ||tilde_v||^2
+            "Ln_batch": Ln_batch,  # Minibatch loss
+            "work_fge": jnp.asarray(batch_size / float(n_data), dtype=jnp.float64),  # FGEs
+        }
+
+        return (new_params, new_state), metrics
+
+    return step_fn

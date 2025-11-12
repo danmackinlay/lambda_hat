@@ -8,6 +8,9 @@ import blackjax
 import blackjax.mcmc.integrators as bj_integrators
 import jax
 import jax.numpy as jnp
+import optax
+
+from lambda_hat import variational as vi
 
 if TYPE_CHECKING:
     from lambda_hat.config import SGLDConfig, VIConfig
@@ -719,12 +722,15 @@ def run_vi(
     loss_full_fn: Callable,  # mean loss on full dataset
     initial_params: Dict[str, Any],  # ERM parameters (w*)
     data: Tuple[jnp.ndarray, jnp.ndarray],
-    config: "VIConfig",  # Import from lambda_hat.config
+    config: "VIConfig",
     num_chains: int,
     beta: float,
     gamma: float,
 ) -> SamplerRunResult:
-    """Variational inference sampler (STUB - to be implemented in Stage 3-5)
+    """Variational inference sampler using mixture of factor analyzers.
+
+    Implements STL (sticking-the-landing) pathwise gradients for continuous params
+    and Rao-Blackwellized score gradients for mixture weights.
 
     Args:
         rng_key: JRNG key
@@ -747,27 +753,116 @@ def run_vi(
     # Start timer
     total_start_time = time.time()
 
-    # STUB: Create dummy traces with correct shapes
-    # In real implementation, this will be replaced with actual VI optimization
-    # Shape: (num_chains, num_effective_samples)
-    # VI records every eval_every steps, so effective samples = steps // eval_every
-    num_effective_samples = config.steps // config.eval_every
+    # Flatten initial parameters
+    params_flat, unravel_fn = jax.flatten_util.ravel_pytree(initial_params)
 
-    # Create dummy traces (will be replaced with real VI in later stages)
-    traces = {
-        "Ln": jnp.full((num_chains, num_effective_samples), jnp.nan, dtype=ref_dtype),
-        "cumulative_fge": jnp.linspace(
-            0.0,
-            float(config.steps * config.batch_size / n_data),
-            num_effective_samples,
-            dtype=jnp.float64,
-        )[None, :].repeat(num_chains, axis=0),
-        "acceptance_rate": jnp.ones((num_chains, num_effective_samples), dtype=ref_dtype),
-        "energy": jnp.full((num_chains, num_effective_samples), jnp.nan, dtype=ref_dtype),
-        "is_divergent": jnp.zeros((num_chains, num_effective_samples), dtype=bool),
-    }
+    # Create whitener (for now: identity, no geometry whitening)
+    # TODO Stage 6: Add geometry whitening support
+    whitener = vi.make_whitener(None)
 
+    # Initialize VI parameters and optimizer
+    key_init, key_run = jax.random.split(rng_key)
+    vi_params = vi.init_vi_params(key_init, params_flat, M=config.M, r=config.r)
+
+    optimizer = optax.adam(config.lr)
+    opt_state = optimizer.init(vi_params)
+    vi_state = vi.VIOptState(
+        opt_state=opt_state,
+        baseline=jnp.array(0.0, dtype=ref_dtype),
+        step=jnp.array(0, dtype=jnp.int32),
+    )
+
+    # Build ELBO step function
+    step_fn = vi.build_elbo_step(
+        loss_batch_fn=loss_batch_fn,
+        data=data,
+        wstar_flat=params_flat,
+        n_data=n_data,
+        beta=beta,
+        gamma=gamma,
+        batch_size=config.batch_size,
+        whitener=whitener,
+        optimizer=optimizer,
+    )
+
+    # Run optimization loop with periodic evaluation
+    def run_one_chain(chain_key):
+        """Run VI optimization for one chain."""
+
+        def scan_body(carry, step_idx):
+            """One optimization step with periodic eval."""
+            params, state, cumulative_fge = carry
+            step_key = jax.random.fold_in(chain_key, step_idx)
+
+            # Take one ELBO step
+            (new_params, new_state), metrics = step_fn(step_key, params, state)
+
+            # Update cumulative work
+            new_fge = cumulative_fge + metrics["work_fge"]
+
+            # Record traces every eval_every steps
+            should_record = (step_idx + 1) % config.eval_every == 0
+
+            def record_fn(_):
+                Ln = loss_full_fn(unravel_fn(params_flat))  # noqa: F821
+                return {
+                    "Ln": Ln,
+                    "cumulative_fge": new_fge,
+                    "acceptance_rate": jnp.array(1.0, dtype=ref_dtype),  # Always 1.0 for VI
+                    "energy": metrics["elbo_like"],  # Use ELBO as "energy"
+                    "is_divergent": False,
+                    "radius2": metrics["radius2"],
+                    "logq": metrics["logq"],
+                }
+
+            def skip_fn(_):
+                return {
+                    "Ln": jnp.array(jnp.nan, dtype=ref_dtype),
+                    "cumulative_fge": new_fge,
+                    "acceptance_rate": jnp.array(1.0, dtype=ref_dtype),
+                    "energy": metrics["elbo_like"],
+                    "is_divergent": False,
+                    "radius2": metrics["radius2"],
+                    "logq": metrics["logq"],
+                }
+
+            trace_data = jax.lax.cond(should_record, record_fn, skip_fn, operand=None)
+
+            return (new_params, new_state, new_fge), trace_data
+
+        # Initialize
+        init_carry = (vi_params, vi_state, jnp.array(0.0, dtype=jnp.float64))
+        steps = jnp.arange(config.steps)
+
+        # Run scan
+        final_carry, trace_dict = jax.lax.scan(scan_body, init_carry, steps)
+
+        # Thin traces to keep only recorded steps
+        def thin_trace(arr):
+            # Keep every eval_every-th element
+            indices = jnp.arange(0, config.steps, config.eval_every)
+            return arr[indices]
+
+        thinned_trace = jax.tree.map(thin_trace, trace_dict)
+
+        return thinned_trace
+
+    # Run num_chains independent chains
+    chain_keys = jax.random.split(key_run, num_chains)
+    all_traces = jax.vmap(run_one_chain)(chain_keys)
+
+    # Ensure computation is complete
+    jax.block_until_ready(all_traces)
     total_time = time.time() - total_start_time
+
+    # Convert to expected trace format (C, T)
+    traces = {
+        "Ln": all_traces["Ln"],
+        "cumulative_fge": all_traces["cumulative_fge"],
+        "acceptance_rate": all_traces["acceptance_rate"],
+        "energy": all_traces["energy"],
+        "is_divergent": all_traces["is_divergent"],
+    }
 
     timings = {
         "adaptation": 0.0,  # VI has no separate adaptation phase
@@ -775,9 +870,10 @@ def run_vi(
         "total": total_time,
     }
 
-    # Work tracking: VI uses minibatch gradients + periodic full loss evals
+    # Work tracking
+    num_effective_samples = config.steps // config.eval_every
     work = {
-        "n_full_loss": float(num_effective_samples * num_chains),  # Eval every eval_every
+        "n_full_loss": float(num_effective_samples * num_chains),
         "n_minibatch_grads": float(config.steps * config.batch_size / n_data),
     }
 
