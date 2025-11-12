@@ -12,6 +12,9 @@ CONF = Path("lambda_hat/conf")
 STORE = config.get("store_root", "runs")
 JAX64 = bool(config.get("jax_enable_x64", True))
 
+# Load promotion config
+PROM = OmegaConf.load(CONF / "promote.yaml")
+
 def compose_build_cfg(t):
     cfg = OmegaConf.load(CONF / "workflow.yaml")
     cfg = OmegaConf.merge(
@@ -67,6 +70,14 @@ for tid, bcfg in TARGETS:
         scfg = compose_sample_cfg(tid, s)
         rid = run_id_for(scfg)
         RUNS.append((tid, s["name"], rid, scfg))
+
+# Extract unique sampler names for promotion
+SAMPLERS = sorted({s for _, s, _, _ in RUNS})
+
+def _sampler_run_analysis(wc):
+    """All analysis.json for a given sampler across all targets/runs."""
+    return [f"{STORE}/targets/{tid}/run_{wc.sampler}_{rid}/analysis.json"
+            for (tid, s, rid, _cfg) in RUNS if s == wc.sampler]
 
 rule all:
     input:
@@ -124,3 +135,79 @@ rule run_sampler:
           --target-id {params.tid} \
           --run-dir {params.rdir} > {log} 2>&1
         """
+
+# Promotion rules (explicit target, not part of default 'all')
+
+rule promote_trace:
+    input:
+        _sampler_run_analysis
+    output:
+        png = f"{PROM.outdir}/trace_{{sampler}}.png"
+    params:
+        samplers = lambda wc: wc.sampler,
+        plot = "trace.png",
+        outdir = PROM.outdir,
+        store = STORE
+    wildcard_constraints:
+        sampler = "|".join(SAMPLERS)
+    shell:
+        r"""
+        mkdir -p {params.outdir}
+        uv run lambda-hat-promote single \
+          --runs-root {params.store} \
+          --samplers {params.samplers} \
+          --outdir {params.outdir} \
+          --plot-name {params.plot}
+        mv {params.outdir}/{params.samplers}.png {output.png}
+        """
+
+rule promote_convergence:
+    input:
+        _sampler_run_analysis
+    output:
+        png = f"{PROM.outdir}/convergence_{{sampler}}.png"
+    params:
+        samplers = lambda wc: wc.sampler,
+        plot = "llc_convergence_combined.png",
+        outdir = PROM.outdir,
+        store = STORE
+    wildcard_constraints:
+        sampler = "|".join(SAMPLERS)
+    shell:
+        r"""
+        mkdir -p {params.outdir}
+        uv run lambda-hat-promote single \
+          --runs-root {params.store} \
+          --samplers {params.samplers} \
+          --outdir {params.outdir} \
+          --plot-name {params.plot}
+        mv {params.outdir}/{params.samplers}.png {output.png}
+        """
+
+rule promote_gallery:
+    input:
+        [f"{STORE}/targets/{tid}/run_{sampler}_{rid}/analysis.json"
+         for tid, sampler, rid, _ in RUNS]
+    output:
+        md = f"{PROM.outdir}/gallery_trace.md"
+    params:
+        samplers = ",".join(SAMPLERS),
+        plot = "trace.png",
+        outdir = PROM.outdir,
+        store = STORE
+    shell:
+        r"""
+        mkdir -p {params.outdir}
+        uv run lambda-hat-promote gallery \
+          --runs-root {params.store} \
+          --samplers {params.samplers} \
+          --outdir {params.outdir} \
+          --plot-name {params.plot} \
+          --snippet-out {output.md}
+        """
+
+rule promote:
+    input:
+        expand(f"{PROM.outdir}/trace_{{sampler}}.png", sampler=SAMPLERS),
+        expand(f"{PROM.outdir}/convergence_{{sampler}}.png", sampler=SAMPLERS),
+        f"{PROM.outdir}/gallery_trace.md"
