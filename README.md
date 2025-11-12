@@ -31,7 +31,7 @@ This repo provides benchmark estimators of LLC on small but non-trivial neural n
 
 * [BlackJAX](https://github.com/blackjax-devs/blackjax/tree/1.2.5) for sampling
 * [ArviZ](https://python.arviz.org/) for diagnostics,
-* [Hydra](https://hydra.cc/) for configuration management
+* [OmegaConf](https://omegaconf.readthedocs.io/) for configuration management
 * [Haiku](https://github.com/haiku/haiku) for neural network definitions.
 
 We target networks with dimension up to about $10^5$ which means we can ground-truth against classic samplers like HMC (which we expect to become non-viable in higher dimension or dataset size).
@@ -50,6 +50,74 @@ uv sync --extra cuda12   # For CUDA 12 (Linux)
 # Or using pip:
 pip install .[cpu]       # For CPU/macOS
 pip install .[cuda12]    # For CUDA 12 (Linux)
+```
+
+---
+
+## Entrypoints
+
+Lambda-Hat provides three command-line tools that implement the two-stage workflow. Snakemake orchestrates these automatically, but they can also be invoked directly for debugging or custom workflows.
+
+### `lambda-hat-build-target` (Stage A)
+
+Builds a neural network target artifact: trains a model, saves parameters, data, and metadata.
+
+```bash
+uv run lambda-hat-build-target \
+  --config-yaml config/composed.yaml \
+  --target-id tgt_abc123 \
+  --target-dir runs/targets/tgt_abc123
+```
+
+**Outputs:**
+- `meta.json` — config snapshot, dimensions, L0, package versions
+- `params.npz` — trained neural network parameters
+- `data.npz` — training dataset (X, Y)
+
+**Key features:**
+- Content-addressed target IDs ensure reproducibility
+- Precision mode (`jax_enable_x64`) recorded in metadata
+- Reference loss L0 computed and stored for LLC estimation
+
+### `lambda-hat-sample` (Stage B)
+
+Runs an MCMC sampler on a pre-built target artifact.
+
+```bash
+uv run lambda-hat-sample \
+  --config-yaml config/sampler.yaml \
+  --target-id tgt_abc123 \
+  --run-dir runs/targets/tgt_abc123/run_hmc_ab12cd34
+```
+
+**Outputs:**
+- `trace.nc` — ArviZ-compatible NetCDF trace with chains and diagnostics
+- `analysis.json` — computed metrics (LLC estimate, ESS, R-hat, etc.)
+- `diagnostics/` — trace plots, rank plots, convergence diagnostics
+
+**Key features:**
+- Precision guard: fails if sampler x64 setting mismatches target
+- Automatic minibatching for SGLD-family samplers
+- Parallel chain execution with JAX's vmap
+
+### `lambda-hat-promote`
+
+Utility for copying plots from run directories into stable locations for documentation or galleries.
+
+```bash
+# Create an asset gallery with newest run per sampler
+uv run lambda-hat-promote gallery \
+  --runs-root runs \
+  --samplers sgld,hmc,mclmc \
+  --outdir runs/promotion \
+  --snippet-out runs/promotion/gallery.md
+
+# Copy specific plots
+uv run lambda-hat-promote single \
+  --runs-root runs \
+  --samplers sgld \
+  --outdir figures \
+  --plot-name running_llc.png
 ```
 
 ---
