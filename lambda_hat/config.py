@@ -134,6 +134,22 @@ class MCLMCConfig:
 
 
 @dataclass
+class VIConfig:
+    """Variational Inference sampler configuration"""
+
+    M: int = 8  # number of mixture components
+    r: int = 2  # rank budget per component
+    steps: int = 5_000  # optimization steps
+    batch_size: int = 256  # minibatch size
+    lr: float = 0.01  # learning rate
+    eval_every: int = 50  # how often to record metrics
+    gamma: float = 0.001  # localizer strength (may be overridden by posterior config)
+    eval_samples: int = 64  # MC samples for final LLC estimate
+    dtype: str = "float32"  # precision: "float32" or "float64"
+    use_whitening: bool = True  # enable geometry whitening
+
+
+@dataclass
 class SamplerConfig:
     """Combined sampler configuration"""
 
@@ -141,6 +157,7 @@ class SamplerConfig:
     sgld: SGLDConfig = field(default_factory=SGLDConfig)
     hmc: HMCConfig = field(default_factory=HMCConfig)
     mclmc: MCLMCConfig = field(default_factory=MCLMCConfig)
+    vi: VIConfig = field(default_factory=VIConfig)
 
 
 @dataclass
