@@ -2,15 +2,6 @@
 
 In [Singular Learning Theory (SLT)](https://singularlearningtheory.com), the **Local Learning Coefficient (LLC)** quantifies the effective local dimensionality of a model around a trained optimum.
 
-This repo provides benchmark estimators of LLC on small but non-trivial neural networks, using standard industrial tooling:
-
-* [BlackJAX](https://github.com/blackjax-devs/blackjax/tree/1.2.5) for sampling
-* [ArviZ](https://python.arviz.org/) for diagnostics,
-* [Snakemake](https://snakemake.github.io/) for workflow orchestration
-* [OmegaConf](https://omegaconf.readthedocs.io/) for configuration management
-* [Haiku](https://github.com/haiku/haiku) for neural network definitions.
-
-
 ## Concept
 
 The Local Learning Coefficient (LLC) measures the effective number of parameters a neural network *actually* learns from data. Lambda-Hat implements a teacher–student framework with a two-stage design:
