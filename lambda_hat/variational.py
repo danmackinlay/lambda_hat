@@ -431,11 +431,11 @@ def build_elbo_step(
         # 2) Draw minibatch
         key_batch = jax.random.split(key)[0]
         idx = jax.random.choice(key_batch, X.shape[0], shape=(batch_size,), replace=True)
-        minibatch = (X[idx], Y[idx])
+        Xb, Yb = X[idx], Y[idx]
 
         # 3) ELBO objective: ℓ(w) = -nβ L_batch(w) - ½γ ||tilde_v||^2
         # (STL: no explicit -log q term in gradients for continuous params)
-        Ln_batch = loss_batch_fn(w, minibatch)  # Mean loss on batch
+        Ln_batch = loss_batch_fn(w, Xb, Yb)  # Mean loss on batch
         localizer = 0.5 * gamma_val * jnp.dot(tilde_v, tilde_v)
         ell = -(beta_tilde * Ln_batch + localizer)
 
