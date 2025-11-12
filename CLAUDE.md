@@ -61,9 +61,10 @@ uv run ruff check --fix
 
 ## Samplers
 
-**Implemented**: HMC, MCLMC, SGLD (with Adam/RMSProp preconditioning)
-
-**Planned**: Variational Inference (VI) - infrastructure complete, algorithm implementation pending
+**Implemented**:
+- HMC, MCLMC: Full-batch MCMC with adaptation
+- SGLD: Stochastic gradient Langevin dynamics with Adam/RMSProp preconditioning
+- VI: Variational inference using mixture of factor analyzers with STL + Rao-Blackwellized gradients
 
 
 ## API cheat-sheet  (use these, do not "upgrade" them)
