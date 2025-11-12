@@ -61,6 +61,108 @@ def make_whitener(A_diag: Optional[jnp.ndarray], eps: float = 1e-8) -> Whitener:
     )
 
 
+# === HVP (Hessian-Vector Product) Utilities for Control Variate ===
+
+
+def hvp_at_wstar(
+    loss_fn: Callable[[jnp.ndarray], jnp.ndarray],
+    wstar: jnp.ndarray,
+    v: jnp.ndarray,
+) -> jnp.ndarray:
+    """Compute Hessian-vector product H(w*) @ v using forward-over-reverse.
+
+    Args:
+        loss_fn: Loss function taking flattened parameters
+        wstar: Point at which to evaluate Hessian (typically ERM solution)
+        v: Direction vector (same shape as wstar)
+
+    Returns:
+        Hv: Hessian-vector product at wstar
+    """
+    # Forward-over-reverse: efficient for H @ v when H is not explicitly formed
+    # jvp of grad gives us (∇L(w*), H(w*) @ v)
+    grad_fn = jax.grad(loss_fn)
+    _, hvp = jax.jvp(grad_fn, (wstar,), (v,))
+    return hvp
+
+
+def compute_subspace_hessian_diag(
+    loss_fn: Callable[[jnp.ndarray], jnp.ndarray],
+    wstar: jnp.ndarray,
+    params: "VIParams",
+    pi: jnp.ndarray,
+    whitener: Whitener,
+) -> jnp.ndarray:
+    """Compute diagonal of projected Hessian in the learned subspace.
+
+    For each component m and each basis direction A_m[:,j], computes:
+        v_mj = from_whitened(D^{1/2} A_m[:,j])
+        diag_mj = v_mj^T H v_mj
+
+    Args:
+        loss_fn: Loss function (on flattened params)
+        wstar: ERM solution (flattened)
+        params: VI parameters with learned subspace
+        pi: Mixture weights (M,)
+        whitener: Whitening transformation
+
+    Returns:
+        hess_diag: (M, r) array where hess_diag[m,j] = v_mj^T H v_mj
+    """
+    from lambda_hat.variational import diag_from_rho
+
+    D_sqrt, _ = diag_from_rho(params.rho)  # (d,)
+    M, _, r = params.A.shape
+
+    def compute_component_diag(m):
+        """Compute Hessian diagonal for component m."""
+        A_m = params.A[m]  # (d, r)
+
+        def compute_direction_diag(j):
+            """Compute v^T H v for direction j."""
+            # Get whitened direction: tilde_v = D^{1/2} A_m[:,j]
+            tilde_v = D_sqrt * A_m[:, j]  # (d,)
+            # Map to model coordinates: v = from_whitened(tilde_v)
+            v = whitener.from_tilde(tilde_v)  # (d,)
+            # Compute Hv
+            Hv = hvp_at_wstar(loss_fn, wstar, v)  # (d,)
+            # Return v^T H v
+            return jnp.dot(v, Hv)
+
+        # Vmap over r directions
+        return jax.vmap(compute_direction_diag)(jnp.arange(r))
+
+    # Vmap over M components
+    hess_diag = jax.vmap(compute_component_diag)(jnp.arange(M))  # (M, r)
+    return hess_diag
+
+
+def compute_trace_term(
+    hess_diag: jnp.ndarray,
+    pi: jnp.ndarray,
+) -> jnp.ndarray:
+    """Compute tr(H Sigma_q) using subspace approximation.
+
+    For mixture of factor analyzers with Sigma_m = D + K_m K_m^T,
+    the trace is approximately:
+        tr(H Sigma_q) ≈ sum_m pi_m * sum_j (v_mj^T H v_mj)
+
+    where v_mj are the learned basis directions.
+
+    Args:
+        hess_diag: (M, r) array of v^T H v values
+        pi: (M,) mixture weights
+
+    Returns:
+        trace: scalar tr(H Sigma_q)
+    """
+    # Sum over directions within each component
+    component_traces = jnp.sum(hess_diag, axis=1)  # (M,)
+    # Weighted sum over components
+    trace = jnp.dot(pi, component_traces)
+    return trace
+
+
 # === Variational Family Parameters ===
 
 
@@ -401,6 +503,61 @@ def build_elbo_step(
     return step_fn
 
 
+def apply_control_variate(
+    loss_samples: jnp.ndarray,
+    perturbations: jnp.ndarray,
+    loss_fn: Callable[[jnp.ndarray], jnp.ndarray],
+    wstar: jnp.ndarray,
+    hess_diag: jnp.ndarray,
+    pi: jnp.ndarray,
+) -> Tuple[jnp.ndarray, Dict[str, jnp.ndarray]]:
+    """Apply HVP-based control variate to reduce variance of E_q[L] estimate.
+
+    Uses the identity:
+        E_q[L] = E_q[L - 0.5 * v^T H v] + 0.5 * tr(H Sigma_q)
+
+    Args:
+        loss_samples: (S,) array of L(w* + v_s) values
+        perturbations: (S, d) array of v_s samples from q
+        loss_fn: Loss function on flattened params
+        wstar: ERM solution (d,)
+        hess_diag: (M, r) array of v_mj^T H v_mj values from subspace
+        pi: (M,) mixture weights
+
+    Returns:
+        Eq_Ln_cv: Control-variate corrected estimate of E_q[L]
+        cv_info: Dict with intermediate values for diagnostics
+    """
+
+    # Compute 0.5 * v^T H v for each sample
+    def compute_quadratic(v):
+        Hv = hvp_at_wstar(loss_fn, wstar, v)
+        return 0.5 * jnp.dot(v, Hv)
+
+    quadratics = jax.vmap(compute_quadratic)(perturbations)  # (S,)
+
+    # Apply control variate: L - 0.5 * v^T H v
+    cv_samples = loss_samples - quadratics  # (S,)
+    Eq_Ln_cv_raw = jnp.mean(cv_samples)
+
+    # Add trace correction: 0.5 * tr(H Sigma_q)
+    trace_term = 0.5 * compute_trace_term(hess_diag, pi)
+    Eq_Ln_cv = Eq_Ln_cv_raw + trace_term
+
+    # Diagnostics
+    cv_info = {
+        "Eq_Ln_mc": jnp.mean(loss_samples),  # Raw MC estimate (no CV)
+        "Eq_Ln_cv": Eq_Ln_cv,  # CV-corrected estimate
+        "trace_term": trace_term,  # 0.5 * tr(H Sigma_q)
+        "mean_quadratic": jnp.mean(quadratics),  # Mean of 0.5 * v^T H v
+        "variance_reduction": jnp.var(loss_samples) / jnp.var(cv_samples)
+        if jnp.var(cv_samples) > 1e-10
+        else jnp.array(1.0),  # Variance reduction factor
+    }
+
+    return Eq_Ln_cv, cv_info
+
+
 # === High-Level API ===
 
 
@@ -493,23 +650,46 @@ def fit_vi_and_estimate_lambda(
     def unflatten(flat: jnp.ndarray) -> Any:
         return flat  # Assume flat structure for now
 
-    # Final MC estimation on FULL dataset
+    # Final MC estimation on FULL dataset with HVP control variate
     eval_keys = jax.random.split(key_eval, eval_samples)
 
-    def sample_and_eval(eval_key):
+    # Sample perturbations and compute losses
+    def sample_perturbation_and_loss(eval_key):
         """Sample from trained q and evaluate full-dataset loss."""
-        w_flat, _ = sample_q(eval_key, final_params, wstar_flat, whitener)
+        w_flat, tilde_v = sample_q(eval_key, final_params, wstar_flat, whitener)
+        # Get perturbation in original (non-whitened) coordinates
+        v = whitener.from_tilde(tilde_v)
         w = unflatten(w_flat)
-        return loss_full_fn(w)
+        loss = loss_full_fn(w)
+        return v, loss
 
     # Vectorize over eval_samples
-    Ln_samples = jax.vmap(sample_and_eval)(eval_keys)
-    Eq_Ln = jnp.mean(Ln_samples)
+    perturbations, Ln_samples = jax.vmap(sample_perturbation_and_loss)(eval_keys)
 
     # Compute L_n(w*)
     Ln_wstar = loss_full_fn(unflatten(wstar_flat))
 
-    # Compute λ̂_VI = nβ(E_q[L_n] - L_n(w*))
+    # Compute Hessian diagonal in learned subspace for control variate
+    # Create loss function that takes flat params
+    def loss_flat(w_flat):
+        return loss_full_fn(unflatten(w_flat))
+
+    hess_diag = compute_subspace_hessian_diag(
+        loss_fn=loss_flat, wstar=wstar_flat, params=final_params, pi=pi_final, whitener=whitener
+    )
+
+    # Apply control variate to get improved estimate
+    Eq_Ln_cv, cv_info = apply_control_variate(
+        loss_samples=Ln_samples,
+        perturbations=perturbations,
+        loss_fn=loss_flat,
+        wstar=wstar_flat,
+        hess_diag=hess_diag,
+        pi=pi_final,
+    )
+
+    # Use CV-corrected estimate for lambda_hat (can also return raw MC for comparison)
+    Eq_Ln = Eq_Ln_cv  # Use CV-corrected estimate
     lambda_hat = n_data * beta * (Eq_Ln - Ln_wstar)
 
     # Package results
@@ -518,14 +698,20 @@ def fit_vi_and_estimate_lambda(
         "logq": trace_metrics["logq"],
         "radius2": trace_metrics["radius2"],
         "Ln_batch": trace_metrics["Ln_batch"],
+        "cumulative_fge": trace_metrics["cumulative_fge"],
     }
 
     extras = {
         "pi": pi_final,
         "D_sqrt": D_sqrt_final,
-        "Eq_Ln": Eq_Ln,
+        "Eq_Ln": Eq_Ln,  # CV-corrected estimate
+        "Eq_Ln_mc": cv_info["Eq_Ln_mc"],  # Raw MC estimate (for comparison)
+        "Eq_Ln_cv": Eq_Ln_cv,  # CV-corrected estimate (same as Eq_Ln)
         "Ln_wstar": Ln_wstar,
+        "Ln_samples": Ln_samples,
+        "eval_samples": eval_samples,
         "final_params": final_params,
+        "cv_info": cv_info,  # Full CV diagnostics
     }
 
     return lambda_hat, traces, extras
