@@ -13,9 +13,9 @@ if TYPE_CHECKING:
 
 
 def as_dtype(x, dtype_str):  # 'float32' or 'float64'
-    """Convert array or PyTree to specified dtype"""
+    """Convert array or PyTree to specified dtype (ensures JAX arrays)"""
     target_dtype = jnp.float32 if dtype_str == "float32" else jnp.float64
-    return jax.tree.map(lambda arr: arr.astype(target_dtype), x)
+    return jax.tree.map(lambda arr: jnp.asarray(arr, dtype=target_dtype), x)
 
 
 def make_loss_fns(
