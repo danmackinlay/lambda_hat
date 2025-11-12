@@ -7,7 +7,7 @@ In [Singular Learning Theory (SLT)](https://singularlearningtheory.com), the **L
 The Local Learning Coefficient (LLC) measures the effective number of parameters a neural network *actually* learns from data. Lambda-Hat implements a teacher–student framework with a two-stage design:
 
 * **Stage A**: Build and train a neural network target once, generating a reproducible **target artifact**.
-* **Stage B**: Run multiple MCMC samplers on the same target with different configurations.
+* **Stage B**: Run multiple samplers (MCMC or variational) on the same target with different configurations.
 
 This separation provides:
 
@@ -29,10 +29,12 @@ Estimating it can be tricky. That is what we explore here.
 
 This repo provides benchmark estimators of LLC on small but non-trivial neural networks, using standard industrial tooling:
 
-* [BlackJAX](https://github.com/blackjax-devs/blackjax/tree/1.2.5) for sampling
-* [ArviZ](https://python.arviz.org/) for diagnostics,
+* [BlackJAX](https://github.com/blackjax-devs/blackjax/tree/1.2.5) for MCMC sampling (HMC, MCLMC, SGLD)
+* [ArviZ](https://python.arviz.org/) for diagnostics
 * [OmegaConf](https://omegaconf.readthedocs.io/) for configuration management
-* [Haiku](https://github.com/haiku/haiku) for neural network definitions.
+* [Haiku](https://github.com/haiku/haiku) for neural network definitions
+
+**Supported samplers**: HMC, MCLMC, SGLD. Variational Inference (VI) support in development.
 
 We target networks with dimension up to about $10^5$ which means we can ground-truth against classic samplers like HMC (which we expect to become non-viable in higher dimension or dataset size).
 In this regime we can relu upon classic MCMC to tell us the “true” LLC rather than relying on analytic results for approximate networks such as Deep Linear Networks.
@@ -81,7 +83,7 @@ uv run lambda-hat-build-target \
 
 ### `lambda-hat-sample` (Stage B)
 
-Runs an MCMC sampler on a pre-built target artifact.
+Runs a sampler (MCMC or variational) on a pre-built target artifact.
 
 ```bash
 uv run lambda-hat-sample \

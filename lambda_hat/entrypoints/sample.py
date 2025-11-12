@@ -134,10 +134,18 @@ def main():
     # Analysis: traces -> (metrics, idata)
     traces = result["traces"]  # dict of arrays (C, T)
     timings = result["timings"]  # {"adaptation":..., "sampling":..., "total":...}
+    work = result.get("work")  # {"n_full_loss":..., "n_minibatch_grads":...}
     n_data = X_f32.shape[0]
     beta = float(result["beta"])
     metrics, idata = analyze_traces(
-        traces, L0=L0, n_data=n_data, beta=beta, warmup=0, timings=timings
+        traces,
+        L0=L0,
+        n_data=n_data,
+        beta=beta,
+        warmup=0,
+        timings=timings,
+        work=work,
+        sampler_name=sampler_name,
     )
 
     # Write artifacts

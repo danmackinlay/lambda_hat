@@ -24,7 +24,7 @@ uv run lambda-hat-promote      --help
 
 ## Workflow (Snakemake is canonical)
 
-**Two-stage pipeline:** Stage A builds targets (neural networks + datasets), Stage B runs MCMC samplers. Snakemake orchestrates N targets × M samplers in parallel.
+**Two-stage pipeline:** Stage A builds targets (neural networks + datasets), Stage B runs samplers (MCMC or variational). Snakemake orchestrates N targets × M samplers in parallel.
 
 ```bash
 uv run snakemake -n                 # dry run
@@ -42,7 +42,8 @@ uv run ruff check --fix
 
 ## Precision & APIs
 
-* SGLD: `float32`; HMC/MCLMC: `float64`.
+* SGLD: `float32`; HMC/MCLMC: `float64`; VI: `float32` (configurable).
+* Precision is per-sampler via `sampler.<name>.dtype` config field.
 * Haiku call shape: `model.apply(params, None, X)`.
 * Use `jax.tree.map` (not deprecated `tree_map`), `jax.flatten_util.ravel_pytree`, `jax.random.split`.
 
@@ -58,8 +59,14 @@ uv run ruff check --fix
 * Don't add back-compat shims; fail fast.
 * Don't use legacy Hydra CLI (removed); Snakemake + OmegaConf is the only supported workflow.
 
+## Samplers
 
-## API cheat-sheet  (use these, do not “upgrade” them)
+**Implemented**: HMC, MCLMC, SGLD (with Adam/RMSProp preconditioning)
+
+**Planned**: Variational Inference (VI) - infrastructure complete, algorithm implementation pending
+
+
+## API cheat-sheet  (use these, do not "upgrade" them)
 
 * **BlackJAX 1.2.5**
 

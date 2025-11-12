@@ -34,6 +34,7 @@ class SGLDInfo(NamedTuple):
 class SamplerRunResult(NamedTuple):
     traces: Dict[str, jnp.ndarray]
     timings: Dict[str, float]  # {'adaptation': 0.0, 'sampling': 0.0, 'total': 0.0}
+    work: Dict[str, float]  # {'n_full_loss': int, 'n_minibatch_grads': int}
 
 
 def initialize_preconditioner(params: Any) -> PreconditionerState:
@@ -318,7 +319,12 @@ def run_hmc(
         "total": adaptation_time + sampling_time,
     }
 
-    return SamplerRunResult(traces=traces, timings=timings)
+    work = {
+        "n_full_loss": float(num_samples * num_chains),
+        "n_minibatch_grads": 0.0,
+    }
+
+    return SamplerRunResult(traces=traces, timings=timings, work=work)
 
 
 # === SGLD / pSGLD ===
@@ -461,7 +467,15 @@ def run_sgld(
         "total": sampling_time,
     }
 
-    return SamplerRunResult(traces=traces, timings=timings)
+    # Compute work: number of full loss evals + minibatch gradient FGEs
+    # n_full_loss: recorded Ln evaluations (happens every eval_every steps)
+    n_Ln_evals = traces["Ln"].shape[1] if "Ln" in traces else 0
+    work = {
+        "n_full_loss": float(n_Ln_evals * num_chains),
+        "n_minibatch_grads": float(config.steps * batch_size / n_data),
+    }
+
+    return SamplerRunResult(traces=traces, timings=timings, work=work)
 
 
 def run_sgld_basic(
@@ -551,7 +565,15 @@ def run_sgld_basic(
     sampling_time = time.time() - sampling_start_time
 
     timings = {"adaptation": 0.0, "sampling": sampling_time, "total": sampling_time}
-    return SamplerRunResult(traces=traces, timings=timings)
+
+    # Compute work for SGLD basic (same as run_sgld)
+    n_Ln_evals = traces["Ln"].shape[1] if "Ln" in traces else 0
+    work = {
+        "n_full_loss": float(n_Ln_evals * num_chains),
+        "n_minibatch_grads": float(config.steps * batch_size / n_data),
+    }
+
+    return SamplerRunResult(traces=traces, timings=timings, work=work)
 
 
 def run_mclmc(
@@ -667,4 +689,9 @@ def run_mclmc(
         "total": sampling_time,
     }
 
-    return SamplerRunResult(traces=traces, timings=timings)
+    work = {
+        "n_full_loss": float(num_samples * num_chains),
+        "n_minibatch_grads": 0.0,
+    }
+
+    return SamplerRunResult(traces=traces, timings=timings, work=work)

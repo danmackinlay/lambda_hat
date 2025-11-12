@@ -77,6 +77,7 @@ def run_sampler(
         )
         traces = run_result.traces
         timings = run_result.timings
+        work = run_result.work
 
     elif sampler_name == "sgld":
         # Setup SGLD/pSGLD - data already in f32, params may need casting
@@ -111,6 +112,7 @@ def run_sampler(
         )
         traces = run_result.traces
         timings = run_result.timings
+        work = run_result.work
 
     elif sampler_name == "mclmc":
         # Setup MCLMC - cast to f64 for precision
@@ -142,6 +144,14 @@ def run_sampler(
         )
         traces = run_result.traces
         timings = run_result.timings
+        work = run_result.work
+
+    elif sampler_name == "vi":
+        # VI implementation placeholder - will be added in next phase
+        raise NotImplementedError(
+            "Variational inference sampler is configured but not yet implemented. "
+            "Run refactoring is complete; VI algorithm implementation is pending."
+        )
 
     else:
         raise ValueError(f"Unknown sampler: {sampler_name}")
@@ -150,6 +160,7 @@ def run_sampler(
     return {
         "traces": traces,
         "timings": timings,
+        "work": work,
         "sampler_config": getattr(cfg.sampler, sampler_name),
         "beta": beta,
         "gamma": gamma,

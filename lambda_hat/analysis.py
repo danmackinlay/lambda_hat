@@ -52,6 +52,8 @@ def analyze_traces(
     beta: float,
     warmup: int = 0,
     timings: Dict[str, float] = None,
+    work: Dict[str, float] = None,
+    sampler_name: str = None,
 ) -> Tuple[Dict[str, float], az.InferenceData]:
     """Analyze sampling traces, compute LLC metrics, and create InferenceData.
 
@@ -60,6 +62,8 @@ def analyze_traces(
         L0, n_data, beta: Parameters for LLC calculation.
         warmup: Number of recorded draws to discard (burn-in).
         timings: Dictionary of timing information.
+        work: Dictionary of work counts (n_full_loss, n_minibatch_grads).
+        sampler_name: Name of sampler for sampler-specific metrics (e.g., "vi").
 
     Returns:
         Tuple of (metrics dictionary, ArviZ InferenceData).
@@ -144,7 +148,7 @@ def analyze_traces(
     idata = az.from_dict(**data)
 
     # Compute metrics
-    metrics = _compute_metrics_from_idata(idata, llc_values_np, timings)
+    metrics = _compute_metrics_from_idata(idata, llc_values_np, timings, work, sampler_name)
     return metrics, idata
 
 
@@ -152,6 +156,8 @@ def _compute_metrics_from_idata(
     idata: az.InferenceData,
     llc_values_np: np.ndarray,
     timings: Optional[Dict[str, float]],
+    work: Optional[Dict[str, float]] = None,
+    sampler_name: Optional[str] = None,
 ) -> Dict[str, float]:
     """Helper to compute metrics from InferenceData."""
     metrics = {
@@ -184,40 +190,64 @@ def _compute_metrics_from_idata(
     metrics["ess"] = np.nan
     metrics["llc_sem"] = np.nan
 
-    # ESS is available even for 1 chain, but can be noisy for tiny T.
-    # Keep a small threshold to avoid pathological cases.
-    MIN_DRAWS_FOR_ESS = 10
-    if T >= MIN_DRAWS_FOR_ESS:
-        try:
-            bulk = az.ess(idata, var_names=["llc"], method="bulk").to_array().values
-            tail = az.ess(idata, var_names=["llc"], method="tail").to_array().values
-            metrics["ess_bulk"] = float(bulk.flatten()[0]) if bulk.size else np.nan
-            metrics["ess_tail"] = float(tail.flatten()[0]) if tail.size else np.nan
-        except Exception:
-            pass
+    # Sampler-specific metrics
+    if sampler_name == "vi":
+        # VI produces IID draws - ESS = total draws, R-hat undefined
+        metrics["ess"] = float(C * T)
+        metrics["ess_bulk"] = float(C * T)
+        metrics["ess_tail"] = float(C * T)
+        metrics["r_hat"] = float("nan")  # Undefined for IID samples
 
-    # r-hat is meaningful only with multiple chains and enough draws
-    MIN_DRAWS_FOR_RHAT = 20
-    if C >= 2 and T >= MIN_DRAWS_FOR_RHAT:
-        try:
-            rhat = az.rhat(idata, var_names=["llc"]).to_array().values
-            metrics["r_hat"] = float(rhat.flatten()[0]) if rhat.size else np.nan
-        except Exception:
-            pass
+        # Variance estimates for VI
+        if metrics["ess"] > 0:
+            variance_estimate = metrics["llc_std"] ** 2 / metrics["ess"]
+            metrics["llc_sem"] = float(np.sqrt(variance_estimate))
+    else:
+        # MCMC path - use ArviZ diagnostics
+        # ESS is available even for 1 chain, but can be noisy for tiny T.
+        MIN_DRAWS_FOR_ESS = 10
+        if T >= MIN_DRAWS_FOR_ESS:
+            try:
+                bulk = az.ess(idata, var_names=["llc"], method="bulk").to_array().values
+                tail = az.ess(idata, var_names=["llc"], method="tail").to_array().values
+                metrics["ess_bulk"] = float(bulk.flatten()[0]) if bulk.size else np.nan
+                metrics["ess_tail"] = float(tail.flatten()[0]) if tail.size else np.nan
+            except Exception:
+                pass
 
-    # Consolidated ESS
-    ess = min(metrics["ess_bulk"], metrics["ess_tail"])
-    if not np.isnan(ess) and ess > 0:
-        metrics["ess"] = ess
-        # Variance of the estimate (SEM^2) = Var(samples) / ESS
-        variance_estimate = metrics["llc_std"] ** 2 / ess
-        metrics["llc_sem"] = float(np.sqrt(variance_estimate))
+        # r-hat is meaningful only with multiple chains and enough draws
+        MIN_DRAWS_FOR_RHAT = 20
+        if C >= 2 and T >= MIN_DRAWS_FOR_RHAT:
+            try:
+                rhat = az.rhat(idata, var_names=["llc"]).to_array().values
+                metrics["r_hat"] = float(rhat.flatten()[0]) if rhat.size else np.nan
+            except Exception:
+                pass
 
+        # Consolidated ESS for MCMC
+        ess = min(metrics["ess_bulk"], metrics["ess_tail"])
+        if not np.isnan(ess) and ess > 0:
+            metrics["ess"] = ess
+            # Variance of the estimate (SEM^2) = Var(samples) / ESS
+            variance_estimate = metrics["llc_std"] ** 2 / ess
+            metrics["llc_sem"] = float(np.sqrt(variance_estimate))
+
+    # Work-normalized variance (all samplers)
+    if work is not None and not np.isnan(metrics["ess"]) and metrics["ess"] > 0:
+        variance_estimate = metrics["llc_std"] ** 2 / metrics["ess"]
+        total_work = work.get("n_full_loss", 0.0) + work.get("n_minibatch_grads", 0.0)
+        if total_work > 0:
+            metrics["wnv"] = float(variance_estimate * total_work)
+            metrics["efficiency_work"] = float(metrics["ess"] / total_work)
+
+    # Legacy FGE-based metrics (backwards compatibility)
+    if not np.isnan(metrics["ess"]) and metrics["ess"] > 0:
+        variance_estimate = metrics["llc_std"] ** 2 / metrics["ess"]
         if total_fge > 0:
-            metrics["efficiency_fge"] = ess / total_fge
+            metrics["efficiency_fge"] = metrics["ess"] / total_fge
             metrics["wnv_fge"] = variance_estimate * total_fge
         if total_time > 0:
-            metrics["efficiency_time"] = ess / total_time
+            metrics["efficiency_time"] = metrics["ess"] / total_time
             metrics["wnv_time"] = variance_estimate * total_time
 
     return metrics

@@ -6,6 +6,6 @@ hmc:
   warmup: 200
   num_integration_steps: 10
   step_size: 0.01
-  dtype: float64
+  dtype: float64  # Explicit precision for HMC
   adapt_step_size: true
   target_acceptance: 0.8
