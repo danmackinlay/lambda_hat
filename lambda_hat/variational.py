@@ -399,3 +399,133 @@ def build_elbo_step(
         return (new_params, new_state), metrics
 
     return step_fn
+
+
+# === High-Level API ===
+
+
+def fit_vi_and_estimate_lambda(
+    rng_key: jax.random.PRNGKey,
+    loss_batch_fn: Callable,
+    loss_full_fn: Callable,
+    wstar_flat: jnp.ndarray,
+    data: Tuple[jnp.ndarray, jnp.ndarray],
+    n_data: int,
+    beta: float,
+    gamma: float,
+    M: int,
+    r: int,
+    steps: int,
+    batch_size: int,
+    lr: float,
+    eval_samples: int,
+    whitener: Whitener,
+) -> Tuple[float, Dict[str, jnp.ndarray], Dict[str, Any]]:
+    """Fit variational distribution and estimate Local Learning Coefficient.
+
+    Runs ELBO optimization, then performs final MC estimation on full dataset.
+
+    Args:
+        rng_key: JRNG key
+        loss_batch_fn: Function (params, minibatch) -> scalar loss
+        loss_full_fn: Function (params) -> scalar loss on full dataset
+        wstar_flat: (d,) flattened ERM parameters (center of local posterior)
+        data: Tuple of (X, Y)
+        n_data: Number of data points
+        beta: Inverse temperature (typically 1/log(n))
+        gamma: Localizer strength
+        M: Number of mixture components
+        r: Rank budget per component
+        steps: Total optimization steps
+        batch_size: Minibatch size
+        lr: Learning rate for Adam optimizer
+        eval_samples: Number of MC samples for final LLC estimate
+        whitener: Geometry whitening transformation
+
+    Returns:
+        lambda_hat: LLC estimate λ̂_VI = nβ(E_q[L_n] - L_n(w*))
+        traces: Dict of optimization traces (for analysis)
+        extras: Dict with {π, D_sqrt, Eq_Ln, Ln_wstar, final_params}
+    """
+    key_init, key_opt, key_eval = jax.random.split(rng_key, 3)
+    ref_dtype = wstar_flat.dtype
+
+    # Initialize VI parameters and optimizer
+    vi_params = init_vi_params(key_init, wstar_flat, M=M, r=r)
+    optimizer = optax.adam(lr)
+    opt_state = optimizer.init(vi_params)
+    vi_state = VIOptState(
+        opt_state=opt_state,
+        baseline=jnp.array(0.0, dtype=ref_dtype),
+        step=jnp.array(0, dtype=jnp.int32),
+    )
+
+    # Build ELBO step function
+    step_fn = build_elbo_step(
+        loss_batch_fn=loss_batch_fn,
+        data=data,
+        wstar_flat=wstar_flat,
+        n_data=n_data,
+        beta=beta,
+        gamma=gamma,
+        batch_size=batch_size,
+        whitener=whitener,
+        optimizer=optimizer,
+    )
+
+    # Run optimization loop
+    def scan_body(carry, step_idx):
+        params, state = carry
+        step_key = jax.random.fold_in(key_opt, step_idx)
+        (new_params, new_state), metrics = step_fn(step_key, params, state)
+        return (new_params, new_state), metrics
+
+    init_carry = (vi_params, vi_state)
+    step_indices = jnp.arange(steps)
+    (final_params, final_state), trace_metrics = jax.lax.scan(scan_body, init_carry, step_indices)
+
+    # Extract final variational parameters
+    rho_final, A_final, alpha_final = final_params
+    D_sqrt_final, _ = diag_from_rho(rho_final)
+    pi_final = jax.nn.softmax(alpha_final)
+
+    # Flatten/unflatten utilities
+    def unflatten(flat: jnp.ndarray) -> Any:
+        return flat  # Assume flat structure for now
+
+    # Final MC estimation on FULL dataset
+    eval_keys = jax.random.split(key_eval, eval_samples)
+
+    def sample_and_eval(eval_key):
+        """Sample from trained q and evaluate full-dataset loss."""
+        w_flat, _ = sample_q(eval_key, final_params, wstar_flat, whitener)
+        w = unflatten(w_flat)
+        return loss_full_fn(w)
+
+    # Vectorize over eval_samples
+    Ln_samples = jax.vmap(sample_and_eval)(eval_keys)
+    Eq_Ln = jnp.mean(Ln_samples)
+
+    # Compute L_n(w*)
+    Ln_wstar = loss_full_fn(unflatten(wstar_flat))
+
+    # Compute λ̂_VI = nβ(E_q[L_n] - L_n(w*))
+    lambda_hat = n_data * beta * (Eq_Ln - Ln_wstar)
+
+    # Package results
+    traces = {
+        "elbo": trace_metrics["elbo"],
+        "logq": trace_metrics["logq"],
+        "radius2": trace_metrics["radius2"],
+        "Ln_batch": trace_metrics["Ln_batch"],
+    }
+
+    extras = {
+        "pi": pi_final,
+        "D_sqrt": D_sqrt_final,
+        "Eq_Ln": Eq_Ln,
+        "Ln_wstar": Ln_wstar,
+        "final_params": final_params,
+    }
+
+    return lambda_hat, traces, extras
