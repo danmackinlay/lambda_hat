@@ -10,7 +10,7 @@ import jax
 import jax.numpy as jnp
 
 if TYPE_CHECKING:
-    from lambda_hat.config import SGLDConfig
+    from lambda_hat.config import SGLDConfig, VIConfig
 
 
 # Define Preconditioner State structure
@@ -29,6 +29,22 @@ class SGLDInfo(NamedTuple):
     acceptance_rate: jnp.ndarray = jnp.array(1.0)
     energy: jnp.ndarray = jnp.nan
     is_divergent: bool = False
+
+
+class VIState(NamedTuple):
+    """Variational inference state"""
+
+    params: Any  # VI parameters (mixture of factor analyzers)
+    opt_state: Any  # Optax optimizer state
+    step: jnp.ndarray  # Current optimization step
+
+
+class VIInfo(NamedTuple):
+    """Variational inference step info"""
+
+    acceptance_rate: jnp.ndarray = jnp.array(1.0)  # Always 1.0 for VI (IID samples)
+    energy: jnp.ndarray = jnp.nan  # Will store ELBO
+    is_divergent: bool = False  # Always False for VI
 
 
 class SamplerRunResult(NamedTuple):
@@ -692,6 +708,77 @@ def run_mclmc(
     work = {
         "n_full_loss": float(num_samples * num_chains),
         "n_minibatch_grads": 0.0,
+    }
+
+    return SamplerRunResult(traces=traces, timings=timings, work=work)
+
+
+def run_vi(
+    rng_key: jax.random.PRNGKey,
+    loss_batch_fn: Callable,  # mean loss on minibatch
+    loss_full_fn: Callable,  # mean loss on full dataset
+    initial_params: Dict[str, Any],  # ERM parameters (w*)
+    data: Tuple[jnp.ndarray, jnp.ndarray],
+    config: "VIConfig",  # Import from lambda_hat.config
+    num_chains: int,
+    beta: float,
+    gamma: float,
+) -> SamplerRunResult:
+    """Variational inference sampler (STUB - to be implemented in Stage 3-5)
+
+    Args:
+        rng_key: JRNG key
+        loss_batch_fn: Function computing mean loss on a minibatch
+        loss_full_fn: Function computing mean loss on full dataset
+        initial_params: ERM parameters (w*), center of local posterior
+        data: Tuple of (X, Y)
+        config: VIConfig with M, r, steps, batch_size, lr, etc.
+        num_chains: Number of independent VI runs (for consistency checking)
+        beta: Inverse temperature (typically 1/log(n))
+        gamma: Localizer strength
+
+    Returns:
+        SamplerRunResult with traces, timings, and work tracking
+    """
+    X, Y = data
+    n_data = X.shape[0]
+    ref_dtype = jax.tree_util.tree_leaves(initial_params)[0].dtype
+
+    # Start timer
+    total_start_time = time.time()
+
+    # STUB: Create dummy traces with correct shapes
+    # In real implementation, this will be replaced with actual VI optimization
+    # Shape: (num_chains, num_effective_samples)
+    # VI records every eval_every steps, so effective samples = steps // eval_every
+    num_effective_samples = config.steps // config.eval_every
+
+    # Create dummy traces (will be replaced with real VI in later stages)
+    traces = {
+        "Ln": jnp.full((num_chains, num_effective_samples), jnp.nan, dtype=ref_dtype),
+        "cumulative_fge": jnp.linspace(
+            0.0,
+            float(config.steps * config.batch_size / n_data),
+            num_effective_samples,
+            dtype=jnp.float64,
+        )[None, :].repeat(num_chains, axis=0),
+        "acceptance_rate": jnp.ones((num_chains, num_effective_samples), dtype=ref_dtype),
+        "energy": jnp.full((num_chains, num_effective_samples), jnp.nan, dtype=ref_dtype),
+        "is_divergent": jnp.zeros((num_chains, num_effective_samples), dtype=bool),
+    }
+
+    total_time = time.time() - total_start_time
+
+    timings = {
+        "adaptation": 0.0,  # VI has no separate adaptation phase
+        "sampling": total_time,
+        "total": total_time,
+    }
+
+    # Work tracking: VI uses minibatch gradients + periodic full loss evals
+    work = {
+        "n_full_loss": float(num_effective_samples * num_chains),  # Eval every eval_every
+        "n_minibatch_grads": float(config.steps * config.batch_size / n_data),
     }
 
     return SamplerRunResult(traces=traces, timings=timings, work=work)

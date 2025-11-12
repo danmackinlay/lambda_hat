@@ -16,7 +16,7 @@ from lambda_hat.posterior import (
     make_grad_loss_minibatch,
     make_logpost,
 )
-from lambda_hat.sampling import run_hmc, run_mclmc, run_sgld
+from lambda_hat.sampling import run_hmc, run_mclmc, run_sgld, run_vi
 
 log = logging.getLogger(__name__)
 
@@ -27,7 +27,7 @@ def run_sampler(
     """Run a specific sampler and return results
 
     Args:
-        sampler_name: Name of the sampler to run ('sgld', 'hmc', 'mclmc')
+        sampler_name: Name of the sampler to run ('sgld', 'hmc', 'mclmc', 'vi')
         cfg: Sample-stage configuration (from conf/sample/)
         target: TargetBundle with loss functions and parameters
         key: JAX PRNG key
@@ -147,11 +147,36 @@ def run_sampler(
         work = run_result.work
 
     elif sampler_name == "vi":
-        # VI implementation placeholder - will be added in next phase
-        raise NotImplementedError(
-            "Variational inference sampler is configured but not yet implemented. "
-            "Run refactoring is complete; VI algorithm implementation is pending."
+        # Setup VI - data precision based on config (default: float32)
+        dtype = cfg.sampler.vi.dtype
+        params0_typed = as_dtype(target.params0, dtype)
+        X_typed, Y_typed = as_dtype(target.X, dtype), as_dtype(target.Y, dtype)
+
+        # Create loss functions at correct precision
+        loss_full, loss_mini = make_loss_fns(
+            target.model.apply,
+            X_typed,
+            Y_typed,
+            loss_type=cfg.posterior.loss,
+            noise_scale=cfg.data.noise_scale if hasattr(cfg, "data") else 0.1,
+            student_df=cfg.data.student_df if hasattr(cfg, "data") else 4.0,
         )
+
+        # Run VI
+        run_result = run_vi(
+            key,
+            loss_mini,  # minibatch loss fn
+            loss_full,  # full dataset loss fn
+            params0_typed,
+            data=(X_typed, Y_typed),
+            config=cfg.sampler.vi,
+            num_chains=cfg.sampler.chains,
+            beta=beta,
+            gamma=gamma,
+        )
+        traces = run_result.traces
+        timings = run_result.timings
+        work = run_result.work
 
     else:
         raise ValueError(f"Unknown sampler: {sampler_name}")
