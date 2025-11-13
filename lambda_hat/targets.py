@@ -6,7 +6,6 @@ from typing import Any, Callable, Dict
 
 import jax
 import jax.numpy as jnp
-from omegaconf import DictConfig
 
 from lambda_hat.config import validate_teacher_cfg
 
@@ -60,11 +59,8 @@ def build_target(key, cfg: Config) -> tuple[TargetBundle, list[int], list[int] |
         list[int] | None: Resolved teacher widths (None if no teacher)
     """
     m_cfg = cfg.model
-    # Support both legacy string and new mapping forms for cfg.target
-    if isinstance(cfg.target, (dict, DictConfig)):
-        target_name = cfg.target.get("name", "mlp")
-    else:
-        target_name = cfg.target or "mlp"
+    #  mapping forms for cfg.target
+    target_name = cfg.target.get("name", "mlp")
 
     if target_name == "mlp":
         # ----- MLP path with Haiku -----

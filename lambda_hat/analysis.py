@@ -70,30 +70,16 @@ def analyze_traces(
         Tuple of (metrics dictionary, ArviZ InferenceData).
     """
     # Prefer pre-computed LLC if available (modern path)
-    if "llc" in traces:
-        llc_values = traces["llc"]
-        if llc_values.ndim == 1:
-            llc_values = llc_values[None, :]
-        chains, draws = llc_values.shape
+    llc_values = traces["llc"]
+    if llc_values.ndim == 1:
+        llc_values = llc_values[None, :]
+    chains, draws = llc_values.shape
 
-        # Also get Ln if available for posterior tracking
-        Ln_values = traces.get("Ln")
-        if Ln_values is not None:
-            if Ln_values.ndim == 1:
-                Ln_values = Ln_values[None, :]
-    else:
-        # Backwards-compatible fallback: compute LLC from Ln
-        if "Ln" not in traces:
-            raise ValueError("Traces must contain either 'llc' or 'Ln' key.")
-
-        Ln_values = traces["Ln"]
+    # Also get Ln if available for posterior tracking
+    Ln_values = traces.get("Ln")
+    if Ln_values is not None:
         if Ln_values.ndim == 1:
             Ln_values = Ln_values[None, :]
-        chains, draws = Ln_values.shape
-
-        # Compute LLC from Ln (MCMC-style)
-        llc_values = float(n_data) * float(beta) * (Ln_values - L0)
-
     # Validate and apply warmup (burn-in)
     if warmup >= draws:
         warnings.warn(f"Warmup draws ({warmup}) >= total draws ({draws}). Using all samples.")
@@ -268,16 +254,6 @@ def _compute_metrics_from_idata(
         if total_work > 0:
             metrics["wnv"] = float(variance_estimate * total_work)
             metrics["efficiency_work"] = float(metrics["ess"] / total_work)
-
-    # Legacy FGE-based metrics (backwards compatibility)
-    if not np.isnan(metrics["ess"]) and metrics["ess"] > 0:
-        variance_estimate = metrics["llc_std"] ** 2 / metrics["ess"]
-        if total_fge > 0:
-            metrics["efficiency_fge"] = metrics["ess"] / total_fge
-            metrics["wnv_fge"] = variance_estimate * total_fge
-        if total_time > 0:
-            metrics["efficiency_time"] = metrics["ess"] / total_time
-            metrics["wnv_time"] = variance_estimate * total_time
 
     return metrics
 

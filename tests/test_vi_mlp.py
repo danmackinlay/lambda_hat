@@ -11,13 +11,15 @@ with VI's gradient computation (see VI_TEST_INVESTIGATION_FOLLOWUP.md).
 
 # CRITICAL: Enable x64 BEFORE any JAX imports
 import os
+
 os.environ["JAX_ENABLE_X64"] = "1"
 
 import jax
+
 jax.config.update("jax_enable_x64", True)
 
-import jax.numpy as jnp
 import haiku as hk
+import jax.numpy as jnp
 
 from lambda_hat import variational as vi
 from lambda_hat.models import MLP
@@ -38,6 +40,7 @@ def make_tiny_mlp_target(key, in_dim=4, out_dim=1, hidden=8):
         apply_fn: Function to evaluate MLP(params, x)
         d: Total number of parameters (flat)
     """
+
     # Define MLP using Haiku
     def model_fn(x):
         mlp = MLP(widths=[hidden], out_dim=out_dim, activation="relu", bias=True)
@@ -110,6 +113,7 @@ def test_vi_tiny_mlp_convergence():
     # Create teacher (simple linear function)
     key_teacher, key = jax.random.split(key)
     W_teacher = jax.random.normal(key_teacher, (in_dim,))
+
     def teacher_fn(X):
         return X @ W_teacher
 
@@ -127,6 +131,7 @@ def test_vi_tiny_mlp_convergence():
 
     # Find wstar via simple optimization
     import optax
+
     optimizer = optax.adam(0.01)
     params_flat, _ = jax.flatten_util.ravel_pytree(params)
 
@@ -229,6 +234,7 @@ def test_vi_tiny_mlp_cv_reduces_variance():
     # Simple teacher
     key_teacher, key = jax.random.split(key)
     W_teacher = jax.random.normal(key_teacher, (in_dim,))
+
     def teacher_fn(X):
         return X @ W_teacher
 
@@ -245,6 +251,7 @@ def test_vi_tiny_mlp_cv_reduces_variance():
         return jnp.mean((preds - Y) ** 2)
 
     import optax
+
     optimizer = optax.adam(0.01)
     params_flat, _ = jax.flatten_util.ravel_pytree(params)
     opt_state = optimizer.init(params_flat)

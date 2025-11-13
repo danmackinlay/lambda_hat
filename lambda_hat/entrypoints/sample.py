@@ -140,9 +140,6 @@ def main():
     sampler_flavour = None
     if work is not None:
         sampler_flavour = work.get("sampler_flavour")
-    if sampler_flavour is None:
-        # Backwards compatibility: infer from sampler name
-        sampler_flavour = "iid" if sampler_name == "vi" else "markov"
 
     metrics, idata = analyze_traces(
         traces,
