@@ -135,42 +135,18 @@ class MCLMCConfig:
 
 @dataclass
 class VIConfig:
-    """Variational Inference sampler configuration
+    """Variational Inference sampler configuration"""
 
-    Uses mixture of factor analyzers q(w) = Σ πᵢ N(w | w*, Dᵢ + AᵢAᵢᵀ) to approximate
-    the local posterior. Optimizes via STL + Rao-Blackwellized gradients with Optax.
-
-    Architecture:
-        M: Number of mixture components (higher = more expressive, slower)
-        r: Rank per component (r=0 → diagonal, higher → more covariance structure)
-
-    Optimization:
-        steps: Total gradient steps (typical: 1000-10000)
-        batch_size: Minibatch size for stochastic gradients
-        lr: Adam learning rate (typical: 0.001-0.1)
-        eval_every: Record metrics every N steps (for trace.nc)
-
-    Estimation:
-        eval_samples: MC samples for final E_q[Ln] estimate with HVP control variate
-        gamma: Localizer strength (overridden by posterior.gamma if set)
-
-    Numerics:
-        dtype: "float32" (fast) or "float64" (precise). r×r ops always use float64.
-        use_whitening: Enable geometry-based preconditioning (recommended: True)
-        eps: Stability constant for Cholesky ridge, softplus, and whitening (1e-8)
-    """
-
-    M: int = 8
-    r: int = 2
-    steps: int = 5_000
-    batch_size: int = 256
-    lr: float = 0.01
-    eval_every: int = 50
-    gamma: float = 0.001
-    eval_samples: int = 64
-    dtype: str = "float32"
-    use_whitening: bool = True
-    eps: float = 1e-8
+    M: int = 8  # number of mixture components
+    r: int = 2  # rank budget per component
+    steps: int = 5_000  # optimization steps
+    batch_size: int = 256  # minibatch size
+    lr: float = 0.01  # learning rate
+    eval_every: int = 50  # how often to record metrics
+    gamma: float = 0.001  # localizer strength (may be overridden by posterior config)
+    eval_samples: int = 64  # MC samples for final LLC estimate
+    dtype: str = "float32"  # precision: "float32" or "float64"
+    use_whitening: bool = True  # enable geometry whitening
 
 
 @dataclass

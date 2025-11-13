@@ -305,7 +305,7 @@ def sample_q(
 
 
 def logpdf_components_and_resp(
-    tilde_v: jnp.ndarray, params: VIParams, eps: float = 1e-8
+    tilde_v: jnp.ndarray, params: VIParams
 ) -> Tuple[jnp.ndarray, jnp.ndarray]:
     """Compute per-component log-pdfs and responsibilities.
 
@@ -314,7 +314,6 @@ def logpdf_components_and_resp(
     Args:
         tilde_v: (d,) sample in whitened coordinates (w - w* in whitened space)
         params: VI parameters
-        eps: Numerical stability epsilon for Cholesky ridge
 
     Returns:
         logps: (M,) per-component log N(w | w*, Sigma_m)
@@ -323,7 +322,7 @@ def logpdf_components_and_resp(
     rho, A, alpha = params
     M, d, r = A.shape
 
-    D_sqrt, logdet_D = diag_from_rho(rho, eps=eps)
+    D_sqrt, logdet_D = diag_from_rho(rho)
 
     # x = D^{-1/2} v (elementwise divide)
     x = tilde_v / D_sqrt
@@ -331,7 +330,8 @@ def logpdf_components_and_resp(
     def one_component(A_m):
         """Compute log-pdf for one component using Woodbury identity."""
         # C = I + A^T A + eps*I (r x r matrix, ridge for float32 stability)
-        C = jnp.eye(r, dtype=A_m.dtype) * 1.000001 + (A_m.T @ A_m)
+        eps_ridge = 1e-6
+        C = jnp.eye(r, dtype=A_m.dtype) * (1.0 + eps_ridge) + (A_m.T @ A_m)
         # Cholesky for stability
         L = jnp.linalg.cholesky(C)
 
@@ -384,7 +384,6 @@ def build_elbo_step(
     batch_size: int,
     whitener: Whitener,
     optimizer: optax.GradientTransformation,
-    eps: float = 1e-8,
 ) -> Callable:
     """Build one ELBO optimization step with STL and RB gradients.
 
@@ -394,7 +393,6 @@ def build_elbo_step(
         wstar_flat: (d,) flattened center parameters (w*)
         unravel_fn: Function to reconstruct PyTree from flat array
         n_data: Number of data points
-        eps: Numerical stability epsilon
         beta: Inverse temperature (typically 1/log(n))
         gamma: Localizer strength
         batch_size: Minibatch size
@@ -443,7 +441,7 @@ def build_elbo_step(
         ell = jnp.asarray(-(beta_tilde * Ln_batch + localizer), dtype=ref_dtype)
 
         # 4) Compute responsibilities and log q(w) for RB
-        logps, r = logpdf_components_and_resp(tilde_v, params, eps=eps)
+        logps, r = logpdf_components_and_resp(tilde_v, params)
         logq = jnp.asarray(
             jax.nn.logsumexp(jax.nn.log_softmax(params.alpha) + logps), dtype=ref_dtype
         )
@@ -473,8 +471,7 @@ def build_elbo_step(
 
         # RB gradient for alpha
         pi = jax.nn.softmax(params.alpha)
-        # Use stop_gradient on (r - pi) to prevent higher-order differentiation
-        g_alpha = jax.lax.stop_gradient(r - pi) * payoff
+        g_alpha = (r - pi) * payoff
 
         # Cast all gradients to ref_dtype to prevent float64 promotion
         grads = VIParams(
@@ -596,7 +593,6 @@ def fit_vi_and_estimate_lambda(
     lr: float,
     eval_samples: int,
     whitener: Whitener,
-    eps: float = 1e-8,
 ) -> Tuple[float, Dict[str, jnp.ndarray], Dict[str, Any]]:
     """Fit variational distribution and estimate Local Learning Coefficient.
 
@@ -617,7 +613,6 @@ def fit_vi_and_estimate_lambda(
         steps: Total optimization steps
         batch_size: Minibatch size
         lr: Learning rate for Adam optimizer
-        eps: Numerical stability epsilon for Cholesky, softplus, whitening
         eval_samples: Number of MC samples for final LLC estimate
         whitener: Geometry whitening transformation
 
@@ -651,7 +646,6 @@ def fit_vi_and_estimate_lambda(
         batch_size=batch_size,
         whitener=whitener,
         optimizer=optimizer,
-        eps=eps,
     )
 
     # Run optimization loop
@@ -672,7 +666,7 @@ def fit_vi_and_estimate_lambda(
 
     # Extract final variational parameters
     rho_final, A_final, alpha_final = final_params
-    D_sqrt_final, _ = diag_from_rho(rho_final, eps=eps)
+    D_sqrt_final, _ = diag_from_rho(rho_final)
     pi_final = jax.nn.softmax(alpha_final)
 
     # Flatten/unflatten utilities
