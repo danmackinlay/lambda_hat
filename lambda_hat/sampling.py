@@ -840,6 +840,7 @@ def run_vi(
         "cumulative_fge": all_traces["cumulative_fge"],
         "acceptance_rate": jnp.ones_like(all_traces["elbo"], dtype=ref_dtype),
         "energy": all_traces["elbo"],  # ELBO serves as "energy"
+        "elbo": all_traces["elbo"],  # VI-specific ELBO trace (total objective)
         "is_divergent": jnp.zeros_like(all_traces["elbo"], dtype=bool),
         # VI-specific diagnostic traces
         "elbo_like": all_traces["elbo_like"],  # Target term only (for debugging)
