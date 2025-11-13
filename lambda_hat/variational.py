@@ -15,6 +15,7 @@ from typing import Any, Callable, Dict, NamedTuple, Optional, Tuple
 
 import jax
 import jax.numpy as jnp
+from jax import lax
 import optax
 
 # === Whitening Infrastructure ===
@@ -204,12 +205,12 @@ def diag_from_rho(rho: jnp.ndarray, eps: float = 1e-8) -> Tuple[jnp.ndarray, jnp
     return D_sqrt, logdet_D
 
 
-def normalize_columns(A: jnp.ndarray, max_norm: float = 10.0) -> jnp.ndarray:
+def normalize_columns(A: jnp.ndarray, max_norm: float = 3.0) -> jnp.ndarray:
     """Normalize columns of A to prevent explosion (stability for float32).
 
     Args:
         A: (d, r) matrix
-        max_norm: Maximum allowed column norm
+        max_norm: Maximum allowed column norm (default 3.0 per QA stability analysis)
 
     Returns:
         A with columns clipped to max_norm
@@ -330,13 +331,19 @@ def logpdf_components_and_resp(
 
     def one_component(A_m):
         """Compute log-pdf for one component using Woodbury identity."""
-        # C = I + A^T A + eps*I (r x r matrix, ridge for float32 stability)
-        C = jnp.eye(r, dtype=A_m.dtype) * 1.000001 + (A_m.T @ A_m)
+        # C = I + A^T A + ridge (r x r matrix, ridge for float32 stability)
+        # Use high precision matmul for this critical small-matrix operation
+        ridge = 1e-4  # QA-approved ridge value (increased for test stability)
+        C = jnp.eye(r, dtype=A_m.dtype) + jnp.dot(
+            A_m.T, A_m, precision=lax.Precision.HIGHEST
+        )
+        C = C + (ridge * jnp.eye(r, dtype=A_m.dtype))  # Add ridge after, per QA pattern
         # Cholesky for stability
         L = jnp.linalg.cholesky(C)
 
         # Quadratic form: v^T Sigma^{-1} v = x^T x - x^T A (I + A^T A)^{-1} A^T x
-        g = A_m.T @ x  # (r,)
+        # Use high precision for this critical r-dimensional operation
+        g = jnp.dot(A_m.T, x, precision=lax.Precision.HIGHEST)  # (r,)
         y = jax.scipy.linalg.cho_solve((L, True), g[:, None])  # (r, 1)
         quad = jnp.dot(x, x) - jnp.dot(g, y[:, 0])
 
