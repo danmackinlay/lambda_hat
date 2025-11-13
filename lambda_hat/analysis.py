@@ -90,10 +90,29 @@ def analyze_traces(
     # VI pre-computes lambda estimates and stores them in work dict
     # VI's Ln trace is just a placeholder (all values = Ln_wstar), so computing
     # llc from it would give 0
-    if sampler_name == "vi" and work is not None and "lambda_hat_mean" in work:
+    if sampler_name == "vi":
+        # VI sampler REQUIRES pre-computed lambda estimates in work dict
+        if work is None:
+            raise ValueError(
+                "VI sampler requires 'work' dict with lambda_hat_mean, but work=None. "
+                "This indicates a bug in the VI sampling code."
+            )
+        if "lambda_hat_mean" not in work:
+            raise KeyError(
+                f"VI sampler requires 'lambda_hat_mean' in work dict. "
+                f"Available keys: {list(work.keys())}"
+            )
+
         # Use VI's pre-computed lambda estimates (one per chain)
         lambda_hat_mean = work["lambda_hat_mean"]
         lambda_hat_std = work.get("lambda_hat_std", 0.0)
+
+        # Validate that the estimate is finite
+        if not np.isfinite(lambda_hat_mean):
+            raise ValueError(
+                f"VI lambda_hat_mean is not finite: {lambda_hat_mean}. "
+                "This indicates numerical issues in VI optimization."
+            )
 
         # Create synthetic LLC "samples" for compatibility with analysis pipeline
         # Each chain gets its lambda estimate replicated across all draws

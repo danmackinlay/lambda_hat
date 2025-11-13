@@ -796,14 +796,38 @@ def run_vi(
 
     # Format traces for compatibility with existing analysis code
     # Note: VI traces come from optimization metrics, not periodic Ln evaluation
+
+    # Extract CV metrics (scalars, one per chain) and replicate across steps for trace format
+    # After vmap, cv_info is a dict where each key maps to array of shape (num_chains,)
+    cv_info_vmapped = all_extras["cv_info"]
+    Eq_Ln_mc_vals = cv_info_vmapped["Eq_Ln_mc"]  # (num_chains,)
+    Eq_Ln_cv_vals = cv_info_vmapped["Eq_Ln_cv"]  # (num_chains,)
+    var_red_vals = cv_info_vmapped["variance_reduction"]  # (num_chains,)
+
+    # Create trace format: replicate scalar values across all steps
+    steps_shape = all_traces["elbo"].shape[1]  # Number of optimization steps
+    Eq_Ln_mc_trace = jnp.repeat(Eq_Ln_mc_vals[:, None], steps_shape, axis=1)
+    Eq_Ln_cv_trace = jnp.repeat(Eq_Ln_cv_vals[:, None], steps_shape, axis=1)
+    var_red_trace = jnp.repeat(var_red_vals[:, None], steps_shape, axis=1)
+
     traces = {
+        # MCMC-compatible keys
         "Ln": jnp.full_like(
-            all_traces["elbo"], Ln_wstar
-        ),  # Placeholder (not periodically recorded)
+            all_traces["elbo"], jnp.nan
+        ),  # Placeholder - NaN to fail fast if used incorrectly (VI doesn't sample Ln)
         "cumulative_fge": all_traces["cumulative_fge"],
         "acceptance_rate": jnp.ones_like(all_traces["elbo"], dtype=ref_dtype),
         "energy": all_traces["elbo"],  # ELBO serves as "energy"
         "is_divergent": jnp.zeros_like(all_traces["elbo"], dtype=bool),
+        # VI-specific diagnostic traces
+        "elbo_like": all_traces["elbo_like"],  # Target term only (for debugging)
+        "logq": all_traces["logq"],  # Log density of variational distribution
+        "radius2": all_traces["radius2"],  # ||tilde_v||^2 in whitened coords
+        "resp_entropy": all_traces["resp_entropy"],  # Entropy of responsibilities (detects peaking)
+        # Control variate metrics (replicated across steps for observability)
+        "Eq_Ln_mc": Eq_Ln_mc_trace,  # Raw MC estimate of E_q[L_n]
+        "Eq_Ln_cv": Eq_Ln_cv_trace,  # CV-corrected estimate of E_q[L_n]
+        "variance_reduction": var_red_trace,  # Variance reduction factor from CV
     }
 
     timings = {
@@ -822,6 +846,9 @@ def run_vi(
         "Eq_Ln_mean": float(jnp.mean(Eq_Ln_values)),
         "Eq_Ln_std": float(jnp.std(Eq_Ln_values)),
         "Ln_wstar": float(Ln_wstar),
+        # Audit trail for LLC magnitude investigation
+        "beta": float(beta),
+        "n_data": int(n_data),
     }
 
     return SamplerRunResult(traces=traces, timings=timings, work=work)

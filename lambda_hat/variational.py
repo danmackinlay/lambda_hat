@@ -501,12 +501,17 @@ def build_elbo_step(
         )
 
         # Metrics for tracing
+        # Compute responsibility entropy: H(r) = -sum(r * log(r))
+        # Use numerically stable formulation: where r=0, contribution is 0
+        resp_entropy = -jnp.sum(jnp.where(r > 1e-10, r * jnp.log(r + 1e-10), 0.0))
+
         metrics = {
             "elbo": ell + logq,  # TRUE ELBO (target + entropy)
             "elbo_like": ell,  # ELBO-like term (target only, for debugging)
             "logq": logq,
             "radius2": jnp.dot(tilde_v, tilde_v),  # ||tilde_v||^2
             "Ln_batch": Ln_batch,  # Minibatch loss
+            "resp_entropy": resp_entropy,  # Entropy of responsibilities (detects peaking)
             "work_fge": jnp.asarray(batch_size / float(n_data), dtype=jnp.float64),  # FGEs
         }
 
@@ -720,9 +725,11 @@ def fit_vi_and_estimate_lambda(
     # Package results
     traces = {
         "elbo": trace_metrics["elbo"],
+        "elbo_like": trace_metrics["elbo_like"],  # Target term only (for debugging)
         "logq": trace_metrics["logq"],
         "radius2": trace_metrics["radius2"],
         "Ln_batch": trace_metrics["Ln_batch"],
+        "resp_entropy": trace_metrics["resp_entropy"],  # Responsibility entropy (detects peaking)
         "cumulative_fge": trace_metrics["cumulative_fge"],
     }
 
