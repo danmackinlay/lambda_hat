@@ -86,9 +86,28 @@ def analyze_traces(
     Ln_post_warmup = Ln_values[:, warmup:]
     draws_post_warmup = draws - warmup
 
-    # Compute LLC values: n * beta * (L_n(w) - L0)
-    llc_values = float(n_data) * float(beta) * (Ln_post_warmup - L0)
-    llc_values_np = np.array(llc_values)
+    # Special handling for VI sampler
+    # VI pre-computes lambda estimates and stores them in work dict
+    # VI's Ln trace is just a placeholder (all values = Ln_wstar), so computing
+    # llc from it would give 0
+    if sampler_name == "vi" and work is not None and "lambda_hat_mean" in work:
+        # Use VI's pre-computed lambda estimates (one per chain)
+        lambda_hat_mean = work["lambda_hat_mean"]
+        lambda_hat_std = work.get("lambda_hat_std", 0.0)
+
+        # Create synthetic LLC "samples" for compatibility with analysis pipeline
+        # Each chain gets its lambda estimate replicated across all draws
+        llc_values_np = np.full((chains, draws_post_warmup), lambda_hat_mean)
+
+        # Add small per-chain variation if we have std info
+        if lambda_hat_std > 0 and chains > 1:
+            # Spread chains around mean with total std = lambda_hat_std
+            chain_offsets = np.linspace(-lambda_hat_std, lambda_hat_std, chains)
+            llc_values_np = llc_values_np + chain_offsets[:, None]
+    else:
+        # Standard MCMC path: Compute LLC values from Ln samples
+        llc_values = float(n_data) * float(beta) * (Ln_post_warmup - L0)
+        llc_values_np = np.array(llc_values)
 
     # Prepare posterior data
     posterior_data = {"llc": llc_values_np, "L": np.array(Ln_post_warmup)}
