@@ -53,29 +53,46 @@ def analyze_traces(
     warmup: int = 0,
     timings: Dict[str, float] = None,
     work: Dict[str, float] = None,
-    sampler_name: str = None,
+    sampler_flavour: str = None,
 ) -> Tuple[Dict[str, float], az.InferenceData]:
     """Analyze sampling traces, compute LLC metrics, and create InferenceData.
 
     Args:
         traces: Dictionary of traces (vmapped: C, T).
-        L0, n_data, beta: Parameters for LLC calculation.
+        L0, n_data, beta: Parameters for LLC calculation (only used if llc not in traces).
         warmup: Number of recorded draws to discard (burn-in).
         timings: Dictionary of timing information.
         work: Dictionary of work counts (n_full_loss, n_minibatch_grads).
-        sampler_name: Name of sampler for sampler-specific metrics (e.g., "vi").
+        sampler_flavour: Flavour of sampler ("iid" or "markov") for metrics computation.
+            Defaults to "markov" if not specified.
 
     Returns:
         Tuple of (metrics dictionary, ArviZ InferenceData).
     """
-    if "Ln" not in traces:
-        raise ValueError("Traces must contain 'Ln' key.")
+    # Prefer pre-computed LLC if available (modern path)
+    if "llc" in traces:
+        llc_values = traces["llc"]
+        if llc_values.ndim == 1:
+            llc_values = llc_values[None, :]
+        chains, draws = llc_values.shape
 
-    # Handle input shapes (Ensure C, T)
-    Ln_values = traces["Ln"]
-    if Ln_values.ndim == 1:
-        Ln_values = Ln_values[None, :]
-    chains, draws = Ln_values.shape
+        # Also get Ln if available for posterior tracking
+        Ln_values = traces.get("Ln")
+        if Ln_values is not None:
+            if Ln_values.ndim == 1:
+                Ln_values = Ln_values[None, :]
+    else:
+        # Backwards-compatible fallback: compute LLC from Ln
+        if "Ln" not in traces:
+            raise ValueError("Traces must contain either 'llc' or 'Ln' key.")
+
+        Ln_values = traces["Ln"]
+        if Ln_values.ndim == 1:
+            Ln_values = Ln_values[None, :]
+        chains, draws = Ln_values.shape
+
+        # Compute LLC from Ln (MCMC-style)
+        llc_values = float(n_data) * float(beta) * (Ln_values - L0)
 
     # Validate and apply warmup (burn-in)
     if warmup >= draws:
@@ -83,53 +100,15 @@ def analyze_traces(
         warmup = 0
 
     # Select post-warmup data
-    Ln_post_warmup = Ln_values[:, warmup:]
+    llc_post_warmup = llc_values[:, warmup:]
     draws_post_warmup = draws - warmup
-
-    # Special handling for VI sampler
-    # VI pre-computes lambda estimates and stores them in work dict
-    # VI's Ln trace is just a placeholder (all values = Ln_wstar), so computing
-    # llc from it would give 0
-    if sampler_name == "vi":
-        # VI sampler REQUIRES pre-computed lambda estimates in work dict
-        if work is None:
-            raise ValueError(
-                "VI sampler requires 'work' dict with lambda_hat_mean, but work=None. "
-                "This indicates a bug in the VI sampling code."
-            )
-        if "lambda_hat_mean" not in work:
-            raise KeyError(
-                f"VI sampler requires 'lambda_hat_mean' in work dict. "
-                f"Available keys: {list(work.keys())}"
-            )
-
-        # Use VI's pre-computed lambda estimates (one per chain)
-        lambda_hat_mean = work["lambda_hat_mean"]
-        lambda_hat_std = work.get("lambda_hat_std", 0.0)
-
-        # Validate that the estimate is finite
-        if not np.isfinite(lambda_hat_mean):
-            raise ValueError(
-                f"VI lambda_hat_mean is not finite: {lambda_hat_mean}. "
-                "This indicates numerical issues in VI optimization."
-            )
-
-        # Create synthetic LLC "samples" for compatibility with analysis pipeline
-        # Each chain gets its lambda estimate replicated across all draws
-        llc_values_np = np.full((chains, draws_post_warmup), lambda_hat_mean)
-
-        # Add small per-chain variation if we have std info
-        if lambda_hat_std > 0 and chains > 1:
-            # Spread chains around mean with total std = lambda_hat_std
-            chain_offsets = np.linspace(-lambda_hat_std, lambda_hat_std, chains)
-            llc_values_np = llc_values_np + chain_offsets[:, None]
-    else:
-        # Standard MCMC path: Compute LLC values from Ln samples
-        llc_values = float(n_data) * float(beta) * (Ln_post_warmup - L0)
-        llc_values_np = np.array(llc_values)
+    llc_values_np = np.array(llc_post_warmup)
 
     # Prepare posterior data
-    posterior_data = {"llc": llc_values_np, "L": np.array(Ln_post_warmup)}
+    posterior_data = {"llc": llc_values_np}
+    if Ln_values is not None:
+        Ln_post_warmup = Ln_values[:, warmup:]
+        posterior_data["L"] = np.array(Ln_post_warmup)
 
     # Handle sample statistics (FGEs, acceptance, time, etc.)
     sample_stats_data = {}
@@ -185,8 +164,12 @@ def analyze_traces(
     }
     idata = az.from_dict(**data)
 
+    # Default to markov if not specified
+    if sampler_flavour is None:
+        sampler_flavour = "markov"
+
     # Compute metrics
-    metrics = _compute_metrics_from_idata(idata, llc_values_np, timings, work, sampler_name)
+    metrics = _compute_metrics_from_idata(idata, llc_values_np, timings, work, sampler_flavour)
     return metrics, idata
 
 
@@ -195,9 +178,17 @@ def _compute_metrics_from_idata(
     llc_values_np: np.ndarray,
     timings: Optional[Dict[str, float]],
     work: Optional[Dict[str, float]] = None,
-    sampler_name: Optional[str] = None,
+    sampler_flavour: Optional[str] = None,
 ) -> Dict[str, float]:
-    """Helper to compute metrics from InferenceData."""
+    """Helper to compute metrics from InferenceData.
+
+    Args:
+        idata: ArviZ InferenceData object
+        llc_values_np: LLC values as numpy array
+        timings: Timing information
+        work: Work tracking information
+        sampler_flavour: "iid" for independent draws, "markov" for MCMC (default)
+    """
     metrics = {
         "llc_mean": float(llc_values_np.mean()),
         "llc_std": float(llc_values_np.std()),  # Standard deviation of the samples
@@ -228,20 +219,20 @@ def _compute_metrics_from_idata(
     metrics["ess"] = np.nan
     metrics["llc_sem"] = np.nan
 
-    # Sampler-specific metrics
-    if sampler_name == "vi":
-        # VI produces IID draws - ESS = total draws, R-hat undefined
+    # Sampler-specific metrics based on draw independence
+    if sampler_flavour == "iid":
+        # IID draws (e.g., VI) - ESS = total draws, R-hat undefined
         metrics["ess"] = float(C * T)
         metrics["ess_bulk"] = float(C * T)
         metrics["ess_tail"] = float(C * T)
         metrics["r_hat"] = float("nan")  # Undefined for IID samples
 
-        # Variance estimates for VI
+        # Variance estimates for IID samples
         if metrics["ess"] > 0:
             variance_estimate = metrics["llc_std"] ** 2 / metrics["ess"]
             metrics["llc_sem"] = float(np.sqrt(variance_estimate))
     else:
-        # MCMC path - use ArviZ diagnostics
+        # Markov chain path (default) - use ArviZ diagnostics
         # ESS is available even for 1 chain, but can be noisy for tiny T.
         MIN_DRAWS_FOR_ESS = 10
         if T >= MIN_DRAWS_FOR_ESS:

@@ -837,6 +837,13 @@ def run_vi(
     }
 
     # Work tracking: include VI-specific estimates
+    # Compute LLC (Local Learning Coefficient) from VI estimates
+    # Shape: (num_chains,) -> replicate across all optimization steps for trace format
+    steps_shape = traces["elbo"].shape[1]
+    llc_per_chain = lambda_hats  # (num_chains,) - already computed above
+    llc_trace = jnp.repeat(llc_per_chain[:, None], steps_shape, axis=1)  # (num_chains, steps)
+    traces["llc"] = llc_trace
+
     work = {
         "n_full_loss": float(num_chains * config.eval_samples),  # Final MC evaluations
         "n_minibatch_grads": float(config.steps * config.batch_size / n_data),
@@ -849,6 +856,8 @@ def run_vi(
         # Audit trail for LLC magnitude investigation
         "beta": float(beta),
         "n_data": int(n_data),
+        # Sampler flavour for analysis
+        "sampler_flavour": "iid",  # VI produces independent draws
     }
 
     return SamplerRunResult(traces=traces, timings=timings, work=work)

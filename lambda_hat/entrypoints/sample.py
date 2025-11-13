@@ -135,6 +135,15 @@ def main():
     work = result.get("work")  # {"n_full_loss":..., "n_minibatch_grads":...}
     n_data = X_f32.shape[0]
     beta = float(result["beta"])
+
+    # Extract sampler flavour from work dict, or infer from sampler name
+    sampler_flavour = None
+    if work is not None:
+        sampler_flavour = work.get("sampler_flavour")
+    if sampler_flavour is None:
+        # Backwards compatibility: infer from sampler name
+        sampler_flavour = "iid" if sampler_name == "vi" else "markov"
+
     metrics, idata = analyze_traces(
         traces,
         L0=L0,
@@ -143,7 +152,7 @@ def main():
         warmup=0,
         timings=timings,
         work=work,
-        sampler_name=sampler_name,
+        sampler_flavour=sampler_flavour,
     )
 
     # Write artifacts
