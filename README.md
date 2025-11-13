@@ -105,6 +105,7 @@ uv run lambda-hat-sample \
 ### `lambda-hat-promote`
 
 Utility for copying plots from run directories into stable locations for documentation or galleries.
+It  searches under `runs/targets/**/run_{sampler}_*/diagnostics/`.
 
 ```bash
 # Create an asset gallery with newest run per sampler
@@ -122,11 +123,19 @@ uv run lambda-hat-promote single \
   --plot-name running_llc.png
 ```
 
+These are orchestrated together with the required simulations by snakemake
+
+```bash
+uv run snakemake -j 1 promote
+```
+
+
 ---
 
 ## Orchestration
 
-We use **Snakemake** for the full pipeline. OmegaConf parses our YAML configs.
+We use **Snakemake** for the full pipeline.
+OmegaConf parses our YAML configs.
 
 ### Quickstart
 
@@ -151,14 +160,6 @@ uv run snakemake --forcerun run_sampler -j 8
 
 # Run a specific output
 uv run snakemake runs/targets/tgt_abcdef123456/run_hmc_12ab34cd/analysis.json
-```
-
-### Linting
-
-Before committing any changes:
-
-```bash
-uv ruff
 ```
 
 ### HPC
@@ -186,7 +187,7 @@ runs/
         ├── params.npz               # trained parameters
         ├── _runs.jsonl              # manifest of Stage-B runs
         ├── run_hmc_ab12cd34/        # one sampler run
-        │   ├── trace.nc             # ArviZ trace (preferred)
+        │   ├── trace.nc             # ArviZ trace
         │   ├── analysis.json        # metrics
         │   └── diagnostics/
         │       ├── trace.png
@@ -211,31 +212,6 @@ Artifacts are written to `runs/...` directly. The sampler name is included in th
 * **Target building**: typically float64 for stability
 * **SGLD**: float32 for efficiency
 * **HMC/MCLMC**: float64 for accuracy
-
----
-
-## Asset Promotion
-
-Lambda-Hat includes a utility to copy plots from sampling runs into a stable location for docs. It now searches under `runs/targets/**/run_{sampler}_*/diagnostics/`.
-
-```bash
-# Promote newest run of each sampler into runs/promotion and write a README snippet
-uv run lambda-hat-promote gallery --runs-root runs --samplers sgld,hmc,mclmc \
-  --plot-name trace.png --outdir runs/promotion --snippet-out runs/promotion/gallery_snippet.md
-
-# Copy newest plots without snippet
-uv run lambda-hat-promote single --runs-root runs --samplers sgld --outdir figures \
-  --plot-name running_llc.png
-```
-
----
-
-## Why Two Stages?
-
-* **Orthogonality**: target vs. sampler configs are independent
-* **Cost control**: build expensive targets once, sweep samplers cheaply
-* **Reproducibility**: content-addressed target IDs guarantee identical experiments
-* **Scalability**: works for big/pretrained models and HPC sweeps
 
 ## Further documentation
 
