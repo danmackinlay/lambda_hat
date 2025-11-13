@@ -374,7 +374,7 @@ def run_sgld(
     Y = jnp.asarray(Y)
     n_data = X.shape[0]
     batch_size = config.batch_size
-    base_step_size = config.step_size
+    base_step_size = float(config.step_size)
 
     # Ensure scalars match the parameter dtype
     ref_dtype = jax.tree_util.tree_leaves(initial_params)[0].dtype
