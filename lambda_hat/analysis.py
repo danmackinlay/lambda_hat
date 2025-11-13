@@ -58,8 +58,8 @@ def analyze_traces(
     """Analyze sampling traces, compute LLC metrics, and create InferenceData.
 
     Args:
-        traces: Dictionary of traces (vmapped: C, T).
-        L0, n_data, beta: Parameters for LLC calculation (only used if llc not in traces).
+        traces: Dictionary of traces (vmapped: C, T). Must contain 'llc' key.
+        L0, n_data, beta: Legacy parameters (no longer used; kept for API compatibility).
         warmup: Number of recorded draws to discard (burn-in).
         timings: Dictionary of timing information.
         work: Dictionary of work counts (n_full_loss, n_minibatch_grads).
@@ -69,7 +69,13 @@ def analyze_traces(
     Returns:
         Tuple of (metrics dictionary, ArviZ InferenceData).
     """
-    # Prefer pre-computed LLC if available (modern path)
+    # All samplers must provide pre-computed LLC
+    if "llc" not in traces:
+        raise ValueError(
+            "traces must contain 'llc' key. "
+            "All samplers should compute LLC (Local Learning Coefficient) and include it in traces."
+        )
+
     llc_values = traces["llc"]
     if llc_values.ndim == 1:
         llc_values = llc_values[None, :]

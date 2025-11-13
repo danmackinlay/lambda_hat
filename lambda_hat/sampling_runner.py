@@ -74,6 +74,9 @@ def run_sampler(
             adaptation_steps=cfg.sampler.hmc.warmup,
             target_acceptance=cfg.sampler.hmc.target_acceptance,
             loss_full_fn=loss_full,  # Pass loss function for Ln recording
+            n_data=n_data,
+            beta=beta,
+            L0=target.L0,
         )
         traces = run_result.traces
         timings = run_result.timings
@@ -109,6 +112,7 @@ def run_sampler(
             beta=beta,
             gamma=gamma,
             loss_full_fn=target.loss_full,  # Pass loss function for Ln recording
+            L0=target.L0,
         )
         traces = run_result.traces
         timings = run_result.timings
@@ -141,6 +145,9 @@ def run_sampler(
             num_chains=cfg.sampler.chains,
             config=cfg.sampler.mclmc,  # Pass the config object
             loss_full_fn=loss_full,  # Pass loss function for Ln recording
+            n_data=n_data,
+            beta=beta,
+            L0=target.L0,
         )
         traces = run_result.traces
         timings = run_result.timings

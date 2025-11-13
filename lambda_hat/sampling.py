@@ -198,6 +198,9 @@ def run_hmc(
     adaptation_steps: int = 1000,
     target_acceptance: float = 0.8,
     loss_full_fn: Optional[Callable] = None,
+    n_data: Optional[int] = None,
+    beta: Optional[float] = None,
+    L0: Optional[float] = None,
 ) -> SamplerRunResult:
     """Run HMC with optional adaptation
 
@@ -337,9 +340,14 @@ def run_hmc(
         "total": adaptation_time + sampling_time,
     }
 
+    # Compute LLC from Ln if parameters provided
+    if n_data is not None and beta is not None and L0 is not None and "Ln" in traces:
+        traces["llc"] = float(n_data) * float(beta) * (traces["Ln"] - L0)
+
     work = {
         "n_full_loss": float(num_samples * num_chains),
         "n_minibatch_grads": 0.0,
+        "sampler_flavour": "markov",
     }
 
     return SamplerRunResult(traces=traces, timings=timings, work=work)
@@ -357,6 +365,7 @@ def run_sgld(
     beta: float,
     gamma: float,
     loss_full_fn: Optional[Callable] = None,
+    L0: Optional[float] = None,
 ) -> SamplerRunResult:
     """Run SGLD or pSGLD (AdamSGLD/RMSPropSGLD) with minibatching."""
     X, Y = data
@@ -485,12 +494,17 @@ def run_sgld(
         "total": sampling_time,
     }
 
+    # Compute LLC from Ln if L0 provided
+    if L0 is not None and "Ln" in traces:
+        traces["llc"] = float(n_data) * float(beta) * (traces["Ln"] - L0)
+
     # Compute work: number of full loss evals + minibatch gradient FGEs
     # n_full_loss: recorded Ln evaluations (happens every eval_every steps)
     n_Ln_evals = traces["Ln"].shape[1] if "Ln" in traces else 0
     work = {
         "n_full_loss": float(n_Ln_evals * num_chains),
         "n_minibatch_grads": float(config.steps * batch_size / n_data),
+        "sampler_flavour": "markov",
     }
 
     return SamplerRunResult(traces=traces, timings=timings, work=work)
@@ -602,6 +616,9 @@ def run_mclmc(
     num_chains,
     config,
     loss_full_fn: Optional[Callable] = None,
+    n_data: Optional[int] = None,
+    beta: Optional[float] = None,
+    L0: Optional[float] = None,
 ) -> SamplerRunResult:
     # -- flatten params once for MCLMC's state vector
     leaves, treedef = jax.tree_util.tree_flatten(initial_params)
@@ -707,9 +724,14 @@ def run_mclmc(
         "total": sampling_time,
     }
 
+    # Compute LLC from Ln if parameters provided
+    if n_data is not None and beta is not None and L0 is not None and "Ln" in traces:
+        traces["llc"] = float(n_data) * float(beta) * (traces["Ln"] - L0)
+
     work = {
         "n_full_loss": float(num_samples * num_chains),
         "n_minibatch_grads": 0.0,
+        "sampler_flavour": "markov",
     }
 
     return SamplerRunResult(traces=traces, timings=timings, work=work)
