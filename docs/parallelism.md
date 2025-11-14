@@ -1,237 +1,305 @@
-# Parallel Execution with Snakemake
+# Parallel Execution with Parsl
 
-This project uses **Snakemake** for parallel orchestration, enabling efficient execution locally or on HPC clusters.
+This project uses **Parsl** for parallel orchestration, enabling efficient execution locally or on HPC clusters through Python-native DAG execution.
 
 ## Overview
 
-Snakemake automatically identifies parallelizable jobs in the DAG and can execute them concurrently based on dependency constraints. For Lambda-Hat:
+Parsl manages parallel execution through explicit dependency graphs using Python futures. For Lambda-Hat:
 
-- **Target building** (Stage A) can run in parallel across different target configurations
-- **Sampling runs** (Stage B) can run in parallel across different samplers and targets
-- **Within each target**, all samplers can run concurrently (they only depend on the target being built)
+- **Target building** (Stage A) runs in parallel across different target configurations
+- **Sampling runs** (Stage B) run in parallel across different samplers and targets
+- **Each sampler** automatically waits for its target to build (via `inputs=[target_future]`)
+- **Promotion** (Stage C) is optional and runs after all sampling completes
+
+**Example execution flow:**
+1. Build targets `tgt_abc123` and `tgt_def456` in parallel
+2. Once targets are ready, run HMC and SGLD sampling in parallel on each target
+3. Total: 2 targets × 2 samplers = 4 sampling jobs, plus 2 target building jobs
+4. Optionally promote results to galleries (if `--promote` flag used)
+
+---
 
 ## Local Parallel Execution
 
-Use the `-j` flag to specify the number of parallel jobs:
+### Basic Usage
+
+Run the workflow locally using ThreadPoolExecutor:
 
 ```bash
-# Run with 4 parallel jobs
-uv run snakemake -j 4
+# Run locally (uses up to 8 CPU cores by default)
+uv run python flows/parsl_llc.py --local
 
-# Run with as many jobs as CPU cores
-uv run snakemake -j
-
-# Preview the DAG without execution
-uv run snakemake -n --dag | dot -Tpng > dag.png
+# With promotion enabled
+uv run python flows/parsl_llc.py --local --promote
 ```
 
-**Example execution flow:**
-1. Build targets `tgt_abc123` and `tgt_def456` in parallel (if resources allow)
-2. Once targets are ready, run HMC and SGLD sampling in parallel on each target
-3. Total: 2 targets × 2 samplers = 4 sampling jobs, plus 2 target building jobs
+### Controlling Parallelism
 
-## HPC Cluster Execution
-
-Snakemake supports HPC execution through **profiles**. Profiles define how jobs are submitted to schedulers like SLURM, PBS, or SGE.
-
-### Setting Up SLURM Profile
-
-1. **Install snakemake-profiles** (if not already available):
-```bash
-uv run cookiecutter https://github.com/Snakemake-Profiles/slurm.git
-```
-
-2. **Configure your profile** in `~/.config/snakemake/slurm/config.yaml`:
-```yaml
-cluster:
-  mkdir -p logs/{rule} &&
-  sbatch
-    --account={resources.account}
-    --partition={resources.partition}
-    --qos={resources.qos}
-    --cpus-per-task={resources.cpus}
-    --mem={resources.mem_mb}
-    --time={resources.time}
-    --job-name=snakemake-{rule}-{wildcards}
-    --output=logs/{rule}/{rule}-{wildcards}-%j.out
-    --error=logs/{rule}/{rule}-{wildcards}-%j.err
-    --parsable
-
-default-resources:
-  - cpus=1
-  - mem_mb=4000
-  - time="01:00:00"
-  - account="your_account"
-  - partition="your_partition"
-  - qos="normal"
-
-resources:
-  - build_target:
-      cpus: 4
-      mem_mb: 8000
-      time: "02:00:00"
-  - run_sampler:
-      cpus: 8
-      mem_mb: 16000
-      time: "04:00:00"
-```
-
-3. **Run with the profile**:
-```bash
-# Submit up to 100 parallel jobs to SLURM
-uv run snakemake --profile slurm -j 100
-
-# Or specify profile path directly
-uv run snakemake --cluster-config ~/.config/snakemake/slurm/config.yaml -j 100
-```
-
-### Resource Specification in Snakefile
-
-You can add resource requirements directly to rules in the `Snakefile`:
+Edit `parsl_config_local.py` to control the number of parallel workers:
 
 ```python
-rule build_target:
-    input: cfg = rules.cfg_build.output.cfg
-    output: meta = f"{STORE}/targets/{{tid}}/meta.json"
-    resources:
-        cpus=4,
-        mem_mb=8000,
-        time="02:00:00",
-        partition="gpu"  # For GPU-requiring targets
-    shell: """
-        JAX_ENABLE_X64={JAX64} uv run python -m lambda_hat.entrypoints.build_target \
-          --config-yaml {input.cfg} --target-id {params.tid} --target-dir {params.tdir}
-    """
-
-rule run_sampler:
-    input:
-        meta = rules.build_target.output.meta,
-        cfg = rules.cfg_sample.output.cfg
-    output: analysis = f"{STORE}/targets/{{tid}}/run_{{sampler}}_{{rid}}/analysis.json"
-    resources:
-        cpus=lambda wildcards: 16 if wildcards.sampler == "hmc" else 4,
-        mem_mb=lambda wildcards: 32000 if wildcards.sampler == "hmc" else 8000,
-        time="06:00:00"
-    shell: """
-        JAX_ENABLE_X64={JAX64} uv run python -m lambda_hat.entrypoints.sample \
-          --config-yaml {input.cfg} --target-id {params.tid} --run-dir {params.rdir}
-    """
+# Adjust max_workers
+max_workers = min(os.cpu_count() or 4, 8)  # Cap at 8 cores
 ```
 
-## GPU Management
+For very small tests, you can reduce this to 1 or 2 workers to simplify debugging.
 
-For GPU-enabled runs:
+### Monitoring Progress
 
-### Local GPU
-```bash
-# Limit to 1 job to avoid GPU conflicts
-CUDA_VISIBLE_DEVICES=0 uv run snakemake -j 1
+The workflow prints progress messages as it runs:
+
+```
+=== Stage A: Building Targets ===
+  Submitting build for tgt_abc123 (model=small, data=small)
+
+=== Stage B: Running Samplers ===
+  Submitting hmc for tgt_abc123 (run_id=ab12cd34)
+
+=== Waiting for 1 sampling runs to complete ===
+  [1/1] completed
 ```
 
-### HPC GPU
-Configure GPU resources in your profile:
+### Log Files
 
-```yaml
-# In your SLURM profile
-resources:
-  - run_sampler:
-      cpus: 8
-      mem_mb: 16000
-      time: "04:00:00"
-      gres: "gpu:1"  # Request 1 GPU
-      partition: "gpu"
+All logs are written to `logs/` directory:
+
+```
+logs/
+├── build_target/
+│   └── tgt_abc123.log        # Build stdout
+│   └── tgt_abc123.err        # Build stderr
+└── run_sampler/
+    └── tgt_abc123_hmc_ab12cd34.log   # Sample stdout
+    └── tgt_abc123_hmc_ab12cd34.err   # Sample stderr
 ```
 
-Or use additional SLURM parameters:
-```yaml
-cluster: |
-  sbatch
-    --account={resources.account}
-    --partition={resources.partition}
-    --gres=gpu:{resources.gpus}
-    --cpus-per-task={resources.cpus}
-    --mem={resources.mem_mb}
-    --time={resources.time}
-```
+Check these files if jobs fail or behave unexpectedly.
 
-## Common Patterns
+---
 
-### Partial Execution
+## HPC Cluster Execution (SLURM)
 
-Run only specific stages:
+### Basic Usage
+
+Run the workflow on a SLURM cluster:
 
 ```bash
-# Build all targets but don't run samplers
-uv run snakemake "runs/targets/*/meta.json" -j 4
+# Submit workflow to SLURM
+uv run python flows/parsl_llc.py --parsl-config parsl_config_slurm.py
 
-# Run only HMC samplers
-uv run snakemake "runs/targets/*/run_hmc_*/analysis.json" -j 8
-
-# Run everything for one specific target
-uv run snakemake "runs/targets/tgt_abc123456789/run_*/analysis.json" -j 4
+# With promotion
+uv run python flows/parsl_llc.py --parsl-config parsl_config_slurm.py --promote
 ```
 
-### Forcing Reruns
+**How it works:**
+1. You run the workflow **once** on a login/head node
+2. Parsl submits `sbatch` jobs to SLURM automatically
+3. Each job runs a target build or sampler run
+4. Parsl manages dependencies between jobs
+5. Results are aggregated when all jobs complete
+
+### Configuring Resources
+
+Edit `parsl_config_slurm.py` to adjust resources for your cluster:
+
+```python
+SlurmProvider(
+    partition="normal",         # Change to "gpu", "debug", etc.
+    nodes_per_block=1,          # Nodes per SLURM job
+    max_blocks=50,              # Max concurrent SLURM jobs
+    walltime="04:00:00",        # 4 hours per job
+    cores_per_node=1,           # CPUs per node
+    mem_per_node=8,             # GB of RAM
+    scheduler_options="",       # Add custom SBATCH directives
+)
+```
+
+**Common adjustments:**
+
+| Setting | When to Change | Example |
+|---------|----------------|---------|
+| `partition` | Different queue | `partition="gpu"` for GPU nodes |
+| `walltime` | Longer jobs | `walltime="24:00:00"` for large models |
+| `max_blocks` | More parallelism | `max_blocks=100` for big sweeps |
+| `mem_per_node` | Large datasets | `mem_per_node=32` for bigger networks |
+
+### Environment Setup
+
+The `worker_init` section runs on each SLURM node before executing tasks:
+
+```python
+worker_init="""
+module load python || true
+source ~/.bashrc || true
+export PATH="$HOME/.local/bin:$PATH"
+""".strip()
+```
+
+Customize this for your cluster:
+- Load required modules (`module load cuda/12.1`)
+- Activate conda environments
+- Set environment variables
+
+### Monitoring SLURM Jobs
+
+While the workflow runs, you can monitor SLURM jobs from another terminal:
 
 ```bash
-# Force rebuild of all targets
-uv run snakemake --forcerun build_target -j 4
+# Check job queue
+squeue -u $USER
 
-# Force rerun of SGLD only
-uv run snakemake --forcerun "runs/targets/*/run_sgld_*/analysis.json" -j 8
+# Check specific job details
+scontrol show job <jobid>
 
-# Force rerun everything downstream of a specific target
-uv run snakemake --forcerun runs/targets/tgt_abc123456789/meta.json -j 4
+# Cancel all jobs (if needed)
+scancel -u $USER
 ```
 
-### Resource-Aware Scheduling
+### Parsl Run Directory
 
+Parsl creates a `parsl_runinfo/` directory with execution metadata:
+
+```
+parsl_runinfo/
+├── <run_id>/
+│   ├── submit_scripts/        # Generated SLURM scripts
+│   ├── block_logs/            # SLURM job logs
+│   └── parsl.log              # Parsl internal logs
+```
+
+This is useful for debugging SLURM submission issues.
+
+---
+
+## Troubleshooting
+
+### Local Execution Issues
+
+**Problem**: Jobs fail with "dependency failure"
+
+**Solution**: Check the build log first - sampling jobs depend on successful target builds:
 ```bash
-# Limit memory usage (useful on shared systems)
-uv run snakemake -j 4 --resources mem_mb=32000
-
-# Limit to specific partitions
-uv run snakemake --profile slurm -j 100 --default-resources partition=normal
+cat logs/build_target/tgt_*.err
 ```
 
-## Monitoring and Logging
+**Problem**: "Too many open files" error
 
-### Job Status
+**Solution**: Reduce max_workers in `parsl_config_local.py`:
+```python
+max_workers = 2  # Lower for resource-constrained systems
+```
+
+### SLURM Execution Issues
+
+**Problem**: Jobs never start / stuck in pending
+
+**Solution**: Check SLURM job status:
 ```bash
-# Check job status
-uv run snakemake --summary
-uv run snakemake --detailed-summary
-
-# Dry run with details
-uv run snakemake -n -r  # Show reasoning for each job
+squeue -u $USER --start  # See estimated start times
+sinfo                    # Check partition availability
 ```
 
-### Log Management
-- **Local**: Logs go to `logs/` directory as specified in rules
-- **SLURM**: Logs go to paths specified in your profile (typically `logs/{rule}/`)
-- **Real-time monitoring**: Use `tail -f logs/build_target/*.log` to watch progress
+**Problem**: SLURM jobs fail immediately
 
-### Failed Jobs
-```bash
-# Rerun only failed jobs
-uv run snakemake --rerun-incomplete -j 4
+**Solution**:
+1. Check `parsl_runinfo/<run_id>/block_logs/` for SLURM errors
+2. Verify partition name is correct in `parsl_config_slurm.py`
+3. Check resource limits (walltime, memory) are valid for your cluster
 
-# Get failed job details
-snakemake --detailed-summary | grep FAILED
+**Problem**: "Module not found" errors in SLURM jobs
+
+**Solution**: Update `worker_init` in `parsl_config_slurm.py`:
+```python
+worker_init="""
+module load python/3.11
+source ~/myenv/bin/activate  # or your env path
+""".strip()
 ```
+
+### JAX/GPU Issues on SLURM
+
+**For GPU jobs**, update the SLURM config:
+
+```python
+SlurmProvider(
+    partition="gpu",
+    scheduler_options="#SBATCH --gres=gpu:1",  # Request 1 GPU
+    worker_init="""
+        module load cuda/12.1
+        export JAX_PLATFORMS=cuda
+    """.strip()
+)
+```
+
+---
 
 ## Performance Tips
 
-1. **Target building is expensive**: Consider building targets once and reusing them across sampler sweeps
-2. **I/O can be bottleneck**: On HPC, use local scratch space for temporary files
-3. **Memory management**: HMC/MCLMC need more RAM than SGLD; adjust resources accordingly
-4. **JAX compilation**: First run per node may be slower due to XLA compilation caching
+### Local Execution
 
-Example optimized workflow:
+1. **Start small**: Test with `--local` and 1-2 targets before scaling up
+2. **Use float32**: Set `jax_enable_x64: false` in config for faster local testing
+3. **Monitor resources**: Use `htop` to watch CPU/memory usage
+
+### SLURM Execution
+
+1. **Right-size jobs**: Don't request excessive resources if not needed
+2. **Use debug partition**: For quick tests, use debug/short queue if available
+3. **Check fairshare**: Smaller `max_blocks` may get scheduled faster
+4. **Estimate walltime**: Add 20-30% buffer to avoid premature job kills
+
+### Result Aggregation
+
+Results are written to `results/llc_runs.parquet` at the end:
+
 ```bash
-# Build targets first with fewer, larger jobs
-uv run snakemake "runs/targets/*/meta.json" -j 2 --resources cpus=8
+# View results
+python -c "import pandas as pd; print(pd.read_parquet('results/llc_runs.parquet'))"
 
-# Then run samplers with more parallelism
-uv run snakemake -j 16 --resources cpus=2
+# Or use your favorite analysis tool
+jupyter notebook  # Load and analyze parquet file
 ```
+
+---
+
+## Scaling Guidelines
+
+| Scale | Targets | Samplers | Total Jobs | Recommended Config |
+|-------|---------|----------|------------|-------------------|
+| Small | 1-2 | 1-2 | 2-4 | `--local` |
+| Medium | 5-10 | 2-4 | 20-40 | `--local` or small cluster |
+| Large | 20-50 | 3-5 | 100-250 | SLURM with `max_blocks=50` |
+| Very Large | 100+ | 5+ | 500+ | SLURM with `max_blocks=100+` |
+
+**Memory estimates** (per job):
+- Small model (d=50): ~2-4 GB
+- Base model (d=500): ~8-16 GB
+- Large model (d=5000): ~32-64 GB
+
+---
+
+## Comparison with Snakemake
+
+If you're familiar with Snakemake, here are the key differences:
+
+| Aspect | Snakemake | Parsl |
+|--------|-----------|-------|
+| DAG Definition | Implicit (file-based rules) | Explicit (Python futures) |
+| Parallelism | `-j N` flag | Config `max_workers`/`max_blocks` |
+| HPC Submission | Profiles (YAML) | Provider config (Python) |
+| Dependency | File existence | Future completion |
+| Debugging | Check logs + Snakemake DAG | Check logs + Python tracebacks |
+
+**Why Parsl?**
+- Python-native: all logic in Python, easier to reason about
+- Dynamic workflows: easier to add conditional logic
+- Explicit dependencies: clearer what depends on what
+- Better for parameter sweeps: just Python loops over configs
+
+---
+
+## See Also
+
+- [Configuration Guide](./configuration.md) - How to define experiment sweeps
+- [Output Management](./output_management.md) - Understanding the artifact layout
+- [Parsl Documentation](https://parsl.readthedocs.io/) - Official Parsl docs
