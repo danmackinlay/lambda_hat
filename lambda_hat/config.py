@@ -149,7 +149,15 @@ class VIConfig:
     gamma: float = 0.001  # localizer strength (may be overridden by posterior config)
     eval_samples: int = 64  # MC samples for final LLC estimate
     dtype: str = "float32"  # precision: "float32" or "float64"
-    use_whitening: bool = True  # enable geometry whitening
+    use_whitening: bool = True  # enable geometry whitening (deprecated, use whitening_mode)
+    # Whitening (Stage 1)
+    whitening_mode: str = "none"  # "none"|"rmsprop"|"adam" - geometry whitening method
+    whitening_decay: float = 0.99  # EMA decay for gradient moment accumulation
+    # Stability (Stage 1)
+    clip_global_norm: Optional[float] = 5.0  # gradient clipping threshold
+    alpha_temperature: float = 1.0  # softmax temperature on mixture weights
+    # Diagnostics (Stage 2)
+    tensorboard: bool = False  # enable TensorBoard logging (requires tensorboardX)
 
 
 @dataclass

@@ -20,6 +20,24 @@ import optax
 # === Whitening Infrastructure ===
 
 
+def softmax_with_temperature(logits: jnp.ndarray, temperature: float = 1.0) -> jnp.ndarray:
+    """Apply softmax with temperature scaling for numerical stability.
+
+    Higher temperature (> 1.0) produces more uniform distributions (prevents collapse).
+    Lower temperature (< 1.0) produces more peaked distributions.
+
+    Args:
+        logits: Input logits
+        temperature: Temperature parameter (must be > 0, clipped to >= 0.5 for stability)
+
+    Returns:
+        Softmax probabilities
+    """
+    # Bound temperature to prevent instability
+    temperature = jnp.maximum(temperature, 0.5)
+    return jax.nn.softmax(logits / temperature)
+
+
 class Whitener(NamedTuple):
     """Geometry whitening transformation: tilde_w = A^{1/2} (w - w*)"""
 
@@ -330,7 +348,8 @@ def logpdf_components_and_resp(
     def one_component(A_m):
         """Compute log-pdf for one component using Woodbury identity."""
         # C = I + A^T A + eps*I (r x r matrix, ridge for float32 stability)
-        eps_ridge = 1e-6
+        # Stage 1: Enhanced ridge for stability (increased from 1e-6 to 1e-5 by default)
+        eps_ridge = 1e-5
         C = jnp.eye(r, dtype=A_m.dtype) * (1.0 + eps_ridge) + (A_m.T @ A_m)
         # Cholesky for stability
         L = jnp.linalg.cholesky(C)
@@ -384,6 +403,8 @@ def build_elbo_step(
     batch_size: int,
     whitener: Whitener,
     optimizer: optax.GradientTransformation,
+    clip_global_norm: Optional[float] = None,
+    alpha_temperature: float = 1.0,
 ) -> Callable:
     """Build one ELBO optimization step with STL and RB gradients.
 
@@ -469,8 +490,8 @@ def build_elbo_step(
         # Continuous gradients via STL
         loss_val, grads_cont = jax.value_and_grad(ell_only)(params)
 
-        # RB gradient for alpha
-        pi = jax.nn.softmax(params.alpha)
+        # RB gradient for alpha (use temperature-adjusted softmax)
+        pi = softmax_with_temperature(params.alpha, alpha_temperature)
         g_alpha = (r - pi) * payoff
 
         # Cast all gradients to ref_dtype to prevent float64 promotion
@@ -480,7 +501,17 @@ def build_elbo_step(
             alpha=jnp.asarray(g_alpha, dtype=ref_dtype),
         )
 
-        # 6) Optax update
+        # 6) Optional gradient clipping (Stage 1 stability)
+        if clip_global_norm is not None:
+            # Flatten gradients for global norm computation
+            grads_flat, unravel_grads = jax.flatten_util.ravel_pytree(grads)
+            norm = jnp.linalg.norm(grads_flat)
+            # Clip if norm exceeds threshold
+            clip_coef = jnp.minimum(1.0, clip_global_norm / (norm + 1e-8))
+            grads_flat_clipped = grads_flat * clip_coef
+            grads = unravel_grads(grads_flat_clipped)
+
+        # 7) Optax update
         updates, new_opt_state = optimizer.update(grads, state.opt_state, params)
         new_params = optax.apply_updates(params, updates)
 
@@ -500,10 +531,24 @@ def build_elbo_step(
             step=state.step + jnp.array(1, dtype=jnp.int32),
         )
 
-        # Metrics for tracing
+        # Metrics for tracing (Stage 2: enhanced diagnostics)
         # Compute responsibility entropy: H(r) = -sum(r * log(r))
         # Use numerically stable formulation: where r=0, contribution is 0
         resp_entropy = -jnp.sum(jnp.where(r > 1e-10, r * jnp.log(r + 1e-10), 0.0))
+
+        # Mixture weight statistics
+        pi_entropy = -jnp.sum(jnp.where(pi > 1e-10, pi * jnp.log(pi + 1e-10), 0.0))
+
+        # D_sqrt statistics (diagonal covariance components)
+        D_sqrt_new = softplus(new_params.rho)
+
+        # Gradient norm (total across all parameters)
+        grads_flat, _ = jax.flatten_util.ravel_pytree(grads)
+        grad_norm = jnp.linalg.norm(grads_flat)
+
+        # Factor column norms (A matrix)
+        A_col_norms = jax.vmap(lambda A_m: jnp.linalg.norm(A_m, axis=0))(new_params.A)  # (M, r)
+        A_col_norm_max = jnp.max(A_col_norms)
 
         metrics = {
             "elbo": ell + logq,  # TRUE ELBO (target + entropy)
@@ -513,6 +558,15 @@ def build_elbo_step(
             "Ln_batch": Ln_batch,  # Minibatch loss
             "resp_entropy": resp_entropy,  # Entropy of responsibilities (detects peaking)
             "work_fge": jnp.asarray(batch_size / float(n_data), dtype=jnp.float64),  # FGEs
+            # Stage 2: additional diagnostics
+            "pi_min": jnp.min(pi),
+            "pi_max": jnp.max(pi),
+            "pi_entropy": pi_entropy,
+            "D_sqrt_min": jnp.min(D_sqrt_new),
+            "D_sqrt_max": jnp.max(D_sqrt_new),
+            "D_sqrt_med": jnp.median(D_sqrt_new),
+            "grad_norm": grad_norm,
+            "A_col_norm_max": A_col_norm_max,
         }
 
         return (new_params, new_state), metrics
@@ -598,6 +652,8 @@ def fit_vi_and_estimate_lambda(
     lr: float,
     eval_samples: int,
     whitener: Whitener,
+    clip_global_norm: Optional[float] = None,
+    alpha_temperature: float = 1.0,
 ) -> Tuple[float, Dict[str, jnp.ndarray], Dict[str, Any]]:
     """Fit variational distribution and estimate Local Learning Coefficient.
 
@@ -651,6 +707,8 @@ def fit_vi_and_estimate_lambda(
         batch_size=batch_size,
         whitener=whitener,
         optimizer=optimizer,
+        clip_global_norm=clip_global_norm,
+        alpha_temperature=alpha_temperature,
     )
 
     # Run optimization loop
@@ -672,7 +730,7 @@ def fit_vi_and_estimate_lambda(
     # Extract final variational parameters
     rho_final, A_final, alpha_final = final_params
     D_sqrt_final, _ = diag_from_rho(rho_final)
-    pi_final = jax.nn.softmax(alpha_final)
+    pi_final = softmax_with_temperature(alpha_final, alpha_temperature)
 
     # Flatten/unflatten utilities
     def unflatten(flat: jnp.ndarray) -> Any:

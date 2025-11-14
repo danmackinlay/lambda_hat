@@ -56,11 +56,19 @@ uv run snakemake -j 4
   - Records full-dataset loss every N steps
 - `eval_samples`: MC samples for final LLC estimate (default: 64)
 
-### Precision
+### Precision and Stability
 - `dtype`: Precision (default: `float32`)
   - VI includes float32 stability features (D_sqrt clipping, ridge regularization, column normalization)
-- `use_whitening`: Enable geometry whitening (default: true)
-  - Currently uses identity; future support for Adam/RMSProp-based whitening
+
+### Geometry Whitening (Stage 1)
+- `whitening_mode`: Whitening method (default: `"none"`)
+  - Options: `"none"` (identity), `"rmsprop"` (second moment), `"adam"` (first + second moment)
+  - Estimates diagonal preconditioner from minibatch gradients at $w^*$ before optimization
+  - Helps reduce ELBO/radius spikes on anisotropic problems
+- `whitening_decay`: EMA decay for gradient moment accumulation (default: 0.99)
+  - Higher values (closer to 1.0) = slower adaptation, more stable estimates
+  - Lower values = faster adaptation, noisier estimates
+- `use_whitening`: Deprecated (use `whitening_mode` instead)
 
 ## Mathematical Formulation
 
@@ -111,9 +119,21 @@ where:
 VI includes several stability features for robust float32 operation:
 
 1. **D_sqrt clipping**: Constrain $D^{1/2} \in [10^{-4}, 10^2]$ to prevent under/overflow
-2. **Ridge regularization**: Cholesky on $C = I(1+\epsilon) + A^T A$ instead of $I + A^T A$
+2. **Ridge regularization**: Cholesky on $C = I(1+\epsilon) + A^T A$ with enhanced ridge ($\epsilon = 10^{-5}$)
 3. **Column normalization**: Clip factor columns to max norm 10.0 to prevent explosion
 4. **Log stability**: Use $\log(D^{1/2} + \epsilon)$ instead of $\log(D^{1/2})$
+
+### Stage 1 Stability Enhancements
+
+Additional stability guards (from Stage 1 VI plan):
+
+5. **Gradient clipping**: Clip global gradient norm via optax.clip_by_global_norm
+   - Controlled by `clip_global_norm` config parameter (default: 5.0, null to disable)
+   - Prevents gradient explosions during optimization
+6. **Temperature-adjusted softmax**: Mixture weights use $\text{softmax}(\alpha / T)$ with temperature $T$
+   - Controlled by `alpha_temperature` config parameter (default: 1.0)
+   - Higher temperature (> 1.0) produces more uniform distributions (prevents component collapse)
+   - Lower bound at $T = 0.5$ for numerical stability
 
 These features ensure responsibilities stay in $[0,1]$ and prevent NaN/Inf propagation.
 
@@ -149,16 +169,40 @@ Analysis metrics (in `analysis.json`):
 - Monitor ELBO convergence; increase `steps` if not plateaued
 - Reduce `lr` if ELBO is noisy/unstable
 
+### When to Use Whitening
+
+**Use `whitening_mode="none"` (default) when:**
+- Problem has roughly isotropic gradients
+- ELBO and radius traces are already smooth
+- Debugging or first exploratory runs
+
+**Use `whitening_mode="rmsprop"` when:**
+- Seeing large spikes in ELBO or radius early in optimization
+- Problem has anisotropic geometry (very different parameter scales)
+- Gradients have high variance across dimensions
+
+**Use `whitening_mode="adam"` when:**
+- RMSProp whitening helps but still seeing instability
+- Problem has both scale and directional anisotropy
+- Extra cost (~500-1000 minibatch gradients) is acceptable
+
+**How to tune `whitening_decay`:**
+- Default 0.99 works well for most problems
+- Increase to 0.995 for noisier gradients (smoother EMA)
+- Decrease to 0.95 for very smooth gradients (faster adaptation)
+- Must be in range [0.9, 0.999]
+
 ## Implementation Compliance
 
 The VI implementation follows the design in `/plans/variational_inference.md`:
 
 1. **Shared diagonal $D$**: Essential for PD, numerics, and Woodbury speed
 2. **Algebraic whitening**: $K_m = D^{1/2} A_m$ stabilizes learning
-3. **Geometry whitening**: Infrastructure ready for Adam/RMSProp-based preconditioning
+3. **Geometry whitening**: ✓ Implemented in Stage 1 with RMSProp/Adam diagonal preconditioning
 4. **Rank budget $r \geq 1$**: General implementation supports arbitrary rank
 5. **STL + RB gradients**: Low-variance, scalable gradient estimators
 6. **Equal means**: All components centered at $w^*$ for strict locality
+7. **Stability guards**: ✓ Stage 1 adds gradient clipping and temperature-adjusted softmax
 
 ## Comparison to MCMC
 

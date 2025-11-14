@@ -1,7 +1,7 @@
 # @package _global_.sampler
 name: vi
 vi:
-  # Variational family (for future implementation)
+  # Variational family
   M: 8              # number of mixture components
   r: 2              # rank budget per component
 
@@ -19,4 +19,15 @@ vi:
 
   # Precision
   dtype: float32
-  use_whitening: true
+  use_whitening: true  # deprecated, use whitening_mode
+
+  # Whitening (Stage 1)
+  whitening_mode: none      # "none"|"rmsprop"|"adam" - geometry whitening
+  whitening_decay: 0.99     # EMA decay for gradient moments
+
+  # Stability (Stage 1)
+  clip_global_norm: 5.0     # gradient clipping threshold (null to disable)
+  alpha_temperature: 1.0    # softmax temperature on mixture weights
+
+  # Diagnostics (Stage 2)
+  tensorboard: false        # enable TensorBoard logging (requires tensorboardX)

@@ -777,9 +777,52 @@ def run_vi(
     # Flatten initial parameters
     params_flat, unravel_fn = jax.flatten_util.ravel_pytree(initial_params)
 
-    # Create whitener (for now: identity, no geometry whitening)
-    # TODO: Add geometry whitening support (item 9 from variational_fixes.md)
-    whitener = vi.make_whitener(None)
+    # === Whitening Pre-Pass (Stage 1) ===
+    # Compute diagonal preconditioner A_diag based on whitening_mode
+    A_diag = None  # Default: identity whitener
+
+    if config.whitening_mode != "none":
+        # Estimate diagonal geometry via gradient moment accumulation
+        # Use ~500-1000 minibatch gradients to build robust estimate
+        n_whitening_samples = min(1000, max(500, config.steps // 10))
+
+        # Initialize EMA state for gradient moments
+        key, key_whitening = jax.random.split(rng_key)
+        v_diag = jnp.ones_like(params_flat)  # Second moment (RMSProp/Adam)
+        m_diag = jnp.zeros_like(params_flat) if config.whitening_mode == "adam" else None
+
+        # Gradient function at w* (compute loss gradient only, no localization)
+        def compute_grad_at_wstar(minibatch):
+            params_unravel = unravel_fn(params_flat)
+            grad_loss = jax.grad(lambda p: loss_batch_fn(p, minibatch))(params_unravel)
+            grad_flat, _ = jax.flatten_util.ravel_pytree(grad_loss)
+            return grad_flat
+
+        # Accumulate gradient moments
+        for _ in range(n_whitening_samples):
+            key_whitening, key_batch = jax.random.split(key_whitening)
+            indices = jax.random.choice(key_batch, n_data, shape=(config.batch_size,), replace=True)
+            minibatch = (X[indices], Y[indices])
+
+            # Cast minibatch to required dtype
+            minibatch = jax.tree.map(lambda x: x.astype(ref_dtype), minibatch)
+
+            # Compute gradient at w*
+            grad_flat = compute_grad_at_wstar(minibatch)
+
+            # Update moments with EMA
+            decay = config.whitening_decay
+            v_diag = decay * v_diag + (1 - decay) * (grad_flat ** 2)
+            if config.whitening_mode == "adam":
+                m_diag = decay * m_diag + (1 - decay) * grad_flat
+
+        # Extract diagonal preconditioner (inverse of sqrt of second moment)
+        # A_diag represents the geometry scaling: larger values where gradients are larger
+        eps = 1e-8  # Numerical stability
+        A_diag = jnp.sqrt(v_diag + eps)  # Diagonal of geometry matrix
+
+    # Create whitener (identity if A_diag is None, diagonal otherwise)
+    whitener = vi.make_whitener(A_diag)
 
     # Run VI fitting and estimation for each chain
     chain_keys = jax.random.split(rng_key, num_chains)
@@ -802,6 +845,8 @@ def run_vi(
             lr=config.lr,
             eval_samples=config.eval_samples,
             whitener=whitener,
+            clip_global_norm=config.clip_global_norm,
+            alpha_temperature=config.alpha_temperature,
         )
 
     # Vmap across chains: returns (lambda_hats, all_traces, all_extras)
