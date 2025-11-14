@@ -64,11 +64,11 @@ Tracking implementation of the comprehensive VI improvement plan from `finish_vi
 
 ---
 
-## 🔄 Stage 2: TensorBoard & Observability (CURRENT)
+## ✅ Stage 2: TensorBoard & Observability (COMPLETED)
 
 **Goal:** Make VI tunable and debuggable with rich diagnostics
 
-**Status:** IN PROGRESS
+**Status:** COMPLETED
 
 ### Planned Features
 - **TensorBoard Scalars**
@@ -230,3 +230,9 @@ Tracking implementation of the comprehensive VI improvement plan from `finish_vi
 - 2025-11-14: Created this progress tracking document (Stage 1 start)
 - 2025-11-14: Completed Stage 1 (Whitening & Core Stability) - all tasks ✓
 - 2025-11-14: Starting Stage 2 (TensorBoard & Observability)
+- 2025-11-14: Completed Stage 2 (TensorBoard & Observability) - all tasks ✓
+  - Enhanced diagnostics: 8 new metrics (pi_min/max/entropy, D_sqrt_min/max/med, grad_norm, A_col_norm_max)
+  - TensorBoard integration: 15+ scalars logged to runs/.../diagnostics/tb/
+  - ArviZ export: VI metrics in sample_stats for unified diagnostics
+  - Tests: 2 new tests (test_vi_enhanced_diagnostics, test_vi_tensorboard_smoke)
+  - Documentation: Complete TensorBoard quickstart guide in docs/vi.md

@@ -812,7 +812,7 @@ def run_vi(
 
             # Update moments with EMA
             decay = config.whitening_decay
-            v_diag = decay * v_diag + (1 - decay) * (grad_flat ** 2)
+            v_diag = decay * v_diag + (1 - decay) * (grad_flat**2)
             if config.whitening_mode == "adam":
                 m_diag = decay * m_diag + (1 - decay) * grad_flat
 
