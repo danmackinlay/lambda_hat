@@ -1,14 +1,32 @@
-store_root: "runs"
-jax_enable_x64: true
+# Lambda-Hat Experiments Configuration
+#
+# This file defines the N × M experiment grid:
+#   targets:  Neural network configurations (model + data + teacher + seed)
+#   samplers: MCMC/VI algorithms and their hyperparameters
+#
+# The Parsl workflow automatically creates N targets × M samplers jobs.
+#
+# Execution:
+#   Local testing:  uv run python flows/parsl_llc.py --local
+#   SLURM cluster:  uv run python flows/parsl_llc.py --parsl-config parsl_config_slurm.py
+#
+# See docs/configuration.md for detailed parameter documentation.
+# See docs/sweeps.md for sweep design patterns and examples.
+
+store_root: "runs"        # Output directory for all artifacts
+jax_enable_x64: true      # Use float64 (recommended for HMC/MCLMC)
 
 targets:
+  # Each target = unique (model, data, teacher, seed) combination
+  # Creates a content-addressed target ID: tgt_<hash>
   - { model: small, data: small, teacher: _null, seed: 42 }
   - { model: base,  data: base,  teacher: _null, seed: 43,
-      overrides: { training: { steps: 10000 } } }
+      overrides: { training: { steps: 10000 } } }  # Override default training steps
 
 samplers:
-  - { name: hmc }
-  - { name: mclmc }
-  - { name: sgld, overrides: { step_size: 1e-6, eval_every: 50 }, seed: 12345 }
-  # VI sampler: mixture of factor analyzers with STL + RB gradients
-  - { name: vi, overrides: { M: 8, r: 2, gamma: 0.001 }, seed: 54321 }
+  # Each sampler runs on every target (N × M total jobs)
+  # Presets: lambda_hat/conf/sample/sampler/{hmc,mclmc,sgld,vi}.yaml
+  - { name: hmc }     # Hamiltonian Monte Carlo (gold standard)
+  - { name: mclmc }   # Microcanonical Langevin Monte Carlo (fast)
+  - { name: sgld, overrides: { step_size: 1e-6, eval_every: 50 }, seed: 12345 }  # Stochastic gradient
+  - { name: vi, overrides: { M: 8, r: 2, gamma: 0.001 }, seed: 54321 }          # Variational inference

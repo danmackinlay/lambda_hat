@@ -108,7 +108,7 @@ posterior:
 
 **Commands**:
 ```bash
-uv run snakemake -j 4
+uv run python flows/parsl_llc.py --local
 ```
 
 **Results**: `runs/targets/<tgt>/run_vi_<rid>/analysis.json` contains `llc_mean`, `llc_std`, `ess`, `wnv`.

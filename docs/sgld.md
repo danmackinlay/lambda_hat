@@ -22,7 +22,7 @@ samplers:
 
 Then execute:
 ```bash
-uv run snakemake -j 4
+uv run python flows/parsl_llc.py --local
 ```
 
 ## Configuration Options
