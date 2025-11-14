@@ -984,7 +984,7 @@ class _MFAAlgorithm:
             },
             "work": {
                 # Extract work metrics from traces
-                "n_full_loss": vi_cfg.steps,  # One full gradient per step
+                "n_full_loss": vi_cfg.eval_samples,  # MC samples for final lambda estimation
                 "n_minibatch_grads": vi_cfg.steps,  # One minibatch per step
                 "sampler_flavour": "mfa",
             },
