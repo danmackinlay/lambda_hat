@@ -1,16 +1,20 @@
 #!/usr/bin/env python3
-"""Parsl workflow for Lambda-Hat: N targets × M samplers with promotion.
+"""Parsl workflow for Lambda-Hat: N targets × M samplers with optional promotion.
 
 Replaces Snakemake with Python-native DAG execution.
 
 Stages:
   A. Build targets (neural networks + datasets)
   B. Run samplers (MCMC/VI) for each target
-  C. Promote results (gallery + aggregation)
+  C. Promote results (gallery + aggregation) - OPTIONAL, opt-in via --promote
 
 Usage:
+  # Local testing (no promotion)
   python flows/parsl_llc.py --config config/experiments.yaml --local
-  python flows/parsl_llc.py --config config/experiments.yaml --parsl-config parsl_config_slurm.py
+
+  # SLURM cluster with promotion
+  python flows/parsl_llc.py --config config/experiments.yaml \\
+      --parsl-config parsl_config_slurm.py --promote
 """
 
 import argparse
@@ -106,7 +110,6 @@ def promote_app(store_root, samplers, outdir, plot_name, inputs=None):
     """
     from pathlib import Path
 
-
     store_root = Path(store_root)
     outdir = Path(outdir)
     outdir.mkdir(parents=True, exist_ok=True)
@@ -144,12 +147,13 @@ def load_parsl_config(config_path):
     return module.config
 
 
-def run_workflow(experiments_yaml, parsl_config_path, promote_plots=None):
-    """Execute the full Lambda-Hat workflow: build → sample → promote.
+def run_workflow(experiments_yaml, parsl_config_path, enable_promotion=False, promote_plots=None):
+    """Execute the full Lambda-Hat workflow: build → sample → (optional) promote.
 
     Args:
         experiments_yaml: Path to experiments config (e.g., config/experiments.yaml)
         parsl_config_path: Path to Parsl executor config
+        enable_promotion: Whether to run promotion stage (default: False, opt-in)
         promote_plots: List of plot names to promote (default: ['trace.png'])
 
     Returns:
@@ -279,31 +283,34 @@ def run_workflow(experiments_yaml, parsl_config_path, promote_plots=None):
             print(f"  [{i}/{len(run_futures)}] FAILED: {e}")
 
     # ========================================================================
-    # Stage C: Promotion
+    # Stage C: Promotion (optional, opt-in)
     # ========================================================================
 
-    print("\n=== Stage C: Promotion ===")
-    unique_samplers = sorted({s["name"] for s in samplers_conf})
+    if enable_promotion:
+        print("\n=== Stage C: Promotion ===")
+        unique_samplers = sorted({s["name"] for s in samplers_conf})
 
-    # Load promotion config for output directory
-    prom_cfg = OmegaConf.load(ROOT / "lambda_hat" / "conf" / "promote.yaml")
-    outdir = Path(prom_cfg.get("outdir", "runs/promotion"))
+        # Load promotion config for output directory
+        prom_cfg = OmegaConf.load(ROOT / "lambda_hat" / "conf" / "promote.yaml")
+        outdir = Path(prom_cfg.get("outdir", "runs/promotion"))
 
-    # Promote each plot type
-    for plot_name in promote_plots:
-        print(f"  Promoting {plot_name}...")
-        promote_future = promote_app(
-            store_root=store_root,
-            samplers=unique_samplers,
-            outdir=str(outdir),
-            plot_name=plot_name,
-            inputs=run_futures,  # Wait for all runs
-        )
-        try:
-            md_path = promote_future.result()
-            print(f"    → Gallery written to {md_path}")
-        except Exception as e:
-            print(f"    → Promotion FAILED: {e}")
+        # Promote each plot type
+        for plot_name in promote_plots:
+            print(f"  Promoting {plot_name}...")
+            promote_future = promote_app(
+                store_root=store_root,
+                samplers=unique_samplers,
+                outdir=str(outdir),
+                plot_name=plot_name,
+                inputs=run_futures,  # Wait for all runs
+            )
+            try:
+                md_path = promote_future.result()
+                print(f"    → Gallery written to {md_path}")
+            except Exception as e:
+                print(f"    → Promotion FAILED: {e}")
+    else:
+        print("\n=== Stage C: Promotion skipped (use --promote to enable) ===")
 
     # ========================================================================
     # Aggregate results into single parquet file
@@ -361,9 +368,14 @@ def main():
         help="Use local ThreadPool executor (overrides --parsl-config)",
     )
     parser.add_argument(
+        "--promote",
+        action="store_true",
+        help="Run promotion stage (gallery generation) after sampling (opt-in)",
+    )
+    parser.add_argument(
         "--promote-plots",
         default="trace.png,llc_convergence_combined.png",
-        help="Comma-separated list of plots to promote (default: trace,convergence)",
+        help="Comma-separated plots to promote when --promote is used (default: trace,convergence)",
     )
 
     args = parser.parse_args()
@@ -386,10 +398,18 @@ def main():
     # Run workflow
     print(f"Using Parsl config: {parsl_config_path}")
     print(f"Using experiments config: {args.config}")
-    print(f"Promoting plots: {promote_plots}\n")
+    if args.promote:
+        print(f"Promotion enabled: {promote_plots}")
+    else:
+        print("Promotion disabled (use --promote to enable)\n")
 
     try:
-        output_path = run_workflow(args.config, parsl_config_path, promote_plots)
+        output_path = run_workflow(
+            args.config,
+            parsl_config_path,
+            enable_promotion=args.promote,
+            promote_plots=promote_plots,
+        )
         print(f"\n✓ Workflow complete! Results: {output_path}")
     except Exception as e:
         print(f"\n✗ Workflow failed: {e}", file=sys.stderr)
