@@ -58,7 +58,7 @@ pip install .[cuda12]    # For CUDA 12 (Linux)
 
 ## Entrypoints
 
-Lambda-Hat provides three command-line tools that implement the two-stage workflow. Snakemake orchestrates these automatically, but they can also be invoked directly for debugging or custom workflows.
+Lambda-Hat provides three command-line tools that implement the two-stage workflow. Parsl orchestrates these automatically, but they can also be invoked directly for debugging or custom workflows.
 
 ### `lambda-hat-build-target` (Stage A)
 
@@ -123,55 +123,60 @@ uv run lambda-hat-promote single \
   --plot-name running_llc.png
 ```
 
-These are orchestrated together with the required simulations by snakemake
-
-```bash
-uv run snakemake -j 1 promote
-```
+These can be orchestrated automatically by adding the `--promote` flag to the Parsl workflow (see Orchestration section below).
 
 
 ---
 
 ## Orchestration
 
-We use **Snakemake** for the full pipeline.
-OmegaConf parses our YAML configs.
+We use **Parsl** for the full pipeline. Parsl provides Python-native DAG execution with better support for dynamic parameter sweeps and HPC cluster integration.
 
 ### Quickstart
 
 ```bash
-# Preview the DAG and outputs
-uv run snakemake -n
+# Run locally (uses ThreadPoolExecutor)
+uv run python flows/parsl_llc.py --local
 
-# Run locally (4 cores)
-uv run snakemake -j 4
+# Run locally with promotion (generates galleries)
+uv run python flows/parsl_llc.py --local --promote
 ```
 
 ### Editing experiments
 
 * Edit `config/experiments.yaml` to add/remove targets and samplers.
-* Snakemake computes IDs and directories; scripts do **not** invent paths.
+* Parsl computes IDs and directories using the same logic; scripts do **not** invent paths.
 
-### Forcing & targeting
+### Promotion (opt-in)
 
-```bash
-# Force re-run a rule and everything downstream
-uv run snakemake --forcerun run_sampler -j 8
-
-# Run a specific output
-uv run snakemake runs/targets/tgt_abcdef123456/run_hmc_12ab34cd/analysis.json
-```
-
-### HPC
-
-Use your Snakemake profile:
+Promotion generates asset galleries from sampling runs. It's opt-in via the `--promote` flag:
 
 ```bash
-uv run snakemake --profile slurm -j 100
+# Run workflow with promotion
+uv run python flows/parsl_llc.py --local --promote
+
+# Specify which plots to promote
+uv run python flows/parsl_llc.py --local --promote \
+    --promote-plots trace.png,llc_convergence_combined.png
 ```
 
-(Adjust HPC section to your environment if you keep a profile.)
-(Note we are not on the cluster right now so testing for this can be deferred).
+### HPC Execution
+
+For SLURM clusters, use the SLURM Parsl config:
+
+```bash
+# Run on SLURM cluster (auto-scales 0-50 jobs)
+uv run python flows/parsl_llc.py --parsl-config parsl_config_slurm.py
+
+# Customize Parsl config
+# Edit parsl_config_slurm.py to adjust partition, walltime, resources
+```
+
+**Key differences from Snakemake:**
+- Explicit dependencies via Python futures instead of implicit file-based rules
+- All orchestration logic in Python (flows/parsl_llc.py)
+- Direct control over parallelism and job submission
+- Easier parameter sweeps and dynamic workflows
 
 ---
 
