@@ -273,6 +273,7 @@ def sample_q(
     params: VIParams,
     wstar_flat: jnp.ndarray,
     whitener: Whitener,
+    rank_mask: Optional[jnp.ndarray] = None,
 ) -> Tuple[jnp.ndarray, Dict[str, Any]]:
     """Pathwise sample from variational distribution q.
 
@@ -302,6 +303,9 @@ def sample_q(
 
     # Algebraic whitening: K_m = D^{1/2} A_m
     A_m = A[m]  # (d, r)
+    # Stage 3: Apply rank mask if provided
+    if rank_mask is not None:
+        A_m = A_m * rank_mask[m]  # Mask: (r,) broadcast to (d, r)
     K_m_z = (D_sqrt[:, None] * A_m) @ z  # (d,)
     D_sqrt_eps = D_sqrt * eps  # (d,)
 
@@ -405,6 +409,9 @@ def build_elbo_step(
     optimizer: optax.GradientTransformation,
     clip_global_norm: Optional[float] = None,
     alpha_temperature: float = 1.0,
+    entropy_bonus: float = 0.0,
+    alpha_dirichlet_prior: Optional[float] = None,
+    rank_mask: Optional[jnp.ndarray] = None,
 ) -> Callable:
     """Build one ELBO optimization step with STL and RB gradients.
 
@@ -442,7 +449,7 @@ def build_elbo_step(
         """One ELBO optimization step."""
 
         # 1) Sample w ~ q (pathwise)
-        w_flat, aux = sample_q(key, params, wstar_flat, whitener)
+        w_flat, aux = sample_q(key, params, wstar_flat, whitener, rank_mask=rank_mask)
         w = unflatten(w_flat)
         tilde_v = aux["tilde_v"]
         m = aux["m"]
@@ -479,6 +486,9 @@ def build_elbo_step(
             rho, A, alpha = p  # noqa: F841 (alpha not used, but needed for signature)
             D_sqrt_new = softplus(rho)
             A_m = A[m]
+            # Stage 3: Apply rank mask if provided
+            if rank_mask is not None:
+                A_m = A_m * rank_mask[m]
             K_m_z = (D_sqrt_new[:, None] * A_m) @ z
             tilde_v_new = K_m_z + D_sqrt_new * eps
             w_new = unflatten(wstar_flat + whitener.from_tilde(tilde_v_new))
@@ -493,6 +503,20 @@ def build_elbo_step(
         # RB gradient for alpha (use temperature-adjusted softmax)
         pi = softmax_with_temperature(params.alpha, alpha_temperature)
         g_alpha = (r - pi) * payoff
+
+        # Stage 3: Add Dirichlet prior gradient if enabled
+        # Prior: Dirichlet(α₀, ..., α₀) => grad = (α₀ - 1) * (1/M - π)
+        if alpha_dirichlet_prior is not None:
+            prior_grad = (alpha_dirichlet_prior - 1.0) * (1.0 / float(pi.shape[0]) - pi)
+            g_alpha = g_alpha + jnp.asarray(prior_grad, dtype=ref_dtype)
+
+        # Stage 3: Add entropy bonus gradient if enabled
+        # H(q) = -sum(π log π) => ∇_α H = -(1 + log π) + π sum(1 + log π)
+        # Simplified: ∇_α H = π * (sum log π) - log π
+        if entropy_bonus > 0.0:
+            log_pi = jnp.log(pi + 1e-10)
+            entropy_grad = entropy_bonus * (pi * jnp.sum(log_pi) - log_pi)
+            g_alpha = g_alpha + jnp.asarray(entropy_grad, dtype=ref_dtype)
 
         # Cast all gradients to ref_dtype to prevent float64 promotion
         grads = VIParams(
@@ -654,6 +678,11 @@ def fit_vi_and_estimate_lambda(
     whitener: Whitener,
     clip_global_norm: Optional[float] = None,
     alpha_temperature: float = 1.0,
+    entropy_bonus: float = 0.0,
+    alpha_dirichlet_prior: Optional[float] = None,
+    r_per_component: Optional[list[int]] = None,
+    lr_schedule: Optional[str] = None,
+    lr_warmup_frac: float = 0.05,
 ) -> Tuple[float, Dict[str, jnp.ndarray], Dict[str, Any]]:
     """Fit variational distribution and estimate Local Learning Coefficient.
 
@@ -685,9 +714,47 @@ def fit_vi_and_estimate_lambda(
     key_init, key_opt, key_eval = jax.random.split(rng_key, 3)
     ref_dtype = wstar_flat.dtype
 
+    # Stage 3: Create rank mask if per-component ranks specified
+    rank_mask = None
+    if r_per_component is not None:
+        # Validate length
+        if len(r_per_component) != M:
+            raise ValueError(f"r_per_component must have length M={M}, got {len(r_per_component)}")
+        # Create binary mask: (M, r) where mask[m, k] = 1 if k < r_per_component[m] else 0
+        rank_mask = jnp.array(
+            [[1.0 if k < r_per_component[m] else 0.0 for k in range(r)] for m in range(M)],
+            dtype=ref_dtype,
+        )
+
     # Initialize VI parameters and optimizer
     vi_params = init_vi_params(key_init, wstar_flat, M=M, r=r)
-    optimizer = optax.adam(lr)
+
+    # Stage 3: Build optimizer with optional LR schedule
+    if lr_schedule is None:
+        # Constant LR (default)
+        optimizer = optax.adam(lr)
+    elif lr_schedule == "cosine":
+        # Cosine decay with warmup
+        warmup_steps = int(lr_warmup_frac * steps)
+        schedule = optax.warmup_cosine_decay_schedule(
+            init_value=0.0,
+            peak_value=lr,
+            warmup_steps=warmup_steps,
+            decay_steps=steps - warmup_steps,
+        )
+        optimizer = optax.adam(schedule)
+    elif lr_schedule == "linear_decay":
+        # Linear decay with warmup
+        warmup_steps = int(lr_warmup_frac * steps)
+        schedule = optax.linear_schedule(
+            init_value=lr / warmup_steps if warmup_steps > 0 else lr,
+            end_value=0.0,
+            transition_steps=steps,
+        )
+        optimizer = optax.adam(schedule)
+    else:
+        raise ValueError(f"Unknown lr_schedule: {lr_schedule}")
+
     opt_state = optimizer.init(vi_params)
     vi_state = VIOptState(
         opt_state=opt_state,
@@ -709,6 +776,9 @@ def fit_vi_and_estimate_lambda(
         optimizer=optimizer,
         clip_global_norm=clip_global_norm,
         alpha_temperature=alpha_temperature,
+        entropy_bonus=entropy_bonus,
+        alpha_dirichlet_prior=alpha_dirichlet_prior,
+        rank_mask=rank_mask,
     )
 
     # Run optimization loop
@@ -743,7 +813,7 @@ def fit_vi_and_estimate_lambda(
     # Sample perturbations and compute losses
     def sample_perturbation_and_loss(eval_key):
         """Sample from trained q and evaluate full-dataset loss."""
-        w_flat, aux = sample_q(eval_key, final_params, wstar_flat, whitener)
+        w_flat, aux = sample_q(eval_key, final_params, wstar_flat, whitener, rank_mask=rank_mask)
         # Get perturbation in model coordinates: v = w - w*
         # Cast to match wstar_flat dtype
         v = jnp.asarray(w_flat - wstar_flat, dtype=wstar_flat.dtype)

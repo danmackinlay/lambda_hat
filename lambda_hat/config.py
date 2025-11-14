@@ -158,6 +158,14 @@ class VIConfig:
     alpha_temperature: float = 1.0  # softmax temperature on mixture weights
     # Diagnostics (Stage 2)
     tensorboard: bool = False  # enable TensorBoard logging (requires tensorboardX)
+    # Advanced Configuration (Stage 3)
+    r_per_component: Optional[list[int]] = None  # heterogeneous rank budgets (length M)
+    mixture_cap: Optional[int] = None  # upper bound on M (pruning threshold)
+    prune_threshold: float = 1e-3  # drop components with π < threshold
+    alpha_dirichlet_prior: Optional[float] = None  # Dirichlet(α) prior on mixture weights
+    lr_schedule: Optional[str] = None  # "cosine"|"linear_decay" learning rate schedule
+    lr_warmup_frac: float = 0.05  # fraction of steps for warmup
+    entropy_bonus: float = 0.0  # add λ * H(q) to ELBO for exploration
 
 
 @dataclass

@@ -847,6 +847,11 @@ def run_vi(
             whitener=whitener,
             clip_global_norm=config.clip_global_norm,
             alpha_temperature=config.alpha_temperature,
+            entropy_bonus=config.entropy_bonus,
+            alpha_dirichlet_prior=config.alpha_dirichlet_prior,
+            r_per_component=config.r_per_component,
+            lr_schedule=config.lr_schedule,
+            lr_warmup_frac=config.lr_warmup_frac,
         )
 
     # Vmap across chains: returns (lambda_hats, all_traces, all_extras)

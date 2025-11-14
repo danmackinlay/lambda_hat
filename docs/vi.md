@@ -77,6 +77,33 @@ uv run snakemake -j 4
   - Lower values = faster adaptation, noisier estimates
 - `use_whitening`: Deprecated (use `whitening_mode` instead)
 
+### Advanced Configuration (Stage 3)
+- `r_per_component`: Per-component rank budgets (default: `None`)
+  - Optional list of integers of length M specifying heterogeneous ranks
+  - Example: `[1, 2, 2, 3]` for M=4 components with different ranks
+  - Enables fine-grained control over model capacity per component
+  - If `None`, all components use rank `r`
+- `mixture_cap`: Upper bound on M (default: `None`)
+  - Reserved for future pruning implementation
+- `prune_threshold`: Component pruning threshold (default: 1e-3)
+  - Drop mixture components with weight π < threshold
+  - Reserved for future pruning implementation
+- `alpha_dirichlet_prior`: Dirichlet prior on mixture weights (default: `None`)
+  - Symmetric Dirichlet(α₀, ..., α₀) prior discourages collapse
+  - Try α₀ ∈ {1.0, 2.0, 5.0}; larger values encourage uniformity
+  - If `None`, no prior (maximum likelihood on π)
+- `lr_schedule`: Learning rate schedule (default: `None`)
+  - Options: `None` (constant), `"cosine"` (cosine decay with warmup), `"linear_decay"` (linear decay)
+  - Cosine schedule often improves final convergence quality
+  - Linear decay useful for finite-horizon optimization
+- `lr_warmup_frac`: Fraction of steps for LR warmup (default: 0.05)
+  - Used with `lr_schedule="cosine"` to gradually ramp up learning rate
+  - Helps stabilize early optimization
+- `entropy_bonus`: Entropy bonus λ (default: 0.0)
+  - Adds λ * H(q) to ELBO to encourage exploration
+  - Try λ ∈ {0.01, 0.1, 0.5} if mixture weights collapse
+  - Higher values produce more uniform π distributions
+
 ## Mathematical Formulation
 
 ### Variational Family
@@ -288,6 +315,36 @@ Navigate to `http://localhost:6006` to view live metrics.
 - Decrease to 0.95 for very smooth gradients (faster adaptation)
 - Must be in range [0.9, 0.999]
 
+### Stage 3 Advanced Tuning
+
+**Per-component ranks (`r_per_component`):**
+- Use when different mixture components model different complexity
+- Start with uniform ranks (default), increase selectively based on diagnostics
+- Monitor `A_col_norm_max` to see which components need more capacity
+- Example: `[1, 1, 2, 3]` gives higher-rank components more expressive power
+
+**Dirichlet prior (`alpha_dirichlet_prior`):**
+- Use when `pi_entropy` drops to near zero (component collapse)
+- α₀ = 1.0: Uniform prior (no preference)
+- α₀ > 1.0: Encourages uniformity (anti-collapse)
+- α₀ < 1.0: Encourages sparsity (not recommended for VI)
+- Monitor `pi_min` and `pi_entropy` to validate effectiveness
+
+**LR schedules:**
+- `"cosine"`: Best for long runs where you want gradual annealing
+  - Use with `lr_warmup_frac=0.05` to stabilize early steps
+  - Final LR decays to ~0, encouraging fine-grained convergence
+- `"linear_decay"`: Simpler alternative, decays linearly to 0
+  - Less commonly used than cosine
+- Default (`None`): Constant LR, good for quick experiments
+
+**Entropy bonus (`entropy_bonus`):**
+- Use when mixture collapses to single component despite Dirichlet prior
+- λ = 0.01: Mild exploration encouragement
+- λ = 0.1: Moderate exploration (typical)
+- λ = 0.5: Strong exploration (may hurt ELBO quality)
+- Monitor `pi_entropy` to see if bonus is working
+
 ## Implementation Compliance
 
 The VI implementation follows the design in `/plans/variational_inference.md`:
@@ -296,9 +353,12 @@ The VI implementation follows the design in `/plans/variational_inference.md`:
 2. **Algebraic whitening**: $K_m = D^{1/2} A_m$ stabilizes learning
 3. **Geometry whitening**: ✓ Implemented in Stage 1 with RMSProp/Adam diagonal preconditioning
 4. **Rank budget $r \geq 1$**: General implementation supports arbitrary rank
+   - ✓ Stage 3 adds per-component rank budgets via masking
 5. **STL + RB gradients**: Low-variance, scalable gradient estimators
+   - ✓ Stage 3 adds Dirichlet prior and entropy bonus to mixture weight gradients
 6. **Equal means**: All components centered at $w^*$ for strict locality
 7. **Stability guards**: ✓ Stage 1 adds gradient clipping and temperature-adjusted softmax
+8. **Advanced optimization**: ✓ Stage 3 adds LR schedules (cosine, linear decay)
 
 ## Comparison to MCMC
 

@@ -31,3 +31,12 @@ vi:
 
   # Diagnostics (Stage 2)
   tensorboard: false        # enable TensorBoard logging (requires tensorboardX)
+
+  # Advanced Configuration (Stage 3)
+  r_per_component: null     # heterogeneous rank budgets (list[int] of length M)
+  mixture_cap: null         # upper bound on M (pruning threshold)
+  prune_threshold: 1e-3     # drop components with π < threshold
+  alpha_dirichlet_prior: null  # Dirichlet(α) prior on mixture weights
+  lr_schedule: null         # "cosine"|"linear_decay" learning rate schedule
+  lr_warmup_frac: 0.05      # fraction of steps for warmup
+  entropy_bonus: 0.0        # add λ * H(q) to ELBO for exploration
