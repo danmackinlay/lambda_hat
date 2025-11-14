@@ -65,12 +65,14 @@ uv run ruff check --fix
 **Implemented**:
 - HMC, MCLMC: Full-batch MCMC with adaptation
 - SGLD: Stochastic gradient Langevin dynamics with Adam/RMSProp preconditioning
-- VI: Variational inference with pluggable algorithms
+- VI: Variational inference with pluggable algorithms (unified VIAlgorithm protocol)
   - MFA (default): Mixture of factor analyzers with STL + Rao-Blackwellized gradients
   - Flow: Normalizing flows via manifold-plus-noise construction (requires `--extra flowvi`)
     - RealNVP coupling flow (default), MAF, or NSF architectures
     - Low-rank latent space with orthogonal noise
     - NOTE: HVP control variate deferred to future work
+  - Work metrics: `n_full_loss` (MC samples for lambda), `n_minibatch_grads` (optimization steps), `sampler_flavour`
+  - FGE tracking: `cumulative_fge = batch_size / n_data` per step (minibatch accounting)
 
 
 ## API cheat-sheet  (use these, do not "upgrade" them)

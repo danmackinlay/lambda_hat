@@ -293,9 +293,11 @@ def build_flow_elbo_step(
         new_dist = eqx.tree_at(lambda d: d.flow, dist, new_flow_params)
 
         # Metrics
+        work_fge = jnp.asarray(batch_size / float(n_data), dtype=jnp.float64)
         metrics = {
             "elbo": -loss_val,  # Positive ELBO for logging
             "grad_norm": grad_norm,
+            "work_fge": work_fge,  # FGE accounting (minibatch/n_data)
         }
 
         return (new_dist, new_opt_state), metrics
@@ -501,17 +503,20 @@ class _FlowAlgorithm:
 
         # Training loop with jax.lax.scan
         def scan_body(carry, step_idx):
-            dist, opt_state, key = carry
+            dist, opt_state, key, cumulative_fge = carry
             key, subkey = jax.random.split(key)
             (new_dist, new_opt_state), metrics = step_fn(subkey, dist, opt_state, step_idx)
-            new_carry = (new_dist, new_opt_state, key)
-            return new_carry, metrics
+            # Accumulate FGE
+            new_fge = cumulative_fge + metrics["work_fge"]
+            metrics_with_fge = {**metrics, "cumulative_fge": new_fge}
+            new_carry = (new_dist, new_opt_state, key, new_fge)
+            return new_carry, metrics_with_fge
 
         # Initialize and run scan
         t0 = time.time()
-        carry_init = (dist, opt_state, key_train)
+        carry_init = (dist, opt_state, key_train, jnp.array(0.0, dtype=jnp.float64))
         step_indices = jnp.arange(vi_cfg.steps)
-        (dist_final, _, _), trace_dict = jax.lax.scan(scan_body, carry_init, step_indices)
+        (dist_final, _, _, _), trace_dict = jax.lax.scan(scan_body, carry_init, step_indices)
         train_time = time.time() - t0
 
         # Final LLC estimation
@@ -535,9 +540,7 @@ class _FlowAlgorithm:
         traces["d_latent"] = jnp.full(vi_cfg.steps, vi_cfg.d_latent, dtype=jnp.float32)
         traces["sigma_perp"] = jnp.full(vi_cfg.steps, vi_cfg.sigma_perp, dtype=jnp.float32)
 
-        # Compute cumulative work metrics (FGEs)
-        # 1 FGE per gradient step (simplified; ignores flow depth)
-        traces["cumulative_fge"] = jnp.arange(1, vi_cfg.steps + 1, dtype=jnp.float32)
+        # cumulative_fge is already in traces from scan loop (proper minibatch accounting)
 
         # Add MFA-compatible placeholders (NaN to fail fast if used incorrectly)
         # These are MFA-specific and don't have direct analogs in flow VI
@@ -567,10 +570,11 @@ class _FlowAlgorithm:
             "total": train_time + eval_time,
         }
 
-        # Work metrics
+        # Work metrics (harmonized with MFA structure)
         work = {
-            "fge": float(vi_cfg.steps),  # Total FGEs (simplified)
-            "steps": vi_cfg.steps,
+            "n_full_loss": vi_cfg.eval_samples,  # Final LLC evaluation samples
+            "n_minibatch_grads": vi_cfg.steps,  # Number of minibatch gradient steps
+            "sampler_flavour": "flow",
         }
 
         return {

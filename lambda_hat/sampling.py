@@ -789,7 +789,8 @@ def run_vi(
         # Gradient function at w* (compute loss gradient only, no localization)
         def compute_grad_at_wstar(minibatch):
             params_unravel = unravel_fn(params_flat)
-            grad_loss = jax.grad(lambda p: loss_batch_fn(p, minibatch))(params_unravel)
+            Xb, Yb = minibatch
+            grad_loss = jax.grad(lambda p: loss_batch_fn(p, Xb, Yb))(params_unravel)
             grad_flat, _ = jax.flatten_util.ravel_pytree(grad_loss)
             return grad_flat
 
@@ -845,6 +846,23 @@ def run_vi(
         traces = result["traces"]
         extras = result["extras"]
         return (lambda_hat, traces, extras)
+
+    # Run first chain separately to get timings and work dict
+    first_result = algo.run(
+        rng_key=chain_keys[0],
+        loss_batch_fn=loss_batch_fn,
+        loss_full_fn=loss_full_fn,
+        wstar_flat=params_flat,
+        unravel_fn=unravel_fn,
+        data=data,
+        n_data=n_data,
+        beta=beta,
+        gamma=gamma,
+        vi_cfg=config,
+        whitener=whitener,
+    )
+    algo_timings = first_result["timings"]
+    algo_work = first_result["work"]
 
     # Vmap across chains: returns (lambda_hats, all_traces, all_extras)
     results = jax.vmap(run_one_chain)(chain_keys)
@@ -904,10 +922,11 @@ def run_vi(
         "A_col_norm_max": all_traces["A_col_norm_max"],
     }
 
+    # Use timings from algorithm and override total with actual wall time
     timings = {
-        "adaptation": 0.0,  # VI has no separate adaptation phase
-        "sampling": total_time,
-        "total": total_time,
+        "adaptation": algo_timings["adaptation"],
+        "sampling": algo_timings["sampling"],
+        "total": total_time,  # Override with actual wall time (includes all chains)
     }
 
     # Work tracking: include VI-specific estimates
@@ -918,9 +937,10 @@ def run_vi(
     llc_trace = jnp.repeat(llc_per_chain[:, None], steps_shape, axis=1)  # (num_chains, steps)
     traces["llc"] = llc_trace
 
+    # Use work dict from algorithm and augment with VI-specific cross-chain statistics
     work = {
-        "n_full_loss": float(num_chains * config.eval_samples),  # Final MC evaluations
-        "n_minibatch_grads": float(config.steps * config.batch_size / n_data),
+        # Core work metrics from algorithm (preserve sampler_flavour)
+        **algo_work,
         # VI-specific outputs (for analysis.json)
         "lambda_hat_mean": float(jnp.mean(lambda_hats)),
         "lambda_hat_std": float(jnp.std(lambda_hats)),
@@ -930,8 +950,6 @@ def run_vi(
         # Audit trail for LLC magnitude investigation
         "beta": float(beta),
         "n_data": int(n_data),
-        # Sampler flavour for analysis
-        "sampler_flavour": "iid",  # VI produces independent draws
     }
 
     return SamplerRunResult(traces=traces, timings=timings, work=work)
