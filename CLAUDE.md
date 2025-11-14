@@ -3,8 +3,8 @@ Minimal rules for this repo. Deviations break CI.
 ## Versions (hard pins)
 - **Python ≥ 3.11**
 - **JAX ≥ 0.7.1** (use `jax.tree.map`, `jax.lax.scan`, etc.)
-- **BlackJAX == 1.2.5** (don’t import newer APIs)
-- Use **uv** for everything; use **Snakemake** for workflows.
+- **BlackJAX == 1.2.5** (don't import newer APIs)
+- Use **uv** for everything; use **Parsl** for workflows.
 
 ## Install
 
@@ -23,14 +23,19 @@ uv run lambda-hat-sample       --config-yaml config.yaml --target-id tgt_abc123
 uv run lambda-hat-promote      --help
 ```
 
-## Workflow (Snakemake is canonical)
+## Workflow (Parsl is canonical)
 
-**Two-stage pipeline:** Stage A builds targets (neural networks + datasets), Stage B runs samplers (MCMC or variational). Snakemake orchestrates N targets × M samplers in parallel.
+**Three-stage pipeline:** Stage A builds targets (neural networks + datasets), Stage B runs samplers (MCMC or variational), Stage C promotes results (gallery + aggregation). Parsl orchestrates N targets × M samplers in parallel with Python-native DAGs.
 
 ```bash
-uv run snakemake -n                 # dry run
-uv run snakemake -j 4               # local
-uv run snakemake --profile slurm -j 100   # cluster
+# Local execution (testing)
+uv run python flows/parsl_llc.py --local
+
+# SLURM cluster execution
+uv run python flows/parsl_llc.py --parsl-config parsl_config_slurm.py
+
+# Custom config
+uv run python flows/parsl_llc.py --config config/experiments.yaml
 ```
 
 ## Testing & Lint
@@ -55,10 +60,10 @@ uv run ruff check --fix
 
 ## Don't
 
-* Don't run entry points directly; always use `uv run` and prefer Snakemake for workflows.
+* Don't run entry points directly; always use `uv run` and prefer Parsl for workflows.
 * Don't bump BlackJAX/JAX without updating code paths.
 * Don't add back-compat shims; fail fast.
-* Don't use legacy Hydra CLI (removed); Snakemake + OmegaConf is the only supported workflow.
+* Don't use legacy Hydra CLI (removed); Parsl + OmegaConf is the only supported workflow.
 
 ## Samplers
 
