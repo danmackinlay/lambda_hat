@@ -1,413 +1,402 @@
-Great brief. Here’s a design that gives you a *single, resumable, file‑backed* exploration loop that (a) generates multiple teacher/target problems, (b) computes a long‑run HMC reference per problem, and (c) *optimizes* SGLD, VI, and MCLMC hyperparameters to match that reference under a fixed wall‑time budget per run (100 minutes). It runs locally (laptop) and scales to SLURM/PBSPro with the same commands. No database daemons, minimal moving parts, and clean on‑disk bookkeeping.
+Below is a concrete revision of your Optuna plan for a **Parsl‑based orchestration chain** that runs on SLURM/PBS and keeps maintenance low. I’ve collapsed the objective to what you actually care about: **error of a method’s LLC estimate versus an HMC reference LLC** for the same problem. Everything else (distributional distances) is dropped.
 
 ---
 
-## TL;DR architecture
+## What changes when moving from Snakemake → Parsl
 
-**One orchestrator process + Snakemake for execution.**
-
-* **Orchestrator (Python, long‑running, resumable)**
-  Uses an *ask‑and‑tell* Bayesian optimizer to propose batches of hyperparameters; materializes them as run directories; calls Snakemake to realize those runs; ingests finished metrics from disk; “tells” the optimizer; repeats until the budget is spent per problem/method.
-  (Optuna’s ask‑and‑tell fits perfectly and doesn’t require a DB; if you ever want multiprocess/multinode optimizers, Optuna’s *JournalStorage* is a file‑based NFS‑safe store, so still no DB process. ([optuna.readthedocs.io][1]))
-
-* **Executors (Snakemake rules)**
-  One generic rule per algorithm (HMC, SGLD, VI, MCLMC). Snakemake only sees *concrete targets* created by the orchestrator (e.g., `runs/<run_id>/metrics.json`). You can run the exact same Snakefile:
-
-  * Locally: `snakemake -j 8`.
-  * On clusters: `snakemake --profile slurm …` or `--profile pbs` (profiles encapsulate the `sbatch/qsub` boilerplate, retries, status scripts, etc.). ([Snakemake][2])
-
-This keeps Snakemake as a *pure executor* (great at parallel job submission and resumption), while all BO logic lives in one small, testable Python module.
+* **DAG is Python**, not a Snakefile. Dependencies are expressed by passing Parsl futures (e.g., “don’t run the method until the HMC reference for this problem has finished”).
+* **Parallelism is native**: Parsl submits jobs to SLURM/PBS via providers. You control concurrency with the executor config (blocks/workers) rather than profiles.
+* **Optuna stays ask‑and‑tell**: a single orchestrator process proposes trials, submits them as Parsl tasks, consumes results as futures complete, and updates the optimizer. No DB required (use file‑based journal if you want resume across processes).
+* **One config system**: keep your current OmegaConf + dataclasses for *problem/method configs*. Parsl’s config is only for cluster execution.
 
 ---
 
-## On‑disk layout (single shared filesystem)
+## Objective (simplified and univariate)
+
+Define the reference and trial estimates as real numbers for a given problem (p):
+
+* ( \widehat{\text{LLC}}^{\mathrm{HMC}}_p ) : HMC reference LLC (a long‑run HMC‑based estimator you trust).
+* ( \widehat{\text{LLC}}^{\mathrm{meth}}_{p,\theta} ) : the method’s LLC estimate under hyperparameters ( \theta ).
+
+**Primary objective to minimize**:
+
+[
+J(p,\theta) ;=; \big|;\widehat{\text{LLC}}^{\mathrm{meth}}_{p,\theta} - \widehat{\text{LLC}}^{\mathrm{HMC}}_p;\big|
+]
+
+That’s it. If you want a slightly more robust objective in case reference noise is non‑negligible, use Huber:
+
+[
+J_\delta(x) =
+\begin{cases}
+\frac{x^2}{2\delta} & |x|\le \delta\
+|x| - \frac{\delta}{2} & |x| > \delta
+\end{cases}
+\quad \text{with } x = \widehat{\text{LLC}}^{\mathrm{meth}}_{p,\theta} - \widehat{\text{LLC}}^{\mathrm{HMC}}_p.
+]
+
+Pick (\delta) ~ 1–2× the Monte Carlo SE of the HMC estimator if you have it. If not, set (\delta) to a small constant and move on.
+
+You will still **record** supporting metrics (runtime, SE/CI if available, diagnostics), but they won’t enter the objective unless you decide to multi‑objective later.
+
+---
+
+## Files and layout (minimal, explicit)
 
 ```
-experiments/
-  problems/
-    <pid>/                         # one directory per teacher/target problem
-      spec.yaml                    # data gen + log_prob config
-      ground_truth/
-        hmc_config.yaml
-        posterior_samples.h5
-        summary.json               # ESS, R-hat, μ_ref, Σ_ref, diagnostics
-  runs/
-    <run_id>/
-      manifest.json                # method, pid, seed, hyperparams, code_version, budget
-      stdout.log / stderr.log
-      artifacts/
-        samples.h5 | vi_params.pt | …  # method-specific outputs
-      metrics.json                 # scalar objective + components
-  studies/
-    <study_name>/
-      study_state.pkl              # opt state (ask-and-tell) for exact resumption
-      trials.csv                   # append-only ledger of proposed/told trials
-      pending.csv                  # runs proposed but not yet told
-      settings.yaml                # knobs: batch_size, max_concurrent, etc.
+flows/
+  parsl_config_slurm.py
+  parsl_config_pbs.py
+  parsl_optuna.py           # the orchestrator (this replaces the Snakefile + BO wrapper)
+  apps.py                   # Parsl apps (HMC reference, method run)
+lambda_hat/
+  id_utils.py               # stable IDs (shared with existing code)
+  runners/
+    hmc_reference.py        # returns {llc_ref, se_ref?, diagnostics}
+    run_method.py           # returns {llc_hat, se_hat?, runtime, ...}
+results/
+  runs.parquet              # appended/overwritten dataframe of all finished trials
+  studies/<study_name>/
+    state.pkl               # pickle of Optuna study (optional if using journal)
+    journal.log             # (optional) Optuna JournalStorage file
+artifacts/
+  problems/<pid>/
+    spec.yaml
+    ref.json                # {llc_ref, se_ref?, ...}
+  runs/<pid>/<method>/<trial_id>/
+    manifest.json
+    metrics.json            # {objective, llc_hat, ...}
+    stdout.log / stderr.log (if you use bash_app)
 ```
 
-All IDs (`pid`, `run_id`) are *content‑addressed* hashes of normalized configs (problem spec + method + hyperparams + seed + code version). That makes runs idempotent and naturally de‑duplicates work.
+IDs (`pid`, `trial_id`) are content‑addressed hashes of normalized configs (problem spec, method + hyperparams, seed, code version). That keeps runs idempotent with trivial dedup.
 
 ---
 
-## What the orchestrator actually does
+## Parsl config (SLURM & PBS)
 
-### 1) Generate diverse teacher/target problems
-
-Create a `ProblemSpec` registry with a few high‑contrast “feels”:
-
-* Conjugate & well‑behaved: Gaussian mean with known variance.
-* Correlated GLM: logistic regression with strong feature correlation.
-* Multimodal: well‑separated Gaussian mixture.
-* Pathology: Neal’s funnel / banana distribution.
-* Hierarchical: 2‑level random effects.
-* (Optional) Likelihood with stiff geometry: e.g., Bayesian probit w/ Cauchy priors.
-
-Each `spec.yaml` includes: data seed, dimensionality, log‑pdf implementation hook, and any model‑specific transforms. The orchestrator writes these to `experiments/problems/<pid>/spec.yaml`.
-
-### 2) HMC “ground truth” per problem
-
-A dedicated Snakemake rule runs long‑run HMC (e.g., NUTS) until target ESS/diagnostics pass. Output: `posterior_samples.h5` and `summary.json` (μ_ref, Σ_ref, ESS, R̂, divergences). If HMC is still running, the optimizer can temporarily use the latest checkpointed summary and *refresh the objective later* when HMC extends—your metrics get re‑computed without re‑running candidates.
-
-> **Note on caps:** If a single HMC job might exceed 24h preference, let Snakemake submit it with `--resources time=1440` and give the profile a retry policy (`--restart-times` / `--retries`) so long jobs automatically resume from checkpoints if preempted. ([Snakemake][3])
-
-### 3) Optimize SGLD, VI, MCLMC against HMC
-
-**Objective** (minimize): a robust *distance to HMC* computed from samples/params within **100 minutes wall‑time per trial** (enforced inside the algorithm runners).
-
-A good single‑number score that works across methods:
-
-* **MMD** (RBF kernel with median heuristic) between `est_samples` and `ref_samples`, plus
-* **Moment error**: ‖μ_est−μ_ref‖₂ normalized by diag(Σ_ref) + Frobenius norm of covariance difference normalized by ‖Σ_ref‖_F.
-* (Optional) Predictive calibration if the problem defines a likelihood and test set.
-
-You record the components *and* the scalar in `metrics.json` so you can inspect tradeoffs post‑hoc.
-
-**Budgeting:** Every runner receives `--budget-sec 6000`. Internally, they checkpoint progress and exit cleanly at budget (write partial samples/ELBO trajectory and metrics so the trial is usable even if truncated).
-
-### 4) BO loop design (Optuna ask‑and‑tell)
-
-* Use **ask‑and‑tell** so the optimizer lives inside your orchestrator and Snakemake stays a pure executor. This is the most Snakemake‑friendly way to integrate BO. ([optuna.readthedocs.io][1])
-* Run in **batches** (e.g., 8–64 trials at a time, depending on cluster capacity). “Ask” *k* trials, materialize their run dirs, then ask Snakemake to build those targets. When they finish, parse `metrics.json` and “tell” the results, then ask the next *k*.
-* If you ever need multi‑process/multi‑node optimizers without a DB, Optuna’s **JournalStorage** is file‑based (NFS OK) and designed for distributed runs without RDB/Redis. Keep it optional; you don’t need it for the single‑orchestrator pattern. ([optuna.readthedocs.io][4])
-
----
-
-## Snakemake glue (simple, stable)
-
-**Snakefile (sketch):**
+**SLURM** (`flows/parsl_config_slurm.py`):
 
 ```python
-# workflows/Snakefile
-import json, time, pathlib
+# flows/parsl_config_slurm.py
+from parsl.config import Config
+from parsl.executors import HighThroughputExecutor
+from parsl.providers import SlurmProvider
+from parsl.addresses import address_by_hostname
 
-# Inputs are concrete targets orchestrator asks for.
-# HMC reference ---------------------------------------------------------------
-rule hmc_reference:
-    input:
-        "experiments/problems/{pid}/spec.yaml"
-    output:
-        "experiments/problems/{pid}/ground_truth/posterior_samples.h5",
-        "experiments/problems/{pid}/ground_truth/summary.json"
-    resources:
-        time=1440, mem_mb=16000, threads=4
-    shell:
-        """
-        python pipelines/hmc_reference.py \
-          --spec {input} \
-          --samples {output[0]} \
-          --summary {output[1]}
-        """
-
-# Method run (SGLD/VI/MCLMC) -------------------------------------------------
-rule method_run:
-    input:
-        spec  = "experiments/problems/{pid}/spec.yaml",
-        ref   = "experiments/problems/{pid}/ground_truth/summary.json",
-        mfest = "experiments/runs/{rid}/manifest.json"
-    output:
-        metrics = "experiments/runs/{rid}/metrics.json"
-    resources:
-        time=120, mem_mb=8000, threads=1
-    shell:
-        """
-        python pipelines/run_method.py \
-          --manifest {input.mfest} \
-          --spec {input.spec} \
-          --ref-summary {input.ref} \
-          --metrics {output.metrics}
-        """
+config = Config(
+    executors=[
+        HighThroughputExecutor(
+            label="htex",
+            address=address_by_hostname(),
+            max_workers=1,                 # 1 Python worker per node for predictability
+            provider=SlurmProvider(
+                partition="normal",
+                nodes_per_block=1,
+                init_blocks=0,
+                min_blocks=0,
+                max_blocks=200,           # cluster capacity cap
+                walltime="02:00:00",
+                scheduler_options="",     # extra #SBATCH lines if needed
+                worker_init=(
+                    "source ~/.bashrc; "
+                    "module load python/3.10 || true; "
+                    "source .venv/bin/activate || conda activate llc || true"
+                ),
+            ),
+        )
+    ],
+    retries=1,
+)
 ```
 
-> **Why this works with BO:** the orchestrator *generates* `manifest.json` and asks Snakemake to build the exact `metrics.json` files for those run IDs. Snakemake handles parallelization, retries, and cluster submission. Profiles make the same workflow run on SLURM or PBS without changing your code/commands. ([Snakemake][2])
-
-**Cluster portability with profiles**
-Put a `profiles/slurm/` and `profiles/pbs/` in your repo (or use user‑level ones). Then:
-
-```bash
-# Local laptop
-snakemake -s workflows/Snakefile -j 8
-
-# SLURM
-snakemake -s workflows/Snakefile --profile slurm
-
-# PBS / PBSPro (Torque profile works similarly)
-snakemake -s workflows/Snakefile --profile pbs
-```
-
-Profiles encapsulate submission commands, default resources, cluster status scripts, and retries. (See Snakemake profiles docs and examples; cluster execution covers SLURM and generic PBS explicitly.) ([Snakemake][2])
-
-**Retries & canceled jobs**
-Use `--retries N` (formerly `--restart-times`) to automatically resubmit failed/canceled jobs from the same target, and include a cluster status script in the profile so Snakemake detects cancelation properly on your scheduler. ([Snakemake][3])
+**PBS/PBSPro** (`flows/parsl_config_pbs.py`): identical structure, swap `SlurmProvider` → `PBSProProvider` (or `TorqueProvider`) and adjust resource strings.
 
 ---
 
-## Orchestrator (sketch)
+## Parsl apps
+
+Keep them **thin** and call your existing library functions. Use `@python_app` to get structured return values. If you want shell‑captured logs, wrap them with `@bash_app` and call `python -m lambda_hat.runners.*`—but it’s unnecessary if your runners write `metrics.json` themselves.
 
 ```python
-# orchestrator/study.py
-import json, time, subprocess, hashlib, pickle, signal, os
+# flows/apps.py
+from parsl import python_app
+
+@python_app
+def compute_hmc_reference(problem_spec: dict, out_ref_json: str, budget_sec: int = 36000):
+    from lambda_hat.runners.hmc_reference import run_hmc_reference
+    # returns dict: {"llc_ref": float, "se_ref": float|None, "diagnostics": {...}}
+    return run_hmc_reference(problem_spec, out_ref_json, budget_sec)
+
+@python_app
+def run_method_trial(problem_spec: dict, method_cfg: dict, ref_llc: float,
+                     out_metrics_json: str, budget_sec: int = 6000):
+    from lambda_hat.runners.run_method import run_trial
+    # returns dict: {"llc_hat": float, "se_hat": float|None, "runtime_sec": float, ...}
+    return run_trial(problem_spec, method_cfg, ref_llc, out_metrics_json, budget_sec)
+```
+
+**Notes**
+
+* Put *all* time‑budget enforcement inside `run_hmc_reference` / `run_trial` so trials exit cleanly and still write metrics before the scheduler walltime.
+* If you need different resource shapes, define additional executors (e.g., `hmc_exec` with more memory) and pass `executors=['hmc_exec']` to the app decorator.
+
+---
+
+## The orchestrator (Optuna + Parsl futures), end‑to‑end
+
+Key ideas:
+
+* Build or load **N problems** (each with `spec.yaml`).
+* **Launch HMC** references for all N in parallel (or limit concurrency if you must).
+* As each reference finishes, **start Optuna** for that problem & method, propose *k* trials, submit them as Parsl tasks, and “tell” Optuna as futures finish.
+* Objective is `abs(llc_hat - llc_ref)` (or Huber).
+* Write every finished trial to a **single DataFrame** (results/runs.parquet).
+
+```python
+# flows/parsl_optuna.py
+import os, json, time, pickle
 from pathlib import Path
 import optuna
+import parsl
+import pandas as pd
+from importlib import import_module
 
-STUDY_DIR = Path("experiments/studies/bo_v1")
-RUNS_DIR  = Path("experiments/runs")
-PROB_DIR  = Path("experiments/problems")
+from omegaconf import OmegaConf
+from lambda_hat.id_utils import stable_hash   # implement as blake2/sha1 of normalized dict
+from flows.apps import compute_hmc_reference, run_method_trial
 
-def stable_id(d: dict) -> str:
-    s = json.dumps(d, sort_keys=True, separators=(",", ":"))
-    return hashlib.sha1(s.encode()).hexdigest()[:12]
+ROOT = Path(__file__).resolve().parents[1]
+ART = ROOT / "artifacts"
+RES = ROOT / "results"
+RES.mkdir(exist_ok=True, parents=True)
 
-def write_json(p, obj):
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(obj, indent=2))
+def load_parsl(cfg="flows.parsl_config_slurm"):
+    m = import_module(cfg)
+    return parsl.load(m.config)
 
-def ensure_hmc(pid):
-    # Ask Snakemake for the ref artifacts (it will no-op if present)
-    targets = [
-      f"experiments/problems/{pid}/ground_truth/posterior_samples.h5",
-      f"experiments/problems/{pid}/ground_truth/summary.json",
-    ]
-    run_snakemake(targets)
+def huber(x, delta=0.1):
+    ax = abs(x)
+    return 0.5 * x*x/delta if ax <= delta else ax - 0.5*delta
 
-def run_snakemake(targets, profile=None, jobs=None):
-    cmd = ["snakemake", "-s", "workflows/Snakefile", "--rerun-incomplete"]
-    if profile: cmd += ["--profile", profile]
-    if jobs: cmd += ["-j", str(jobs)]
-    cmd += targets
-    subprocess.run(cmd, check=True)
+def objective_from_metrics(llc_hat, llc_ref, huber_delta=None):
+    diff = llc_hat - llc_ref
+    return huber(diff, huber_delta) if huber_delta else abs(diff)
 
-def suggest_batch(study, pid, method, batch_k):
-    trials = []
-    for _ in range(batch_k):
-        t = study.ask()
-        # Suggest hyperparams *per method*
-        if method == "sgld":
-            eta0 = t.suggest_float("eta0", 1e-6, 1e-1, log=True)
-            gamma = t.suggest_float("gamma", 0.3, 1.0)
-            mb    = t.suggest_categorical("batch", [16,32,64,128,256])
-            t.set_user_attr("method", "sgld")
-            hp = {"eta0": eta0, "gamma": gamma, "batch": mb}
-        elif method == "vi":
-            lr  = t.suggest_float("lr", 1e-5, 5e-2, log=True)
-            k   = t.suggest_categorical("mc_samples", [1,4,8,16])
-            fam = t.suggest_categorical("family", ["meanfield","fullrank"])
-            hp  = {"lr": lr, "mc_samples": k, "family": fam}
-            t.set_user_attr("method", "vi")
-        else: # mclmc (e.g., MALA/ULMC)
-            eps = t.suggest_float("stepsize", 1e-5, 1e-1, log=True)
-            acc = t.suggest_float("target_accept", 0.7, 0.95)
-            hp  = {"stepsize": eps, "target_accept": acc}
-            t.set_user_attr("method", "mclmc")
-
-        manifest = {
-            "pid": pid, "method": t.user_attrs["method"],
-            "hyperparams": hp, "seed": t.number,
-            "budget_sec": 6000, "code_version": os.getenv("GIT_COMMIT","dirty")
+def suggest_method_params(trial, method_name):
+    if method_name == "sgld":
+        return {
+            "eta0": trial.suggest_float("eta0", 1e-6, 1e-1, log=True),
+            "gamma": trial.suggest_float("gamma", 0.3, 1.0),
+            "batch": trial.suggest_categorical("batch", [32,64,128,256]),
         }
-        rid = stable_id(manifest)
-        run_dir = RUNS_DIR / rid
-        write_json(run_dir / "manifest.json", manifest)
-        trials.append((t, rid))
-    return trials
-
-def tell_finished(study, pending):
-    done, still = [], []
-    for t, rid in pending:
-        metrics_path = RUNS_DIR / rid / "metrics.json"
-        if metrics_path.exists():
-            m = json.loads(metrics_path.read_text())
-            study.tell(t, m["objective"])  # lower is better
-            done.append(rid)
-        else:
-            still.append((t, rid))
-    return done, still
+    if method_name == "vi":
+        return {
+            "lr": trial.suggest_float("lr", 1e-5, 5e-2, log=True),
+            "family": trial.suggest_categorical("family", ["meanfield","fullrank"]),
+            "mc_samples": trial.suggest_categorical("mc_samples", [1,4,8,16]),
+        }
+    if method_name == "mclmc":  # e.g., (U)LMC/MALA
+        return {
+            "stepsize": trial.suggest_float("stepsize", 1e-5, 1e-1, log=True),
+            "target_accept": trial.suggest_float("target_accept", 0.7, 0.95),
+        }
+    raise ValueError(method_name)
 
 def main():
-    STUDY_DIR.mkdir(parents=True, exist_ok=True)
-    storage = STUDY_DIR / "study_state.pkl"
-    if storage.exists():
-        study = pickle.loads(storage.read_bytes())
-    else:
-        study = optuna.create_study(direction="minimize")  # single-objective
-    profile = os.getenv("SNAKEMAKE_PROFILE", None)
+    # --- Parsl backend ---
+    load_parsl("flows.parsl_config_slurm")  # or pbs
 
-    problems = [...]   # materialize N pids + write spec.yaml for each
-    methods  = ["sgld","vi","mclmc"]
+    # --- Problems list (OmegaConf -> dicts) ---
+    exp = OmegaConf.load("config/experiments.yaml")  # your existing config
+    problems = list(exp["targets"])                  # reusing your notion of "target problem"
+    methods  = [s["name"] for s in exp["samplers"] if s["name"] in ("sgld","vi","mclmc")]
 
-    for pid in problems:
-        ensure_hmc(pid)
-        for method in methods:
-            pending = suggest_batch(study, pid, method, batch_k=16)
-            targets = [f"experiments/runs/{rid}/metrics.json" for _, rid in pending]
-            run_snakemake(targets, profile=profile)
-            # Collect all finished
-            while pending:
-                done, pending = tell_finished(study, pending)
-                time.sleep(5)
-            # checkpoint optimizer state
-            STUDY_DIR.joinpath("trials.csv").write_text(study.trials_dataframe().to_csv(index=False))
-            STUDY_DIR.joinpath("study_state.pkl").write_bytes(pickle.dumps(study))
+    # --- Launch HMC references in parallel ---
+    ref_futs = {}
+    ref_meta = {}  # pid -> {llc_ref, se_ref?, ...}
+    for p in problems:
+        # Resolve full problem spec here (model+data+teacher), then freeze to dict
+        problem_spec = OmegaConf.to_container(p, resolve=True)
+        pid = "p_" + stable_hash(problem_spec)[:12]
+        out_ref = ART / "problems" / pid / "ref.json"
+        out_ref.parent.mkdir(parents=True, exist_ok=True)
 
-if __name__ == "__main__":
-    main()
+        if out_ref.exists():
+            ref_meta[pid] = json.loads(out_ref.read_text())
+        else:
+            ref_futs[pid] = compute_hmc_reference(problem_spec, str(out_ref), budget_sec=8*3600)
+
+    # Wait for any missing references
+    for pid, fut in ref_futs.items():
+        ref_meta[pid] = fut.result()  # also written to out_ref.json by the app
+
+    # --- Optuna storage (optional: journal for crash-proof resume) ---
+    study_dir = RES / "studies" / "llc_vs_hmc"
+    study_dir.mkdir(parents=True, exist_ok=True)
+    # For simplicity, single-process in-memory + periodic pickles:
+    def save_study(study, path=study_dir/"state.pkl"):
+        path.write_bytes(pickle.dumps(study))
+
+    # --- For each problem & method, run a batched ask-&-tell loop with Parsl tasks ---
+    rows = []
+
+    for p in problems:
+        problem_spec = OmegaConf.to_container(p, resolve=True)
+        pid = "p_" + stable_hash(problem_spec)[:12]
+        llc_ref = float(ref_meta[pid]["llc_ref"])
+
+        for method_name in methods:
+            study = optuna.create_study(direction="minimize", study_name=f"{pid}:{method_name}")
+            inflight = {}
+            BATCH = 32        # concurrent trials for this (pid, method)
+            MAX_TRIALS = 200  # stop criterion per (pid, method)
+
+            def submit_one():
+                t = study.ask()
+                hp = suggest_method_params(t, method_name)
+                manifest = {
+                    "pid": pid, "method": method_name, "hyperparams": hp,
+                    "seed": int(t.number), "budget_sec": 6000,
+                }
+                trial_id = "r_" + stable_hash(manifest)[:12]
+                run_dir  = ART / "runs" / pid / method_name / trial_id
+                run_dir.mkdir(parents=True, exist_ok=True)
+                (run_dir / "manifest.json").write_text(json.dumps(manifest, indent=2))
+
+                fut = run_method_trial(problem_spec, {"name": method_name, **hp},
+                                       llc_ref, str(run_dir/"metrics.json"),
+                                       budget_sec=manifest["budget_sec"])
+                inflight[fut] = (t, trial_id, run_dir)
+                return fut
+
+            # prime the pump
+            submitted = 0
+            while submitted < min(BATCH, MAX_TRIALS):
+                submit_one(); submitted += 1
+
+            while study.trials_dataframe().shape[0] < MAX_TRIALS:
+                # wait for any future to complete
+                done = [f for f in list(inflight.keys()) if f.done()]
+                if not done:
+                    time.sleep(1); continue
+
+                for f in done:
+                    t, trial_id, run_dir = inflight.pop(f)
+                    try:
+                        result = f.result()  # dict: {"llc_hat": ..., "runtime_sec": ...}
+                    except Exception as e:
+                        # Penalize crashed/failed trials with a large objective
+                        study.tell(t, float("inf"))
+                        continue
+
+                    llc_hat = float(result["llc_hat"])
+                    obj = objective_from_metrics(llc_hat, llc_ref, huber_delta=None)
+
+                    # persist metrics for audit + aggregation
+                    metrics = {**result, "objective": obj, "llc_ref": llc_ref,
+                               "pid": pid, "method": method_name, "trial_id": trial_id}
+                    (run_dir / "metrics.json").write_text(json.dumps(metrics, indent=2))
+
+                    # tell Optuna + row for final table
+                    study.tell(t, obj)
+                    rows.append(metrics)
+
+                    # keep the window full
+                    if submitted < MAX_TRIALS:
+                        submit_one(); submitted += 1
+
+                save_study(study)
+
+    # --- Aggregate all trials into a single dataframe ---
+    df = pd.DataFrame(rows)
+    df.to_parquet(RES / "runs.parquet", index=False)
+    print(f"wrote {len(df)} rows to {RES/'runs.parquet'}")
 ```
 
-* The orchestrator is **fully resumable**: it pickles the study, writes a CSV ledger, and every run is keyed by a stable `run_id`. On restart, it simply re‑reads `metrics.json` for any runs that finished while it was down and “tells” the optimizer before continuing.
-* You can *optionally* switch to Optuna **JournalStorage** later to allow multiple orchestrators across nodes using a single journal file on NFS (no DB). ([optuna.readthedocs.io][4])
+**Behavior you get:**
+
+* HMC references across problems run in parallel.
+* For each (problem, method), you keep *BATCH* trials in flight; as Parsl futures finish you “tell” Optuna and immediately submit new ones—no idle time.
+* Objective is the absolute LLC error (or Huber).
+* All metrics land in one Parquet.
 
 ---
 
-## Algorithm runners (one binary each; simple CLIs)
+## Runner contracts (you keep control, minimal surface)
 
-Each of these obeys the `--budget-sec` param and writes `metrics.json` no matter what:
+**`lambda_hat/runners/hmc_reference.py`**
 
-* `pipelines/hmc_reference.py --spec ... --samples ... --summary ...`
-* `pipelines/run_method.py --manifest ... --spec ... --ref-summary ... --metrics ...`
-
-Suggested **hyperparameters** to expose (and their typical search ranges):
-
-* **SGLD**: `eta0` (1e‑6..1e‑1, log), `gamma` anneal exponent (0.3..1.0), `batch` (16..256), optional preconditioner on diag(Hessian) toggled.
-* **VI (reparam, ELBO)**: `lr` (1e‑5..5e‑2, log), `family` (meanfield/fullrank), `mc_samples` (1,4,8,16), `kl_anneal` schedule (off/sigmoid/cosine), `num_iters` auto‑determined inside by wall‑time.
-* **MCLMC (e.g., MALA or underdamped LMC)**: `stepsize` (1e‑5..1e‑1, log), `target_accept` (0.70..0.95), optional `mass_diag` preconditioning.
-
-Each runner *streams checkpoints* (e.g., every 60s): partial samples (or VI params), running diagnostics, and a provisional `metrics.json`. That ensures you get a valid score even if the scheduler evicts the job.
-
----
-
-## Objective and metrics (`metrics.json` schema)
-
-```json
-{
-  "objective": 0.1234,           // scalar minimized by BO
-  "mmd": 0.081,
-  "mean_error_l2": 0.032,
-  "cov_error_fro": 0.010,
-  "runtime_sec": 5980,
-  "num_samples": 20000,
-  "diagnostics": { "ess_bulk": ..., "rhat": ... }
-}
+```python
+def run_hmc_reference(problem_spec: dict, out_ref_json: str, budget_sec: int) -> dict:
+    """
+    Do whatever your current HMC LLC routine does; but:
+      - obey budget_sec (extend samples until time is nearly up)
+      - compute llc_ref (float) and optional se_ref
+      - write out_ref_json (idempotent) and return the same dict
+    """
+    # ... your code ...
+    ref = {"llc_ref": llc_ref, "se_ref": se_ref, "diagnostics": diag}
+    Path(out_ref_json).parent.mkdir(parents=True, exist_ok=True)
+    Path(out_ref_json).write_text(json.dumps(ref, indent=2))
+    return ref
 ```
 
-The objective can be a weighted sum, e.g. `mmd + 0.5*mean_error_l2 + 0.5*cov_error_fro`. Keep the components so you can audit winners later.
+**`lambda_hat/runners/run_method.py`**
+
+```python
+def run_trial(problem_spec: dict, method_cfg: dict,
+              llc_ref: float, out_metrics_json: str, budget_sec: int) -> dict:
+    """
+    Train/run the approximation method under method_cfg until budget_sec.
+    Must return llc_hat (float) and can include se_hat etc.
+    Writes metrics.json (excluding 'objective') and returns the same dict.
+    """
+    # ... your code ...
+    res = {"llc_hat": llc_hat, "se_hat": se_hat, "runtime_sec": elapsed, "extra": {...}}
+    Path(out_metrics_json).parent.mkdir(parents=True, exist_ok=True)
+    Path(out_metrics_json).write_text(json.dumps(res, indent=2))
+    return res
+```
+
+The orchestrator computes the objective and tells Optuna.
 
 ---
 
-## Parallelism and scaling
+## Concurrency, resources, and fairness
 
-* **Local testing:** `snakemake -s workflows/Snakefile -j 8` while the orchestrator proposes modest batches (e.g., 4–8).
-* **SLURM:** `snakemake --profile slurm` (profiles hide `sbatch` flags, memory, time, status scripts; modern Snakemake also has `--slurm` executor). ([Snakemake][2])
-* **PBS/PBSPro:** Use a PBS profile (Torque profile works similarly) or the generic cluster executor with `qsub`. ([Snakemake][5])
-
-**Retries & robustness**
-
-* Add `--retries 3` in the profile to automatically resubmit failed/evicted jobs (older docs call this `--restart-times`). Include a cluster status script so canceled jobs are detected. ([Snakemake][3])
-* Snakemake’s on‑disk DAG plus your per‑run directories make resumption natural—rerunning the same targets is a fast no‑op if outputs exist. ([Snakemake][6])
-
-**Why not a DB or a separate scheduler (Ray/Dask/MLflow)?**
-Because with *ask‑and‑tell + Snakemake*, you already have robust parallelism, retries, and cluster portability without services to keep alive. If you *later* want multiple optimizers, Optuna JournalStorage on NFS is designed for that without Redis/Postgres. ([optuna.readthedocs.io][4])
+* **Concurrency**: tune it with the Parsl executor (`max_blocks`, `max_workers`). Per‑(problem, method) concurrency is `BATCH`.
+* **Resources**: if HMC needs fatter nodes, define a second executor and add `executors=['hmc_exec']` on `compute_hmc_reference`.
+* **Budget fairness**: every trial gets `budget_sec`, enforced *inside* the runner; Parsl walltime is a backstop.
+* **Retries**: Parsl `retries=1` in the config re‑executes failed apps once. You can also catch exceptions and immediately “tell” a large objective.
 
 ---
 
-## Will Snakemake work “inside” a BO loop?
+## What you’re *not* doing anymore
 
-**Yes—when you make BO propose concrete files and let Snakemake just build them.**
-Avoid trying to generate dynamic rules at runtime; instead, the orchestrator creates *run manifests* and then invokes Snakemake with those *targets*. This pattern plays nicely with Snakemake’s scheduler and cluster backends (SLURM/PBS). Profiles keep the orchestration commands identical across your laptop and the cluster. ([Snakemake][2])
-
----
-
-## What you’ll implement (checklist)
-
-1. **Problem registry & generators**
-
-   * `problems/registry.py` (spec -> data + log_prob factory).
-   * `cli: python -m problems.make --k 6` writes `spec.yaml` for each pid.
-
-2. **Pipelines**
-
-   * `pipelines/hmc_reference.py` (long‑run, checkpointed; writes `summary.json`).
-   * `pipelines/run_method.py` (loads manifest, enforces `--budget-sec`, writes `metrics.json` often).
-
-3. **Snakemake**
-
-   * `workflows/Snakefile` using the two rules shown.
-   * `profiles/slurm` and/or `profiles/pbs` (cookiecutter + add a cluster status script). ([Snakemake][3])
-
-4. **Orchestrator**
-
-   * `orchestrator/study.py` as above, with batch size and max concurrency knobs.
-   * Checkpoint study state every loop; on start, *rehydrate* and “tell” any completed runs that were pending.
-
-5. **Docs (1 page)**
-
-   * “Dynamic exploration loop” quickstart with 3 commands:
-
-     ```bash
-     # 1) Make 6 problems
-     python -m problems.make --k 6
-
-     # 2) Start the orchestrator (local)
-     python -m orchestrator.study
-
-     # 3) Or on SLURM
-     SNAKEMAKE_PROFILE=slurm python -m orchestrator.study
-     ```
-   * A table listing exposed hyperparameters per method and how to override their *ranges* (for BO) and *values* (for manual runs).
+* No Snakefile, no cluster profiles.
+* No distributional distance metrics unless you want them for diagnostics.
+* No Hydra/Metaflow configs. Single config stack (OmegaConf) for problem/method definitions; Parsl config is isolated to cluster submission only.
 
 ---
 
-## A few pragmatic notes
+## Minimal commands you’ll actually run
 
-* **100‑minute fairness:** pass the same `--budget-sec` to every runner; each runner tracks time and exits cleanly with final metrics.
-* **Ground truth not ready yet:** allow BO to start; as soon as HMC extends, the orchestrator re‑computes distances and (optionally) *re‑tells* top trials using the improved reference.
-* **Serverless “lambda”** isn’t a good fit for >15‑minute jobs. If you want cloud scale without containers, spin up ephemeral VMs and run the same Snakemake profile over NFS/object store; but given your HPC access and container constraints, SLURM/PBS are simpler.
-* **PBSPro quirks:** Use the PBS profile (or generic executor) and a status script; set memory/time mapping per rule in the profile (common when porting from SLURM). ([Snakemake][5])
-
----
-
-## What if you decide not to use Optuna?
-
-* **BoTorch/Ax** give you qEI/qNEI etc., but you’ll still end up writing an ask‑and‑tell shell that looks like the above. Ax’s storage is less turnkey for file‑only persistence; Optuna’s ask‑and‑tell + file persistence is simpler for our constraints. (If you later need GP‑based batched BO, you can *call BoTorch* from inside the orchestrator while preserving the same file protocol.)
+```bash
+# 1) Configure Parsl backend (edit flows/parsl_config_slurm.py or parsl_config_pbs.py)
+# 2) Kick off orchestration (single process on a login node)
+python -m flows.parsl_optuna
+# This launches HMC refs and then continuously fills the cluster with trials.
+```
 
 ---
 
-### References for the key claims above
+## Sanity check list
 
-* Optuna ask‑and‑tell API and examples. ([optuna.readthedocs.io][1])
-* Optuna **JournalStorage** for distributed/file‑backed optimization on NFS—no DB process. ([optuna.readthedocs.io][4])
-* Snakemake cluster execution & profiles for SLURM/PBS, and CLI options for retries/restarts. ([Snakemake][5])
+* [ ] HMC runner returns a single **float** `llc_ref` and obeys `budget_sec`.
+* [ ] Method runner returns a single **float** `llc_hat` and obeys `budget_sec`.
+* [ ] Absolute (or Huber) error is the **only** objective.
+* [ ] All runs are content‑addressed (`pid`, `trial_id`) for natural dedup.
+* [ ] One Parquet file with all finished trials; nothing else is required to analyze results.
 
----
-
-## Bottom line
-
-* **Feasible?** Yes. The **ask‑and‑tell + Snakemake‑as‑executor** pattern gives you robust, resumable optimization without running a database and with trivial portability from laptop to SLURM/PBS.
-* **Maintenance?** Small, modular Python files; Snakemake stays declarative; all state on disk.
-* **Next step** (I can do it now if you want): add the two pipeline scripts and the small orchestrator skeleton above, plus a 1‑page “Dynamic Exploration Loop” doc with the three commands and the hyperparameter tables.
-
-[1]: https://optuna.readthedocs.io/en/stable/tutorial/20_recipes/009_ask_and_tell.html?utm_source=chatgpt.com "Ask-and-Tell Interface — Optuna 4.5.0 documentation"
-[2]: https://snakemake.readthedocs.io/en/stable/executing/cli.html?highlight=profiles&utm_source=chatgpt.com "Command line interface | Snakemake 9.13.6 documentation"
-[3]: https://snakemake.readthedocs.io/en/stable/executing/cli.html?utm_source=chatgpt.com "Command line interface | Snakemake 9.13.7 documentation"
-[4]: https://optuna.readthedocs.io/en/stable/tutorial/20_recipes/011_journal_storage.html?utm_source=chatgpt.com "(File-based) Journal Storage — Optuna 4.5.0 documentation"
-[5]: https://snakemake.readthedocs.io/en/v7.28.3/executing/cluster.html?utm_source=chatgpt.com "Cluster Execution — Snakemake 7.28.3 documentation"
-[6]: https://snakemake.readthedocs.io/en/stable/snakefiles/rules.html?utm_source=chatgpt.com "Snakefiles and Rules | Snakemake 9.13.7 documentation"
+If you want me to tighten the code skeletons to your exact module names and current entrypoints (so you can drop them straight in), say so and I’ll produce them in that shape.
