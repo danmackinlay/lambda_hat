@@ -19,7 +19,6 @@ vi:
 
   # Precision
   dtype: float32
-  use_whitening: true  # deprecated, use whitening_mode
 
   # Whitening (Stage 1)
   whitening_mode: none      # "none"|"rmsprop"|"adam" - geometry whitening

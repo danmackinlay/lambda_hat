@@ -434,13 +434,9 @@ class _FlowAlgorithm:
         Y = Y.astype(dtype)
         wstar_flat = wstar_flat.astype(dtype)
 
-        # Extract D_inv_sqrt from whitener (if provided)
-        if whitener is not None and hasattr(whitener, "A_inv_sqrt"):
-            # Whitener provided from run_vi's pre-pass
-            D_inv_sqrt = whitener.A_inv_sqrt.astype(dtype)
-        else:
-            # Fallback to identity
-            D_inv_sqrt = jnp.ones(d, dtype=dtype)
+        # Extract D_inv_sqrt from whitener (provided by run_vi's pre-pass)
+        # If whitener is None, A_inv_sqrt will fail fast (no fallback)
+        D_inv_sqrt = whitener.A_inv_sqrt.astype(dtype) if whitener is not None else jnp.ones(d, dtype=dtype)
 
         # Initialize InjectiveLift
         dist = init_injective_lift(
@@ -541,21 +537,6 @@ class _FlowAlgorithm:
         traces["sigma_perp"] = jnp.full(vi_cfg.steps, vi_cfg.sigma_perp, dtype=jnp.float32)
 
         # cumulative_fge is already in traces from scan loop (proper minibatch accounting)
-
-        # Add MFA-compatible placeholders (NaN to fail fast if used incorrectly)
-        # These are MFA-specific and don't have direct analogs in flow VI
-        nan_trace = jnp.full(vi_cfg.steps, jnp.nan, dtype=jnp.float32)
-        traces["elbo_like"] = nan_trace  # Flow doesn't separate elbo_like
-        traces["logq"] = nan_trace  # Would require log_prob eval (expensive)
-        traces["radius2"] = nan_trace  # MFA-specific whitened coords
-        traces["resp_entropy"] = nan_trace  # MFA-specific mixture responsibilities
-        traces["pi_min"] = nan_trace  # MFA-specific mixture weights
-        traces["pi_max"] = nan_trace
-        traces["pi_entropy"] = nan_trace
-        traces["D_sqrt_min"] = nan_trace  # MFA-specific diagonal covariance
-        traces["D_sqrt_max"] = nan_trace
-        traces["D_sqrt_med"] = nan_trace
-        traces["A_col_norm_max"] = nan_trace  # MFA-specific low-rank factor
 
         # Extras
         extras = {
