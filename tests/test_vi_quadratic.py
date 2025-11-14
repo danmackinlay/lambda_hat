@@ -56,6 +56,10 @@ def test_vi_quadratic_ground_truth():
     # Create whitener (identity for simplicity)
     whitener = vi.make_whitener(None)
 
+    # Unravel function (identity for flat arrays)
+    def unravel_fn(flat):
+        return flat
+
     # VI parameters: use rich enough mixture (M=3, r=3)
     M = 3
     r = 3  # Rank budget: should be able to capture top eigenspaces
@@ -71,6 +75,7 @@ def test_vi_quadratic_ground_truth():
         loss_batch_fn=loss_batch_fn,
         loss_full_fn=loss_full_fn,
         wstar_flat=wstar,
+        unravel_fn=unravel_fn,
         data=data,
         n_data=n_data,
         beta=beta,
@@ -136,12 +141,17 @@ def test_vi_quadratic_cv_reduces_variance():
 
     whitener = vi.make_whitener(None)
 
+    # Unravel function (identity for flat arrays)
+    def unravel_fn(flat):
+        return flat
+
     # Run VI with moderate eval_samples to see variance reduction
     lambda_vi, traces, extras = vi.fit_vi_and_estimate_lambda(
         rng_key=key,
         loss_batch_fn=loss_batch_fn,
         loss_full_fn=loss_full_fn,
         wstar_flat=wstar,
+        unravel_fn=unravel_fn,
         data=data,
         n_data=n_data,
         beta=1.0 / jnp.log(n_data),
@@ -191,12 +201,17 @@ def test_vi_optimization_convergence():
 
     whitener = vi.make_whitener(None)
 
+    # Unravel function (identity for flat arrays)
+    def unravel_fn(flat):
+        return flat
+
     # Run VI
     lambda_vi, traces, extras = vi.fit_vi_and_estimate_lambda(
         rng_key=key,
         loss_batch_fn=loss_batch_fn,
         loss_full_fn=loss_full_fn,
         wstar_flat=wstar,
+        unravel_fn=unravel_fn,
         data=data,
         n_data=n_data,
         beta=1.0 / jnp.log(n_data),
