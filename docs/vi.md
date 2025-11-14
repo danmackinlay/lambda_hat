@@ -72,6 +72,7 @@ uv run snakemake -j 4
   - Options: `"none"` (identity), `"rmsprop"` (second moment), `"adam"` (first + second moment)
   - Estimates diagonal preconditioner from minibatch gradients at $w^*$ before optimization
   - Helps reduce ELBO/radius spikes on anisotropic problems
+  - **Note**: HVP-diagonal whitening is not implemented for the optimization loop (JIT stability); HVP is used only at evaluation time for the control variate
 - `whitening_decay`: EMA decay for gradient moment accumulation (default: 0.99)
   - Higher values (closer to 1.0) = slower adaptation, more stable estimates
   - Lower values = faster adaptation, noisier estimates
@@ -83,11 +84,6 @@ uv run snakemake -j 4
   - Example: `[1, 2, 2, 3]` for M=4 components with different ranks
   - Enables fine-grained control over model capacity per component
   - If `None`, all components use rank `r`
-- `mixture_cap`: Upper bound on M (default: `None`)
-  - Reserved for future pruning implementation
-- `prune_threshold`: Component pruning threshold (default: 1e-3)
-  - Drop mixture components with weight π < threshold
-  - Reserved for future pruning implementation
 - `alpha_dirichlet_prior`: Dirichlet prior on mixture weights (default: `None`)
   - Symmetric Dirichlet(α₀, ..., α₀) prior discourages collapse
   - Try α₀ ∈ {1.0, 2.0, 5.0}; larger values encourage uniformity
@@ -97,7 +93,7 @@ uv run snakemake -j 4
   - Cosine schedule often improves final convergence quality
   - Linear decay useful for finite-horizon optimization
 - `lr_warmup_frac`: Fraction of steps for LR warmup (default: 0.05)
-  - Used with `lr_schedule="cosine"` to gradually ramp up learning rate
+  - Used with `lr_schedule="cosine"` or `"linear_decay"` to gradually ramp up learning rate
   - Helps stabilize early optimization
 - `entropy_bonus`: Entropy bonus λ (default: 0.0)
   - Adds λ * H(q) to ELBO to encourage exploration
