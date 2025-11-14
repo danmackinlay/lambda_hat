@@ -484,7 +484,10 @@ class _FlowAlgorithm:
         )
 
         # Partition flow into (params, static) to avoid carrying PjitFunctions through scan
-        flow_params, flow_static = eqx.partition(dist.flow, eqx.is_array)
+        # Only partition inexact (float/complex) arrays for differentiation
+        flow_params, flow_static = eqx.partition(
+            dist.flow, lambda x: eqx.is_array(x) and jnp.issubdtype(x.dtype, jnp.inexact)
+        )
 
         # Collect lifting constants (non-trainable, stay outside scan)
         lift_consts = {
