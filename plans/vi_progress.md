@@ -106,48 +106,51 @@ Tracking implementation of the comprehensive VI improvement plan from `finish_vi
 
 ---
 
-## 🔲 Stage 3: Advanced Configuration (FUTURE)
+## ✅ Stage 3: Advanced Configuration (COMPLETED - Partial)
 
 **Goal:** Expose fine-grained control for power users
 
-**Status:** NOT STARTED
+**Status:** COMPLETED (excluding pruning - deferred to future work)
 
-### Planned Features
+### Tasks
 
-#### 3A: Per-Component Ranks
-- `r_per_component: Optional[List[int]]` - heterogeneous rank budgets
-- Mask-based implementation (keep arrays static for JIT)
-- Test: rank mask correctness
+#### 3A: Per-Component Ranks ✅
+- ✅ `r_per_component: Optional[List[int]]` - heterogeneous rank budgets
+- ✅ Mask-based implementation (keep arrays static for JIT)
+- ✅ Test: rank mask correctness (`test_vi_per_component_ranks`)
 
-#### 3B: Mixture Management
-- `mixture_cap: Optional[int]` - upper bound for M
-- `prune_threshold: float = 1e-3` - drop weak components
-- `alpha_dirichlet_prior: Optional[float]` - discourage collapse
-- Component pruning after eval_every steps
-- Test: pruning monotonicity, anti-collapse
+#### 3B: Mixture Management (PARTIAL)
+- ✅ `mixture_cap: Optional[int]` - reserved for future (config only)
+- ✅ `prune_threshold: float = 1e-3` - reserved for future (config only)
+- ✅ `alpha_dirichlet_prior: Optional[float]` - implemented with gradient correction
+- 🔲 Component pruning - deferred (requires dynamic M handling)
+- ✅ Test: Dirichlet prior (`test_vi_dirichlet_prior`)
 
-#### 3C: LR Schedules & Optimization
-- `lr_schedule: Optional[str]` - "cosine"|"linear_decay"
-- `lr_warmup_frac: float = 0.05`
-- Optax schedule factory
-- Test: schedule application
+#### 3C: LR Schedules & Optimization ✅
+- ✅ `lr_schedule: Optional[str]` - "cosine"|"linear_decay"
+- ✅ `lr_warmup_frac: float = 0.05`
+- ✅ Optax schedule factory (warmup_cosine_decay, linear_schedule)
+- ✅ Test: cosine schedule (`test_vi_lr_schedule_cosine`)
+- ✅ Test: linear decay (`test_vi_lr_schedule_linear_decay`)
 
-#### 3D: Entropy & Exploration
-- `entropy_bonus: float = 0.0` - add λ * H(q) to ELBO
-- Enhanced α_temperature controls
-- Test: exploration behavior
+#### 3D: Entropy & Exploration ✅
+- ✅ `entropy_bonus: float = 0.0` - add λ * H(q) to ELBO
+- ✅ α_temperature already in Stage 1
+- ✅ Test: entropy bonus (`test_vi_entropy_bonus`)
 
-**Files to Modify:**
-- `lambda_hat/config.py` (8+ new fields)
-- `lambda_hat/variational.py` (masks, pruning, prior gradient, schedules)
-- `lambda_hat/conf/sample/sampler/vi.yaml`
-- `tests/test_vi_advanced.py` (new file)
+**Files Modified:**
+- ✅ `lambda_hat/config.py` (7 new fields)
+- ✅ `lambda_hat/variational.py` (masks, prior gradient, schedules, entropy bonus)
+- ✅ `lambda_hat/sampling.py` (pass new config to fit function)
+- ✅ `lambda_hat/conf/sample/sampler/vi.yaml` (defaults)
+- ✅ `tests/test_vi_advanced.py` (new file with 5 tests)
+- ✅ `docs/vi.md` (comprehensive tuning guide)
 
-**Estimated Effort:** 2-3 days
-**Lines Changed:** ~600
-**Risk:** MEDIUM - more complex, potential for bugs
+**Actual Effort:** ~2-3 hours
+**Lines Changed:** ~435
+**Risk:** LOW - All tests pass, backward compatible
 
-**Decision Point:** Implement selectively based on user feedback after Stage 2
+**Note:** Mixture pruning deferred - requires dynamic component management which adds JIT complexity
 
 ---
 
@@ -236,3 +239,11 @@ Tracking implementation of the comprehensive VI improvement plan from `finish_vi
   - ArviZ export: VI metrics in sample_stats for unified diagnostics
   - Tests: 2 new tests (test_vi_enhanced_diagnostics, test_vi_tensorboard_smoke)
   - Documentation: Complete TensorBoard quickstart guide in docs/vi.md
+- 2025-11-14: Completed Stage 3 (Advanced Configuration) - partial implementation ✓
+  - Per-component ranks: r_per_component with mask-based JIT-compatible implementation
+  - LR schedules: cosine decay and linear decay with warmup support
+  - Entropy bonus: λ * H(q) exploration term with gradient correction
+  - Dirichlet prior: Symmetric prior on mixture weights to prevent collapse
+  - Tests: 5 new tests (test_vi_per_component_ranks, test_vi_entropy_bonus, test_vi_dirichlet_prior, test_vi_lr_schedule_cosine, test_vi_lr_schedule_linear_decay)
+  - Documentation: Comprehensive tuning guide for all Stage 3 features in docs/vi.md
+  - Note: Mixture pruning deferred (requires dynamic M handling, adds JIT complexity)
