@@ -47,7 +47,7 @@ def test_vi_quadratic_ground_truth():
     data = (X, Y)
 
     # Loss functions (ignore data for quadratic case)
-    def loss_batch_fn(w, minibatch):
+    def loss_batch_fn(w, Xb, Yb):
         return quadratic_loss(w)
 
     def loss_full_fn(w):
@@ -133,7 +133,7 @@ def test_vi_quadratic_cv_reduces_variance():
     Y = jnp.zeros(n_data, dtype=jnp.float32)
     data = (X, Y)
 
-    def loss_batch_fn(w, minibatch):
+    def loss_batch_fn(w, Xb, Yb):
         return quadratic_loss(w)
 
     def loss_full_fn(w):
@@ -193,7 +193,7 @@ def test_vi_optimization_convergence():
     Y = jnp.zeros(n_data, dtype=jnp.float32)
     data = (X, Y)
 
-    def loss_batch_fn(w, minibatch):
+    def loss_batch_fn(w, Xb, Yb):
         return quadratic_loss(w)
 
     def loss_full_fn(w):
