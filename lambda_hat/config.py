@@ -146,7 +146,6 @@ class VIConfig:
     batch_size: int = 256  # minibatch size
     lr: float = 0.01  # learning rate
     eval_every: int = 50  # how often to record metrics
-    gamma: float = 0.001  # localizer strength (may be overridden by posterior config)
     eval_samples: int = 64  # MC samples for final LLC estimate
     dtype: str = "float32"  # precision: "float32" or "float64"
     use_whitening: bool = True  # enable geometry whitening (deprecated, use whitening_mode)

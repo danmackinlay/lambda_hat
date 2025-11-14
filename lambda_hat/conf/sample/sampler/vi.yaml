@@ -11,9 +11,6 @@ vi:
   lr: 0.01          # learning rate
   eval_every: 50    # how often to record metrics
 
-  # Posterior
-  gamma: 0.001      # localizer strength (tune in {1e-4, 1e-3, 1e-2})
-
   # Evaluation
   eval_samples: 64  # MC samples for final estimate
 
