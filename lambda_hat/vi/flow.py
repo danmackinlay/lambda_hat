@@ -42,6 +42,9 @@ try:
     import flowjax.distributions as fjx_dist
     import flowjax.flows as fjx_flows
 
+    # FlowJAX 17.2.1 requires new-style typed JAX PRNG keys
+    jax.config.update("jax_default_prng_impl", "rbg")
+
     _FLOWJAX_AVAILABLE = True
 except ImportError as e:
     _IMPORT_ERROR = e
