@@ -902,24 +902,20 @@ def run_vi(
         "energy": all_traces["elbo"],  # ELBO serves as "energy"
         "elbo": all_traces["elbo"],  # VI-specific ELBO trace (total objective)
         "is_divergent": jnp.zeros_like(all_traces["elbo"], dtype=bool),
-        # VI-specific diagnostic traces
-        "elbo_like": all_traces["elbo_like"],  # Target term only (for debugging)
-        "logq": all_traces["logq"],  # Log density of variational distribution
-        "radius2": all_traces["radius2"],  # ||tilde_v||^2 in whitened coords
-        "resp_entropy": all_traces["resp_entropy"],  # Entropy of responsibilities (detects peaking)
         # Control variate metrics (replicated across steps for observability)
         "Eq_Ln_mc": Eq_Ln_mc_trace,  # Raw MC estimate of E_q[L_n]
         "Eq_Ln_cv": Eq_Ln_cv_trace,  # CV-corrected estimate of E_q[L_n]
         "variance_reduction": var_red_trace,  # Variance reduction factor from CV
-        # Stage 2 enhanced diagnostics
-        "pi_min": all_traces["pi_min"],
-        "pi_max": all_traces["pi_max"],
-        "pi_entropy": all_traces["pi_entropy"],
-        "D_sqrt_min": all_traces["D_sqrt_min"],
-        "D_sqrt_max": all_traces["D_sqrt_max"],
-        "D_sqrt_med": all_traces["D_sqrt_med"],
+        # Common diagnostics (all VI algorithms provide these)
         "grad_norm": all_traces["grad_norm"],
-        "A_col_norm_max": all_traces["A_col_norm_max"],
+        # Algorithm-specific traces (only include if present)
+        **{k: all_traces[k] for k in [
+            "elbo_like", "logq", "radius2", "resp_entropy",  # MFA-specific
+            "pi_min", "pi_max", "pi_entropy",  # MFA mixture weights
+            "D_sqrt_min", "D_sqrt_max", "D_sqrt_med",  # MFA covariance
+            "A_col_norm_max",  # MFA low-rank factor
+            "d_latent", "sigma_perp",  # Flow-specific
+        ] if k in all_traces},
     }
 
     # Use timings from algorithm and override total with actual wall time
