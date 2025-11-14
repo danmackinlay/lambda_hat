@@ -1,6 +1,6 @@
 # Output Layout
 
-This project uses **Snakemake** for orchestration, creating a structured, content-addressed artifact layout. Unlike timestamp-based directories, artifacts are organized by deterministic IDs for reproducibility.
+This project uses **Parsl** for orchestration, creating a structured, content-addressed artifact layout. Unlike timestamp-based directories, artifacts are organized by deterministic IDs for reproducibility.
 
 ## Directory Structure
 
@@ -174,40 +174,47 @@ print(df.groupby(["sampler", "n_data"])["llc_mean"].describe())
 Same `config/experiments.yaml` → same target and run IDs → identical results:
 
 ```bash
-# These runs are deterministic and cached
-uv run snakemake runs/targets/tgt_abc123456789/meta.json
-uv run snakemake runs/targets/tgt_abc123456789/run_hmc_xy789abc/analysis.json
+# Run full workflow
+uv run python flows/parsl_llc.py --local
+
+# Same config will produce same IDs and skip existing artifacts
+# (Parsl jobs complete quickly if outputs already exist)
 ```
 
-### Forcing Reruns
+**Content-addressed IDs ensure determinism:**
+- Same model + data + seed → same `tgt_*` ID
+- Same sampler config + target → same `run_*` ID
+- Artifacts are never overwritten (new config → new ID)
 
-Force rebuild of targets or sampling runs:
+### Selective Execution
 
-```bash
-# Force rebuild specific target
-uv run snakemake --forcerun build_target runs/targets/tgt_abc123456789/meta.json
+To run only specific combinations, edit `config/experiments.yaml`:
 
-# Force rerun specific sampler
-uv run snakemake --forcerun run_sampler runs/targets/tgt_abc123456789/run_hmc_xy789abc/analysis.json
+```yaml
+# Run only a subset of targets
+targets:
+  - { model: base, data: base, seed: 42 }  # Only this target
 
-# Force rerun all samplers (but not targets)
-uv run snakemake --forcerun run_sampler -j 4
+# Run only specific samplers
+samplers:
+  - { name: hmc }  # Only HMC, not SGLD or others
 ```
 
-### Partial Runs
+Then execute: `uv run python flows/parsl_llc.py --local`
 
-Run specific outputs:
+### Reruns and Updates
 
-```bash
-# Build only targets (no sampling)
-uv run snakemake "runs/targets/*/meta.json" -j 4
+**To force rebuild a target:**
+1. Delete the target directory: `rm -rf runs/targets/tgt_abc123456789/`
+2. Rerun workflow: `uv run python flows/parsl_llc.py --local`
+3. Parsl will rebuild the missing target and all dependent samplers
 
-# Run only HMC (no SGLD)
-uv run snakemake "runs/targets/*/run_hmc_*/analysis.json" -j 4
+**To rerun specific samplers:**
+1. Delete run directories: `rm -rf runs/targets/*/run_hmc_*/`
+2. Rerun workflow: `uv run python flows/parsl_llc.py --local`
+3. Parsl will rerun sampling for all affected combinations
 
-# Run specific target-sampler combination
-uv run snakemake runs/targets/tgt_abc123456789/run_hmc_xy789abc/analysis.json
-```
+**Note**: Unlike Snakemake's automatic caching, Parsl reruns all jobs in the config. For partial reruns, create a subset config file.
 
 ## Storage Considerations
 
