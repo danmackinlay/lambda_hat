@@ -60,6 +60,13 @@ uv run snakemake -j 4
 - `dtype`: Precision (default: `float32`)
   - VI includes float32 stability features (D_sqrt clipping, ridge regularization, column normalization)
 
+### Diagnostics (Stage 2)
+- `tensorboard`: Enable TensorBoard logging (default: `false`)
+  - Writes optimization metrics to `runs/.../diagnostics/tb/` for visualization
+  - Logs 15+ scalar metrics every step (ELBO, radius, gradient norms, mixture stats, etc.)
+  - Negligible overhead (~1% of runtime)
+  - See "TensorBoard Integration" section for usage guide
+
 ### Geometry Whitening (Stage 1)
 - `whitening_mode`: Whitening method (default: `"none"`)
   - Options: `"none"` (identity), `"rmsprop"` (second moment), `"adam"` (first + second moment)
@@ -139,6 +146,8 @@ These features ensure responsibilities stay in $[0,1]$ and prevent NaN/Inf propa
 
 ## Diagnostics
 
+### Core Trace Metrics
+
 VI traces include:
 - `Ln`: Full-dataset loss (recorded every `eval_every` steps)
 - `energy`: ELBO value (optimization objective)
@@ -150,6 +159,93 @@ Analysis metrics (in `analysis.json`):
 - `ess`: Effective sample size (equals total draws for IID samples)
 - `r_hat`: Gelman-Rubin diagnostic (NaN for IID samples)
 - `wnv`: Work-normalized variance (efficiency metric)
+
+### Enhanced Diagnostics (Stage 2)
+
+VI also provides 15+ diagnostic metrics for monitoring optimization quality:
+
+**ELBO components:**
+- `elbo`: Total ELBO (objective value)
+- `elbo_like`: Likelihood term only (target fitting)
+- `logq`: Entropy term (variational distribution complexity)
+
+**Geometry metrics:**
+- `radius2`: Mean squared distance from $w^*$ in whitened coordinates
+- `resp_entropy`: Responsibility entropy (detects component collapse)
+- `cumulative_fge`: Cumulative full-gradient equivalents (work tracking)
+
+**Control variate diagnostics:**
+- `Eq_Ln_mc`: Raw MC estimate of $\mathbb{E}_q[L_n]$
+- `Eq_Ln_cv`: Control-variate-corrected estimate
+- `variance_reduction`: Variance reduction factor from CV
+
+**Mixture statistics:**
+- `pi_min`, `pi_max`, `pi_entropy`: Mixture weight distribution (detects collapse)
+
+**Covariance diagnostics:**
+- `D_sqrt_min`, `D_sqrt_max`, `D_sqrt_med`: Diagonal variance scaling
+
+**Optimization dynamics:**
+- `grad_norm`: Global gradient magnitude
+- `A_col_norm_max`: Factor matrix column norms (tracks low-rank subspace)
+
+All metrics are:
+- Exported to ArviZ `sample_stats` for unified analysis
+- Available for TensorBoard logging (opt-in, see below)
+- Recorded every `eval_every` optimization steps
+
+### TensorBoard Integration (Stage 2)
+
+Enable real-time monitoring of VI optimization with TensorBoard:
+
+**1. Enable TensorBoard in config:**
+```yaml
+samplers:
+  - name: vi
+    overrides:
+      tensorboard: true  # Enable TensorBoard logging
+      M: 8
+      r: 2
+      steps: 5000
+      # ... other settings ...
+```
+
+**2. Run Snakemake workflow:**
+```bash
+uv run snakemake -j 4
+```
+
+**3. Launch TensorBoard:**
+```bash
+tensorboard --logdir runs/targets/TARGET_ID/run_vi_HASH/diagnostics/tb
+```
+
+**4. Open browser:**
+Navigate to `http://localhost:6006` to view live metrics.
+
+**What gets logged:**
+- **Optimization progress**: ELBO, likelihood, entropy over training steps
+- **Geometry evolution**: Radius, responsibility entropy, mixture statistics
+- **Gradient dynamics**: Gradient norms, factor matrix growth
+- **Work tracking**: Cumulative FGEs, variance reduction from control variates
+- **Final estimates**: LLC, $\mathbb{E}_q[L_n]$, L_0 reference loss
+
+**Interpreting TensorBoard plots:**
+
+- **Converged ELBO**: Should plateau smoothly (no spikes or NaNs)
+  - Spikes → reduce `lr` or enable whitening
+  - Monotonic decrease → good (maximizing ELBO = minimizing negative ELBO)
+- **Stable radius**: Should stabilize near expected local posterior scale
+  - Growing radius → increase `gamma` (stronger localization)
+  - Zero radius → decrease `gamma` (over-constrained)
+- **Non-degenerate pi**: `pi_entropy` should stay > 0 (no component collapse)
+  - Dropping entropy → reduce `M` or increase `alpha_temperature`
+- **Gradient norms**: Should decay as optimization progresses
+  - Exploding → enable `clip_global_norm` or reduce `lr`
+- **Variance reduction > 1**: Control variate improves MC estimate quality
+  - Higher is better (CV reducing variance effectively)
+
+**Cost:** TensorBoard logging adds negligible overhead (~1% of runtime).
 
 ## Hyperparameter Tuning
 
