@@ -40,6 +40,12 @@ def _debug_print_idata(idata, name: str):
             "cumulative_fge",
             "cumulative_time",
             "diverging",
+            "elbo",
+            "elbo_like",
+            "logq",
+            "resp_entropy",
+            "pi_entropy",
+            "grad_norm",
         ]:
             if key in idata.sample_stats:
                 print(f"{key}:", _summ(idata.sample_stats[key].values))
@@ -146,6 +152,27 @@ def analyze_traces(
                 # Standardize key for ArviZ if necessary
                 output_key = "diverging" if key == "is_divergent" else key
                 sample_stats_data[output_key] = np.array(stat_trace[:, warmup:])
+
+    # Extract VI-specific diagnostics (Stage 2)
+    vi_keys = [
+        "elbo",
+        "elbo_like",
+        "logq",
+        "resp_entropy",
+        "pi_min",
+        "pi_max",
+        "pi_entropy",
+        "D_sqrt_min",
+        "D_sqrt_max",
+        "D_sqrt_med",
+        "grad_norm",
+        "A_col_norm_max",
+    ]
+    for key in vi_keys:
+        if key in traces:
+            stat_trace = traces[key]
+            if stat_trace.shape[1] == draws:
+                sample_stats_data[key] = np.array(stat_trace[:, warmup:])
 
     # Create ArviZ InferenceData (contains only post-warmup data)
     data = {
