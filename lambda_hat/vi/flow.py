@@ -461,8 +461,10 @@ class _FlowAlgorithm:
         # Convert legacy PRNGKey to new RBG key format if needed
         # (rng_key may come from jax.random.PRNGKey which has shape (2,), but RBG needs (4,))
         if hasattr(rng_key, "shape") and rng_key.shape == (2,):
-            # Legacy key - wrap it for RBG
-            rng_key = jax.random.wrap_key_data(rng_key, impl="rbg")
+            # Legacy key - extract seed and create RBG key
+            # JAX legacy keys are uint32[2], first element is the seed
+            seed = int(rng_key[0])
+            rng_key = jax.random.key(seed)
 
         key_init, key_train, key_eval = jax.random.split(rng_key, 3)
 
