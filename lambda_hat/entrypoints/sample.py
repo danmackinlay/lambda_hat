@@ -109,6 +109,9 @@ def main():
         student_df=student_df,
     )
 
+    # Flatten params for VI (required by TargetBundle even if HMC/SGLD don't use it)
+    params0_flat, unravel_fn = jax.flatten_util.ravel_pytree(params_f32)
+
     # Build TargetBundle with required fields
     d = count_params(params_f32)
     target_bundle = TargetBundle(
@@ -120,6 +123,8 @@ def main():
         Y=Y_f32,
         L0=L0,
         model=model,
+        params0_flat=params0_flat,
+        unravel_fn=unravel_fn,
     )
 
     # Run the sampler via the new runner

@@ -6,9 +6,7 @@ from typing import Any, Callable, Protocol, Tuple
 import jax
 import jax.numpy as jnp
 
-# Import SamplerRunResult from sampling module
-# We'll use the existing type rather than creating a new one
-from lambda_hat.sampling import SamplerRunResult
+from lambda_hat.types import SamplerRunResult
 
 
 class VIAlgorithm(Protocol):

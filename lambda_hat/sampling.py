@@ -10,6 +10,7 @@ import jax
 import jax.numpy as jnp
 
 from lambda_hat import vi
+from lambda_hat.types import SamplerRunResult
 
 if TYPE_CHECKING:
     from lambda_hat.config import SGLDConfig, VIConfig
@@ -47,12 +48,6 @@ class VIInfo(NamedTuple):
     acceptance_rate: jnp.ndarray = jnp.array(1.0)  # Always 1.0 for VI (IID samples)
     energy: jnp.ndarray = jnp.nan  # Will store ELBO
     is_divergent: bool = False  # Always False for VI
-
-
-class SamplerRunResult(NamedTuple):
-    traces: Dict[str, jnp.ndarray]
-    timings: Dict[str, float]  # {'adaptation': 0.0, 'sampling': 0.0, 'total': 0.0}
-    work: Dict[str, float]  # {'n_full_loss': int, 'n_minibatch_grads': int}
 
 
 def initialize_preconditioner(params: Any) -> PreconditionerState:
