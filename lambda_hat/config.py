@@ -19,6 +19,9 @@ class ModelConfig:
     init: str = "he"
     target_params: Optional[int] = 10_000
     hidden: int = 300  # fallback if target_params and widths are None
+    # Residual/skip connections
+    skip_connections: bool = False
+    residual_period: int = 2
 
 
 @dataclass

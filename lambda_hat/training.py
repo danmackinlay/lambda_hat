@@ -63,12 +63,14 @@ def train_erm(
             if len(recent_losses) == 20:
                 std = jnp.std(jnp.array(recent_losses))
                 if std < t_cfg.early_stop_tol:
-                    print(f"Early stopping at step {step}, std={std:.2e}")
+                    if cfg.use_tqdm:
+                        print(f"Early stopping at step {step}, std={std:.2e}")
                     break
 
         # Logging
         if step % max(1, t_cfg.steps // 10) == 0:
-            print(f"Step {step}/{t_cfg.steps}, Loss: {loss_val:.6f}")
+            if cfg.use_tqdm:
+                print(f"Step {step}/{t_cfg.steps}, Loss: {loss_val:.6f}")
 
     # Compute final metrics
     final_loss = float(loss_fn(params))

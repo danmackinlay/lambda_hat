@@ -35,7 +35,7 @@ uv run snakemake -j 4
 
 ## Preconditioning (Implementation Status)
 
-The configuration structure (`lambda_hat/config.py` and `conf/sampler/*.yaml`) includes fields for adaptive preconditioning (like Adam or RMSProp): `precond`, `beta1`, `beta2`, `eps`.
+The configuration structure (`lambda_hat/config.py` and `conf/sample/sampler/*.yaml`) includes fields for adaptive preconditioning (like Adam or RMSProp): `precond`, `beta1`, `beta2`, `eps`.
 
 **Status:** Preconditioned SGLD variants (pSGLD) are **fully implemented** in the sampling loop (`lambda_hat/sampling.py`).
 
