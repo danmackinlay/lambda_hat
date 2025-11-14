@@ -892,9 +892,7 @@ class _MFAAlgorithm:
     """Mixture of Factor Analyzers VI algorithm adapter.
 
     Implements VIAlgorithm protocol by wrapping fit_vi_and_estimate_lambda.
-    This adapter is intentionally minimal - it does NOT handle whitener creation
-    (that remains in run_vi() for now, since whitener logic may be shared
-    across VI algorithms in future).
+    Handles whitener creation internally for symmetry with Flow algorithm.
     """
 
     name = "mfa"
@@ -911,26 +909,85 @@ class _MFAAlgorithm:
         beta: float,
         gamma: float,
         vi_cfg: Any,
-    ):
-        """Run MFA VI algorithm (delegates to fit_vi_and_estimate_lambda).
+        whitener: Optional[Whitener] = None,
+    ) -> Dict[str, Any]:
+        """Run MFA VI algorithm.
 
-        Note: This is a thin adapter that exists for registry dispatch.
-        The actual algorithm implementation is in fit_vi_and_estimate_lambda.
-        Whitener creation must be handled by the caller (run_vi() in sampling.py).
+        Args:
+            rng_key: JAX random key
+            loss_batch_fn: (w_pytree, Xb, Yb) -> scalar
+            loss_full_fn: (w_pytree) -> scalar
+            wstar_flat: (d,) flattened ERM solution
+            unravel_fn: flat array -> pytree converter
+            data: (X, Y) dataset
+            n_data: number of data points
+            beta: inverse temperature
+            gamma: localizer strength
+            vi_cfg: VIConfig instance
+            whitener: Optional whitener (geometry transformation), defaults to identity
 
         Returns:
-            Dict with 'lambda_hat', 'traces', 'extras' keys
-            (This will be converted to SamplerRunResult by run_vi())
+            Dict with keys:
+                - lambda_hat: scalar LLC estimate
+                - traces: dict of metric arrays (steps,)
+                - extras: dict of final diagnostics
+                - timings: dict of timing info (empty for now, compatibility)
+                - work: dict of computational work metrics
         """
-        # Whitener creation is handled by run_vi() (not here)
-        # This keeps whitener logic potentially shareable across VI algorithms
-        # For now, we just expose the core MFA function
+        import time
 
-        # Note: This returns a dict, not SamplerRunResult
-        # The conversion to SamplerRunResult happens in run_vi()
+        t0 = time.time()
+
+        # Use provided whitener or create identity whitener
+        if whitener is None:
+            whitener = make_whitener(None)  # Identity whitener
+
+        # Call the main MFA function
+        lambda_hat, traces, extras = fit_vi_and_estimate_lambda(
+            rng_key=rng_key,
+            loss_batch_fn=loss_batch_fn,
+            loss_full_fn=loss_full_fn,
+            wstar_flat=wstar_flat,
+            unravel_fn=unravel_fn,
+            data=data,
+            n_data=n_data,
+            beta=beta,
+            gamma=gamma,
+            M=vi_cfg.M,
+            r=vi_cfg.r,
+            steps=vi_cfg.steps,
+            batch_size=vi_cfg.batch_size,
+            lr=vi_cfg.lr,
+            eval_samples=vi_cfg.eval_samples,
+            whitener=whitener,
+            clip_global_norm=vi_cfg.clip_global_norm,
+            alpha_temperature=vi_cfg.alpha_temperature,
+            entropy_bonus=vi_cfg.entropy_bonus,
+            alpha_dirichlet_prior=vi_cfg.alpha_dirichlet_prior,
+            r_per_component=vi_cfg.r_per_component,
+            lr_schedule=vi_cfg.lr_schedule,
+            lr_warmup_frac=vi_cfg.lr_warmup_frac,
+        )
+
+        total_time = time.time() - t0
+
+        # Format return value to match VIAlgorithm protocol
+        # (same structure as Flow algorithm)
         return {
-            "fit_fn": fit_vi_and_estimate_lambda,
-            "whitener_fn": make_whitener,
+            "lambda_hat": lambda_hat,
+            "traces": traces,
+            "extras": extras,
+            "timings": {
+                "adaptation": 0.0,  # MFA doesn't have separate adaptation phase
+                "sampling": total_time,
+                "total": total_time,
+            },
+            "work": {
+                # Extract work metrics from traces
+                "n_full_loss": vi_cfg.steps,  # One full gradient per step
+                "n_minibatch_grads": vi_cfg.steps,  # One minibatch per step
+                "sampler_flavour": "mfa",
+            },
         }
 
 

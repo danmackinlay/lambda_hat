@@ -389,6 +389,7 @@ class _FlowAlgorithm:
         beta: float,
         gamma: float,
         vi_cfg: Any,
+        whitener: Any = None,
     ) -> Dict[str, Any]:
         """Run flow VI algorithm.
 
@@ -403,6 +404,7 @@ class _FlowAlgorithm:
             beta: inverse temperature
             gamma: localizer strength
             vi_cfg: VIConfig instance
+            whitener: Optional whitener (geometry transformation), defaults to identity
 
         Returns:
             Dict with keys:
@@ -415,8 +417,7 @@ class _FlowAlgorithm:
         # Check if flowjax dependencies are available
         if not _FLOWJAX_AVAILABLE:
             raise ImportError(
-                "Flow VI requires flowjax and equinox. "
-                "Install with: uv sync --extra flowvi"
+                "Flow VI requires flowjax and equinox. Install with: uv sync --extra flowvi"
             ) from _IMPORT_ERROR
 
         key_init, key_train, key_eval = jax.random.split(rng_key, 3)
@@ -431,11 +432,13 @@ class _FlowAlgorithm:
         Y = Y.astype(dtype)
         wstar_flat = wstar_flat.astype(dtype)
 
-        # Extract whitener from run_vi() (passed via extras mechanism)
-        # For now, assume D_inv_sqrt is provided or use identity
-        # TODO: Better integration with run_vi's whitening pre-pass
-        # For initial implementation, use simple diagonal from gradient variance
-        D_inv_sqrt = jnp.ones(d, dtype=dtype)  # Identity for now
+        # Extract D_inv_sqrt from whitener (if provided)
+        if whitener is not None and hasattr(whitener, "A_inv_sqrt"):
+            # Whitener provided from run_vi's pre-pass
+            D_inv_sqrt = whitener.A_inv_sqrt.astype(dtype)
+        else:
+            # Fallback to identity
+            D_inv_sqrt = jnp.ones(d, dtype=dtype)
 
         # Initialize InjectiveLift
         dist = init_injective_lift(
