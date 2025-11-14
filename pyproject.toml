@@ -26,6 +26,7 @@ dependencies = [
     "optax>=0.2.5",
     "pandas>=2.0.0",
     "parsl>=2024.11.18",
+    "pyarrow>=14.0.0",
     "pyyaml>=6.0",
     "scipy>=1.11",
     "tensorboardx>=2.6.4",
