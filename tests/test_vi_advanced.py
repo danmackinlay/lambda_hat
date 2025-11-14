@@ -18,7 +18,7 @@ jax.config.update("jax_enable_x64", True)
 
 import jax.numpy as jnp
 
-from lambda_hat import variational as vi
+from lambda_hat.vi import mfa as vi
 
 
 def test_vi_per_component_ranks():

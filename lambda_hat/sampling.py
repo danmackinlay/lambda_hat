@@ -9,7 +9,7 @@ import blackjax.mcmc.integrators as bj_integrators
 import jax
 import jax.numpy as jnp
 
-from lambda_hat import variational as vi
+from lambda_hat import vi
 
 if TYPE_CHECKING:
     from lambda_hat.config import SGLDConfig, VIConfig

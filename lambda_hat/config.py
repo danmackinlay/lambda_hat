@@ -140,6 +140,7 @@ class MCLMCConfig:
 class VIConfig:
     """Variational Inference sampler configuration"""
 
+    algo: str = "mfa"  # VI algorithm: "mfa" (mixture of factor analyzers) or "flow"
     M: int = 8  # number of mixture components
     r: int = 2  # rank budget per component
     steps: int = 5_000  # optimization steps

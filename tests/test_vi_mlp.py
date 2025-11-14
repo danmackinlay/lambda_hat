@@ -21,8 +21,8 @@ jax.config.update("jax_enable_x64", True)
 import haiku as hk
 import jax.numpy as jnp
 
-from lambda_hat import variational as vi
 from lambda_hat.models import MLP
+from lambda_hat.vi import mfa as vi
 
 
 def make_tiny_mlp_target(key, in_dim=4, out_dim=1, hidden=8):

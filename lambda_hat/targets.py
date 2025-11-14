@@ -48,6 +48,9 @@ class TargetBundle:
     L0: float  # L_n at params0
     # Haiku model for forward passes
     model: Any
+    # VI-specific fields (flattened params and unravel function)
+    params0_flat: jnp.ndarray  # Flattened ERM solution
+    unravel_fn: Callable[[jnp.ndarray], Dict[str, Any]]  # flat -> pytree
 
 
 def build_target(key, cfg: Config) -> tuple[TargetBundle, list[int], list[int] | None]:
@@ -141,6 +144,9 @@ def build_target(key, cfg: Config) -> tuple[TargetBundle, list[int], list[int] |
         L0 = float(metrics.get("final_loss", loss_full_f32(params_star_f32)))
         d = count_params(params_star_f32)
 
+        # Flatten params for VI
+        params_star_flat, unravel_fn = jax.flatten_util.ravel_pytree(params_star_f32)
+
         return (
             TargetBundle(
                 d=d,
@@ -151,6 +157,8 @@ def build_target(key, cfg: Config) -> tuple[TargetBundle, list[int], list[int] |
                 Y=Y_f32,
                 L0=L0,
                 model=model,
+                params0_flat=params_star_flat,
+                unravel_fn=unravel_fn,
             ),
             used_model_widths,
             used_teacher_widths,
@@ -184,6 +192,9 @@ def build_target(key, cfg: Config) -> tuple[TargetBundle, list[int], list[int] |
         # Dummy model (not used for quadratic target)
         model = None
 
+        # Flatten params for VI
+        params0_flat, unravel_fn = jax.flatten_util.ravel_pytree(params0)
+
         return (
             TargetBundle(
                 d=d,
@@ -194,6 +205,8 @@ def build_target(key, cfg: Config) -> tuple[TargetBundle, list[int], list[int] |
                 Y=Y,
                 L0=L0,
                 model=model,
+                params0_flat=params0_flat,
+                unravel_fn=unravel_fn,
             ),
             [],
             None,

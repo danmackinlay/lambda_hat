@@ -9,7 +9,7 @@ This validates:
 import jax
 import jax.numpy as jnp
 
-from lambda_hat import variational as vi
+from lambda_hat.vi import mfa as vi
 
 
 def test_vi_quadratic_ground_truth():

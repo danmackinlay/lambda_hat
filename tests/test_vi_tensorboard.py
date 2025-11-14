@@ -20,7 +20,7 @@ from pathlib import Path
 
 import jax.numpy as jnp
 
-from lambda_hat import variational as vi
+from lambda_hat.vi import mfa as vi
 
 
 def test_vi_enhanced_diagnostics():

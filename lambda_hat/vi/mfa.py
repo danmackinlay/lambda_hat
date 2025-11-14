@@ -1,6 +1,6 @@
-# lambda_hat/variational.py
+# lambda_hat/vi/mfa.py
 """
-Variational Inference utilities for Local Learning Coefficient estimation.
+Mixture of Factor Analyzers (MFA) variational inference algorithm.
 
 Implements a mixture of factor analyzers with:
 - Equal means at w* (center of local posterior)
@@ -127,8 +127,7 @@ def compute_subspace_hessian_diag(
     Returns:
         hess_diag: (M, r) array where hess_diag[m,j] = v_mj^T H v_mj
     """
-    from lambda_hat.variational import diag_from_rho
-
+    # diag_from_rho is defined in this module (see above)
     D_sqrt, _ = diag_from_rho(params.rho)  # (d,)
     M, _, r = params.A.shape
 
@@ -884,3 +883,64 @@ def fit_vi_and_estimate_lambda(
     }
 
     return lambda_hat, traces, extras
+
+
+# === VIAlgorithm Adapter ===
+
+
+class _MFAAlgorithm:
+    """Mixture of Factor Analyzers VI algorithm adapter.
+
+    Implements VIAlgorithm protocol by wrapping fit_vi_and_estimate_lambda.
+    This adapter is intentionally minimal - it does NOT handle whitener creation
+    (that remains in run_vi() for now, since whitener logic may be shared
+    across VI algorithms in future).
+    """
+
+    name = "mfa"
+
+    def run(
+        self,
+        rng_key: jax.random.PRNGKey,
+        loss_batch_fn: Callable,
+        loss_full_fn: Callable,
+        wstar_flat: jnp.ndarray,
+        unravel_fn: Callable[[jnp.ndarray], Any],
+        data: Tuple[jnp.ndarray, jnp.ndarray],
+        n_data: int,
+        beta: float,
+        gamma: float,
+        vi_cfg: Any,
+    ):
+        """Run MFA VI algorithm (delegates to fit_vi_and_estimate_lambda).
+
+        Note: This is a thin adapter that exists for registry dispatch.
+        The actual algorithm implementation is in fit_vi_and_estimate_lambda.
+        Whitener creation must be handled by the caller (run_vi() in sampling.py).
+
+        Returns:
+            Dict with 'lambda_hat', 'traces', 'extras' keys
+            (This will be converted to SamplerRunResult by run_vi())
+        """
+        # Whitener creation is handled by run_vi() (not here)
+        # This keeps whitener logic potentially shareable across VI algorithms
+        # For now, we just expose the core MFA function
+
+        # Note: This returns a dict, not SamplerRunResult
+        # The conversion to SamplerRunResult happens in run_vi()
+        return {
+            "fit_fn": fit_vi_and_estimate_lambda,
+            "whitener_fn": make_whitener,
+        }
+
+
+def make_mfa_algo() -> _MFAAlgorithm:
+    """Factory function for MFA VI algorithm."""
+    return _MFAAlgorithm()
+
+
+# Import registry after defining the algorithm to avoid circular imports
+from lambda_hat.vi import registry  # noqa: E402
+
+# Register the algorithm
+registry.register("mfa", make_mfa_algo)

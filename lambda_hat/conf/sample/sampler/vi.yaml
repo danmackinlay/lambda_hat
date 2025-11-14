@@ -1,6 +1,9 @@
 # @package _global_.sampler
 name: vi
 vi:
+  # Algorithm selection
+  algo: mfa         # "mfa" (mixture of factor analyzers) or "flow"
+
   # Variational family
   M: 8              # number of mixture components
   r: 2              # rank budget per component
