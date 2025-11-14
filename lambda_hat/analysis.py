@@ -331,6 +331,10 @@ def create_combined_convergence_plot(
     if not inference_data:
         return
 
+    # Create diagnostics subdirectory
+    diag_dir = output_dir / "diagnostics"
+    diag_dir.mkdir(exist_ok=True)
+
     # Setup figure with two subplots (FGEs and Time), sharing the Y-axis
     fig, axes = plt.subplots(2, 1, figsize=(12, 10), sharey=True)
     ax_fge, ax_time = axes
@@ -409,7 +413,7 @@ def create_combined_convergence_plot(
     ax_time.set_xscale("log")  # Log scale for Time
 
     plt.tight_layout()
-    plt.savefig(output_dir / "llc_convergence_combined.png", dpi=150, bbox_inches="tight")
+    plt.savefig(diag_dir / "llc_convergence_combined.png", dpi=150, bbox_inches="tight")
     plt.close(fig)
 
 
@@ -419,6 +423,10 @@ def create_work_normalized_variance_plot(
     """Create plots of Work-Normalized Variance (WNV) vs Work."""
     if not inference_data:
         return
+
+    # Create diagnostics subdirectory
+    diag_dir = output_dir / "diagnostics"
+    diag_dir.mkdir(exist_ok=True)
 
     fig, axes = plt.subplots(2, 1, figsize=(12, 10), sharey=True)
     ax_fge, ax_time = axes
@@ -485,7 +493,7 @@ def create_work_normalized_variance_plot(
     ax_time.set_xscale("log")
 
     plt.tight_layout()
-    plt.savefig(output_dir / "llc_wnv.png", dpi=150, bbox_inches="tight")
+    plt.savefig(diag_dir / "llc_wnv.png", dpi=150, bbox_inches="tight")
     plt.close(fig)
 
 
