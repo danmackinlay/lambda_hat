@@ -24,9 +24,11 @@ targets:
       overrides: { training: { steps: 10000 } } }  # Override default training steps
 
 samplers:
-  # Each sampler runs on every target (N × M total jobs)
-  # Presets: lambda_hat/conf/sample/sampler/{hmc,mclmc,sgld,vi}.yaml
-  - { name: hmc }     # Hamiltonian Monte Carlo (gold standard)
-  - { name: mclmc }   # Microcanonical Langevin Monte Carlo (fast)
-  - { name: sgld, overrides: { step_size: 1e-6, eval_every: 50 }, seed: 12345 }  # Stochastic gradient
-  - { name: vi, overrides: { M: 8, r: 2, gamma: 0.001 }, seed: 54321 }          # Variational inference
+  - { name: hmc }
+  - { name: mclmc }
+  - { name: sgld, overrides: { step_size: 1e-6, eval_every: 50 }, seed: 12345 }
+  # VI sampler: mixture of factor analyzers with STL + RB gradients
+  - { name: vi, overrides: { algo: mfa, M: 8, r: 2, gamma: 0.001 }, seed: 54321 }
+  # VI sampler: normalizing flow-based VI (requires --extra flowvi) - CURRENTLY BROKEN
+  # NOTE: FlowJAX 17.2.1 API incompatibility - jitted functions cannot pass through jax.lax.scan
+  # - { name: vi, overrides: { algo: flow, M: 8, r: 2, gamma: 0.001 }, seed: 54322 }

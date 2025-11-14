@@ -38,6 +38,7 @@ _IMPORT_ERROR = None
 
 try:
     import equinox as eqx
+    import flowjax.bijections as fjx_bij
     import flowjax.distributions as fjx_dist
     import flowjax.flows as fjx_flows
 
@@ -46,6 +47,7 @@ except ImportError as e:
     _IMPORT_ERROR = e
     # Create placeholder objects for type checking
     eqx = None  # type: ignore
+    fjx_bij = None  # type: ignore
     fjx_dist = None  # type: ignore
     fjx_flows = None  # type: ignore
 
@@ -167,7 +169,7 @@ def init_injective_lift(
         flow = fjx_flows.coupling_flow(
             key=k_flow,
             base_dist=base_dist,
-            transformer="affine",  # Affine coupling
+            transformer=None,  # Default to affine coupling
             flow_layers=flow_depth,
             nn_width=flow_hidden[0] if flow_hidden else 64,
             nn_depth=len(flow_hidden) if flow_hidden else 2,
@@ -177,17 +179,19 @@ def init_injective_lift(
         flow = fjx_flows.masked_autoregressive_flow(
             key=k_flow,
             base_dist=base_dist,
-            transformer="affine",
+            transformer=None,  # Default to affine
             flow_layers=flow_depth,
             nn_width=flow_hidden[0] if flow_hidden else 64,
             nn_depth=len(flow_hidden) if flow_hidden else 2,
         )
     elif flow_type == "nsf_ar":
         # Neural Spline Flow (autoregressive)
+        # Create rational quadratic spline transformer
+        transformer = fjx_bij.RationalQuadraticSpline(knots=8, interval=3)
         flow = fjx_flows.masked_autoregressive_flow(
             key=k_flow,
             base_dist=base_dist,
-            transformer="rq_spline",  # Rational quadratic spline
+            transformer=transformer,
             flow_layers=flow_depth,
             nn_width=flow_hidden[0] if flow_hidden else 64,
             nn_depth=len(flow_hidden) if flow_hidden else 2,
@@ -219,6 +223,8 @@ def build_flow_elbo_step(
     batch_size: int,
     optimizer: optax.GradientTransformation,
     clip_global_norm: Optional[float],
+    flow_static: Any,
+    lift_consts: dict,
 ) -> Callable:
     """Build one ELBO optimization step for flow VI.
 
@@ -238,9 +244,11 @@ def build_flow_elbo_step(
         batch_size: minibatch size for stochastic ELBO
         optimizer: Optax optimizer
         clip_global_norm: gradient clipping threshold (None to disable)
+        flow_static: static (non-array) part of flow from eqx.partition
+        lift_consts: dict with U, E_perp, D_inv_sqrt, sigma_perp, wstar
 
     Returns:
-        step_fn: (key, dist, opt_state, step_idx) -> ((dist, opt_state), metrics)
+        step_fn: (key, flow_params, opt_state, step_idx) -> ((flow_params, opt_state), metrics)
     """
     X, Y = data
     ref_dtype = wstar_flat.dtype
@@ -249,7 +257,7 @@ def build_flow_elbo_step(
     gamma_val = jnp.asarray(gamma, dtype=ref_dtype)
 
     @jax.jit
-    def step_fn(key, dist: InjectiveLift, opt_state, step_idx):
+    def step_fn(key, flow_params, opt_state, step_idx):
         # Draw minibatch
         key_batch, key_elbo = jax.random.split(key)
         idx = jax.random.choice(key_batch, n_data, shape=(batch_size,), replace=True)
@@ -257,15 +265,42 @@ def build_flow_elbo_step(
 
         # Negative ELBO (for minimization)
         def neg_elbo(flow_params):
-            # Rebuild dist with new flow params
-            dist_new = eqx.tree_at(lambda d: d.flow, dist, flow_params)
+            # Rebuild flow from params + static
+            flow = eqx.combine(flow_params, flow_static)
 
-            # Sample w, log q(w) via reparameterization (pathwise gradient)
-            w_flat, logq = dist_new.sample_and_log_prob(key_elbo)
+            # ==== Inlined InjectiveLift.sample_and_log_prob ====
+            k1, k2 = jax.random.split(key_elbo)
+
+            # Sample from latent flow: z ~ q_flow(z)
+            z = flow.sample(k1, sample_shape=())  # (d_latent,)
+            logq_z = flow.log_prob(z)  # scalar
+
+            # Orthogonal noise: eps ~ N(0, sigma_perp^2 I)
+            E_perp = lift_consts["E_perp"]
+            d_perp = E_perp.shape[1]
+            if d_perp > 0:
+                eps = jax.random.normal(k2, (d_perp,))
+                perp_component = E_perp @ (lift_consts["sigma_perp"] * eps)
+            else:
+                perp_component = 0.0
+
+            # Lift to parameter space: w = w* + D^{-1/2}(U@z + E_perp@eps)
+            w_flat = (
+                lift_consts["wstar"] +
+                lift_consts["D_inv_sqrt"] * (lift_consts["U"] @ z + perp_component)
+            )
+
+            # Log-determinant of block-triangular Jacobian
+            logdet = jnp.sum(jnp.log(lift_consts["D_inv_sqrt"]))
+            if d_perp > 0:
+                logdet = logdet + d_perp * jnp.log(lift_consts["sigma_perp"])
+
+            logq = logq_z + logdet
+            # ==== end inline ====
+
             w = unravel_fn(w_flat)
 
             # Compute log p(w) = -nβ L_batch - γ/2 ||w - w*||²
-            # Use minibatch scaling: E[L_batch] ≈ L_full
             Ln_batch = loss_batch_fn(w, Xb, Yb)
             localizer = 0.5 * gamma_val * jnp.sum((w_flat - wstar_flat) ** 2)
             logp = -(beta_tilde * Ln_batch + localizer)
@@ -274,23 +309,21 @@ def build_flow_elbo_step(
             return -(logp - logq)
 
         # Compute gradients w.r.t. flow params only
-        flow_params = dist.flow
         loss_val, grads = jax.value_and_grad(neg_elbo)(flow_params)
+
+        # Compute grad norm before clipping
+        grad_norm = optax.global_norm(grads)
 
         # Optional gradient clipping
         if clip_global_norm is not None:
-            grads, grad_norm = optax.clip_by_global_norm(clip_global_norm).update(
+            clipped, _ = optax.clip_by_global_norm(clip_global_norm).update(
                 grads, opt_state, flow_params
             )
-        else:
-            grad_norm = optax.global_norm(grads)
+            grads = clipped
 
         # Optax update
         updates, new_opt_state = optimizer.update(grads, opt_state, flow_params)
         new_flow_params = optax.apply_updates(flow_params, updates)
-
-        # Rebuild dist
-        new_dist = eqx.tree_at(lambda d: d.flow, dist, new_flow_params)
 
         # Metrics
         work_fge = jnp.asarray(batch_size / float(n_data), dtype=jnp.float64)
@@ -300,7 +333,7 @@ def build_flow_elbo_step(
             "work_fge": work_fge,  # FGE accounting (minibatch/n_data)
         }
 
-        return (new_dist, new_opt_state), metrics
+        return (new_flow_params, new_opt_state), metrics
 
     return step_fn
 
@@ -450,6 +483,18 @@ class _FlowAlgorithm:
             flow_hidden=vi_cfg.flow_hidden,
         )
 
+        # Partition flow into (params, static) to avoid carrying PjitFunctions through scan
+        flow_params, flow_static = eqx.partition(dist.flow, eqx.is_array)
+
+        # Collect lifting constants (non-trainable, stay outside scan)
+        lift_consts = {
+            "U": dist.U,
+            "E_perp": dist.E_perp,
+            "D_inv_sqrt": dist.D_inv_sqrt,
+            "sigma_perp": dist.sigma_perp,
+            "wstar": dist.wstar,
+        }
+
         # Build optimizer (reuse MFA's lr_schedule logic)
         if vi_cfg.lr_schedule == "cosine":
             lr_sched = optax.cosine_decay_schedule(
@@ -481,9 +526,9 @@ class _FlowAlgorithm:
             lr_final = lr_sched
 
         optimizer = optax.adam(learning_rate=lr_final)
-        opt_state = optimizer.init(dist.flow)
+        opt_state = optimizer.init(flow_params)  # Initialize on flow_params only
 
-        # Build ELBO step
+        # Build ELBO step (now takes flow_static and lift_consts)
         step_fn = build_flow_elbo_step(
             loss_batch_fn=loss_batch_fn,
             data=(X, Y),
@@ -495,25 +540,31 @@ class _FlowAlgorithm:
             batch_size=vi_cfg.batch_size,
             optimizer=optimizer,
             clip_global_norm=vi_cfg.clip_global_norm,
+            flow_static=flow_static,
+            lift_consts=lift_consts,
         )
 
-        # Training loop with jax.lax.scan
+        # Training loop with jax.lax.scan (carry only arrays)
         def scan_body(carry, step_idx):
-            dist, opt_state, key, cumulative_fge = carry
+            flow_params, opt_state, key, cumulative_fge = carry
             key, subkey = jax.random.split(key)
-            (new_dist, new_opt_state), metrics = step_fn(subkey, dist, opt_state, step_idx)
+            (new_params, new_opt_state), metrics = step_fn(subkey, flow_params, opt_state, step_idx)
             # Accumulate FGE
             new_fge = cumulative_fge + metrics["work_fge"]
             metrics_with_fge = {**metrics, "cumulative_fge": new_fge}
-            new_carry = (new_dist, new_opt_state, key, new_fge)
+            new_carry = (new_params, new_opt_state, key, new_fge)
             return new_carry, metrics_with_fge
 
-        # Initialize and run scan
+        # Initialize and run scan (carry: flow_params, opt_state, rng, fge)
         t0 = time.time()
-        carry_init = (dist, opt_state, key_train, jnp.array(0.0, dtype=jnp.float64))
+        carry_init = (flow_params, opt_state, key_train, jnp.array(0.0, dtype=jnp.float64))
         step_indices = jnp.arange(vi_cfg.steps)
-        (dist_final, _, _, _), trace_dict = jax.lax.scan(scan_body, carry_init, step_indices)
+        (flow_params_final, _, _, _), trace_dict = jax.lax.scan(scan_body, carry_init, step_indices)
         train_time = time.time() - t0
+
+        # Rebuild final distribution from trained params
+        flow_final = eqx.combine(flow_params_final, flow_static)
+        dist_final = InjectiveLift(flow=flow_final, **lift_consts)
 
         # Final LLC estimation
         t0_eval = time.time()
