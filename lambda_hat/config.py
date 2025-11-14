@@ -164,6 +164,12 @@ class VIConfig:
     lr_schedule: Optional[str] = None  # "cosine"|"linear_decay" learning rate schedule
     lr_warmup_frac: float = 0.05  # fraction of steps for warmup
     entropy_bonus: float = 0.0  # add λ * H(q) to ELBO for exploration
+    # Flow-specific Configuration (Stage 3) - only used when algo="flow"
+    d_latent: int = 8  # latent dimension for normalizing flow
+    sigma_perp: float = 1e-3  # orthogonal noise scale for manifold-plus-noise map
+    flow_depth: int = 4  # number of flow transformations (coupling layers)
+    flow_hidden: list[int] = field(default_factory=lambda: [64, 64])  # hidden layer sizes
+    flow_type: str = "realnvp"  # flow architecture: "realnvp"|"maf"|"nsf_ar"
 
 
 @dataclass

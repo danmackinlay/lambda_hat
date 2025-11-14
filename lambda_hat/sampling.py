@@ -827,36 +827,79 @@ def run_vi(
     # Run VI fitting and estimation for each chain
     chain_keys = jax.random.split(rng_key, num_chains)
 
-    def run_one_chain(chain_key):
-        return vi.fit_vi_and_estimate_lambda(
-            rng_key=chain_key,
-            loss_batch_fn=loss_batch_fn,
-            loss_full_fn=loss_full_fn,
-            wstar_flat=params_flat,
-            unravel_fn=unravel_fn,
-            data=data,
-            n_data=n_data,
-            beta=beta,
-            gamma=gamma,
-            M=config.M,
-            r=config.r,
-            steps=config.steps,
-            batch_size=config.batch_size,
-            lr=config.lr,
-            eval_samples=config.eval_samples,
-            whitener=whitener,
-            clip_global_norm=config.clip_global_norm,
-            alpha_temperature=config.alpha_temperature,
-            entropy_bonus=config.entropy_bonus,
-            alpha_dirichlet_prior=config.alpha_dirichlet_prior,
-            r_per_component=config.r_per_component,
-            lr_schedule=config.lr_schedule,
-            lr_warmup_frac=config.lr_warmup_frac,
-        )
+    # Dispatch to algorithm based on config.algo
+    if config.algo == "mfa":
+        # MFA path (keep existing optimized implementation)
+        def run_one_chain(chain_key):
+            return vi.fit_vi_and_estimate_lambda(
+                rng_key=chain_key,
+                loss_batch_fn=loss_batch_fn,
+                loss_full_fn=loss_full_fn,
+                wstar_flat=params_flat,
+                unravel_fn=unravel_fn,
+                data=data,
+                n_data=n_data,
+                beta=beta,
+                gamma=gamma,
+                M=config.M,
+                r=config.r,
+                steps=config.steps,
+                batch_size=config.batch_size,
+                lr=config.lr,
+                eval_samples=config.eval_samples,
+                whitener=whitener,
+                clip_global_norm=config.clip_global_norm,
+                alpha_temperature=config.alpha_temperature,
+                entropy_bonus=config.entropy_bonus,
+                alpha_dirichlet_prior=config.alpha_dirichlet_prior,
+                r_per_component=config.r_per_component,
+                lr_schedule=config.lr_schedule,
+                lr_warmup_frac=config.lr_warmup_frac,
+            )
 
-    # Vmap across chains: returns (lambda_hats, all_traces, all_extras)
-    results = jax.vmap(run_one_chain)(chain_keys)
-    lambda_hats, all_traces, all_extras = results
+        # Vmap across chains: returns (lambda_hats, all_traces, all_extras)
+        results = jax.vmap(run_one_chain)(chain_keys)
+        lambda_hats, all_traces, all_extras = results
+
+    elif config.algo == "flow":
+        # Flow path (uses VIAlgorithm protocol via registry)
+        algo = vi.get(config.algo)
+
+        def run_one_chain(chain_key):
+            result = algo.run(
+                rng_key=chain_key,
+                loss_batch_fn=loss_batch_fn,
+                loss_full_fn=loss_full_fn,
+                wstar_flat=params_flat,
+                unravel_fn=unravel_fn,
+                data=data,
+                n_data=n_data,
+                beta=beta,
+                gamma=gamma,
+                vi_cfg=config,
+            )
+            # Flow returns dict; convert to MFA's tuple format for compatibility
+            # MFA format: (lambda_hat, traces, extras)
+            lambda_hat = result["lambda_hat"]
+            traces = result["traces"]
+            # Build minimal extras dict for downstream processing
+            extras = {
+                "Eq_Ln": result["extras"]["E_L"],
+                "Ln_wstar": result["extras"]["L0"],
+                "cv_info": {
+                    "Eq_Ln_mc": result["extras"]["E_L"],
+                    "Eq_Ln_cv": result["extras"]["E_L"],  # Flow has no HVP CV
+                    "variance_reduction": 1.0,  # No CV = no variance reduction
+                },
+            }
+            return (lambda_hat, traces, extras)
+
+        # Vmap across chains
+        results = jax.vmap(run_one_chain)(chain_keys)
+        lambda_hats, all_traces, all_extras = results
+
+    else:
+        raise ValueError(f"Unknown VI algorithm '{config.algo}'. Supported: 'mfa', 'flow'")
 
     # Ensure computation is complete
     jax.block_until_ready(results)

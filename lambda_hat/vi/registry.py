@@ -31,6 +31,14 @@ def get(name: str) -> VIAlgorithm:
     Raises:
         ValueError: If algorithm name is not registered
     """
+    # Lazy-load flow on first access to avoid requiring flowjax
+    if name == "flow" and name not in _REGISTRY:
+        try:
+            from lambda_hat.vi import flow  # noqa: F401
+        except ImportError:
+            # flow.py will raise a better error message when run() is called
+            pass
+
     if name not in _REGISTRY:
         available = sorted(_REGISTRY.keys())
         raise ValueError(f"Unknown VI algorithm '{name}'. Available algorithms: {available}")
@@ -39,4 +47,5 @@ def get(name: str) -> VIAlgorithm:
 
 # Import algorithm modules to trigger registration
 # This must come after the registry functions are defined
-from lambda_hat.vi import flow, mfa  # noqa: E402, F401
+# Note: flow is imported lazily in get() to avoid requiring flowjax
+from lambda_hat.vi import mfa  # noqa: E402, F401

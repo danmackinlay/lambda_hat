@@ -11,6 +11,7 @@ Minimal rules for this repo. Deviations break CI.
 ```bash
 uv sync --extra cpu        # CPU/macOS
 uv sync --extra cuda12     # CUDA 12 (Linux)
+uv sync --extra flowvi     # Add FlowJAX for flow-based VI (optional)
 ```
 
 ## Run (always via uv)
@@ -64,7 +65,12 @@ uv run ruff check --fix
 **Implemented**:
 - HMC, MCLMC: Full-batch MCMC with adaptation
 - SGLD: Stochastic gradient Langevin dynamics with Adam/RMSProp preconditioning
-- VI: Variational inference using mixture of factor analyzers with STL + Rao-Blackwellized gradients
+- VI: Variational inference with pluggable algorithms
+  - MFA (default): Mixture of factor analyzers with STL + Rao-Blackwellized gradients
+  - Flow: Normalizing flows via manifold-plus-noise construction (requires `--extra flowvi`)
+    - RealNVP coupling flow (default), MAF, or NSF architectures
+    - Low-rank latent space with orthogonal noise
+    - NOTE: HVP control variate deferred to future work
 
 
 ## API cheat-sheet  (use these, do not "upgrade" them)
