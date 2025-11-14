@@ -158,6 +158,61 @@ def main():
     idata.to_netcdf(run_dir / "trace.nc")
     (run_dir / "analysis.json").write_text(json.dumps(metrics, indent=2, sort_keys=True))
 
+    # TensorBoard logging (Stage 2) - VI only for now
+    if sampler_name == "vi" and hasattr(cfg.sampler.vi, "tensorboard") and cfg.sampler.vi.tensorboard:
+        from tensorboardX import SummaryWriter
+
+        tb_dir = run_dir / "diagnostics" / "tb"
+        tb_dir.mkdir(parents=True, exist_ok=True)
+        writer = SummaryWriter(str(tb_dir))
+
+        # Log scalar traces over optimization steps
+        num_chains, num_steps = traces["elbo"].shape
+        for step in range(num_steps):
+            # Average across chains for cleaner plots
+            writer.add_scalar("vi/elbo", float(traces["elbo"][:, step].mean()), step)
+            writer.add_scalar("vi/elbo_like", float(traces["elbo_like"][:, step].mean()), step)
+            writer.add_scalar("vi/logq", float(traces["logq"][:, step].mean()), step)
+            writer.add_scalar("vi/radius2", float(traces["radius2"][:, step].mean()), step)
+            writer.add_scalar("vi/resp_entropy", float(traces["resp_entropy"][:, step].mean()), step)
+            writer.add_scalar("vi/cumulative_fge", float(traces["cumulative_fge"][:, step].mean()), step)
+
+            # Control variate metrics (constant across steps, but log anyway)
+            if "Eq_Ln_mc" in traces:
+                writer.add_scalar("vi/Eq_Ln_mc", float(traces["Eq_Ln_mc"][:, step].mean()), step)
+            if "Eq_Ln_cv" in traces:
+                writer.add_scalar("vi/Eq_Ln_cv", float(traces["Eq_Ln_cv"][:, step].mean()), step)
+            if "variance_reduction" in traces:
+                writer.add_scalar("vi/variance_reduction", float(traces["variance_reduction"][:, step].mean()), step)
+
+            # Stage 2 enhanced diagnostics
+            if "pi_min" in traces:
+                writer.add_scalar("vi/pi_min", float(traces["pi_min"][:, step].mean()), step)
+                writer.add_scalar("vi/pi_max", float(traces["pi_max"][:, step].mean()), step)
+                writer.add_scalar("vi/pi_entropy", float(traces["pi_entropy"][:, step].mean()), step)
+            if "D_sqrt_min" in traces:
+                writer.add_scalar("vi/D_sqrt_min", float(traces["D_sqrt_min"][:, step].mean()), step)
+                writer.add_scalar("vi/D_sqrt_max", float(traces["D_sqrt_max"][:, step].mean()), step)
+                writer.add_scalar("vi/D_sqrt_med", float(traces["D_sqrt_med"][:, step].mean()), step)
+            if "grad_norm" in traces:
+                writer.add_scalar("vi/grad_norm", float(traces["grad_norm"][:, step].mean()), step)
+            if "A_col_norm_max" in traces:
+                writer.add_scalar("vi/A_col_norm_max", float(traces["A_col_norm_max"][:, step].mean()), step)
+
+        # Log final metrics
+        writer.add_scalar("vi/llc_mean", metrics["llc_mean"], num_steps)
+        writer.add_scalar("vi/L0", L0, num_steps)
+        if work:
+            if "lambda_hat_mean" in work:
+                writer.add_scalar("vi/lambda_hat_mean", work["lambda_hat_mean"], num_steps)
+            if "Eq_Ln_mean" in work:
+                writer.add_scalar("vi/Eq_Ln_final", work["Eq_Ln_mean"], num_steps)
+            if "Ln_wstar" in work:
+                writer.add_scalar("vi/Ln_wstar", work["Ln_wstar"], num_steps)
+
+        writer.close()
+        print(f"[sample] TensorBoard logs written to {tb_dir}")
+
     # Create diagnostic plots
     create_arviz_diagnostics({sampler_name: idata}, run_dir)
     create_combined_convergence_plot({sampler_name: idata}, run_dir)
