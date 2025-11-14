@@ -896,6 +896,15 @@ def run_vi(
         "Eq_Ln_mc": Eq_Ln_mc_trace,  # Raw MC estimate of E_q[L_n]
         "Eq_Ln_cv": Eq_Ln_cv_trace,  # CV-corrected estimate of E_q[L_n]
         "variance_reduction": var_red_trace,  # Variance reduction factor from CV
+        # Stage 2 enhanced diagnostics
+        "pi_min": all_traces["pi_min"],
+        "pi_max": all_traces["pi_max"],
+        "pi_entropy": all_traces["pi_entropy"],
+        "D_sqrt_min": all_traces["D_sqrt_min"],
+        "D_sqrt_max": all_traces["D_sqrt_max"],
+        "D_sqrt_med": all_traces["D_sqrt_med"],
+        "grad_norm": all_traces["grad_norm"],
+        "A_col_norm_max": all_traces["A_col_norm_max"],
     }
 
     timings = {

@@ -789,6 +789,15 @@ def fit_vi_and_estimate_lambda(
         "Ln_batch": trace_metrics["Ln_batch"],
         "resp_entropy": trace_metrics["resp_entropy"],  # Responsibility entropy (detects peaking)
         "cumulative_fge": trace_metrics["cumulative_fge"],
+        # Stage 2 enhanced diagnostics
+        "pi_min": trace_metrics["pi_min"],
+        "pi_max": trace_metrics["pi_max"],
+        "pi_entropy": trace_metrics["pi_entropy"],
+        "D_sqrt_min": trace_metrics["D_sqrt_min"],
+        "D_sqrt_max": trace_metrics["D_sqrt_max"],
+        "D_sqrt_med": trace_metrics["D_sqrt_med"],
+        "grad_norm": trace_metrics["grad_norm"],
+        "A_col_norm_max": trace_metrics["A_col_norm_max"],
     }
 
     extras = {
