@@ -458,6 +458,12 @@ class _FlowAlgorithm:
                 "Flow VI requires flowjax and equinox. Install with: uv sync --extra flowvi"
             ) from _IMPORT_ERROR
 
+        # Convert legacy PRNGKey to new RBG key format if needed
+        # (rng_key may come from jax.random.PRNGKey which has shape (2,), but RBG needs (4,))
+        if hasattr(rng_key, "shape") and rng_key.shape == (2,):
+            # Legacy key - wrap it for RBG
+            rng_key = jax.random.wrap_key_data(rng_key, impl="rbg")
+
         key_init, key_train, key_eval = jax.random.split(rng_key, 3)
 
         d = wstar_flat.size
