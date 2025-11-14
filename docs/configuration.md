@@ -1,12 +1,12 @@
 # Configuration Details
 
-This project uses **OmegaConf** to parse YAML configuration files, orchestrated by **Snakemake**.
-Configs are merged manually in the `Snakefile`.
+This project uses **OmegaConf** to parse YAML configuration files, orchestrated by **Parsl**.
+Configs are composed automatically by `lambda_hat.workflow_utils`.
 
 ## How Configs Are Composed
 
 - **Presets** live under `lambda_hat/conf/` (e.g., `model/base.yaml`, `data/small.yaml`).
-- The **`Snakefile`** merges presets to build two types of configs:
+- The **`workflow_utils`** module merges presets to build two types of configs:
   - **Stage A** (target build): `model` + `data` + `teacher` + `training`
   - **Stage B** (sampling run): `sampler` + `posterior` + target reference
 - **User experiments** are defined in `config/experiments.yaml`
@@ -35,15 +35,17 @@ samplers:
 Then run the full pipeline:
 
 ```bash
-# View the DAG
-uv run snakemake -n
+# Execute locally (testing)
+uv run python flows/parsl_llc.py --local
 
-# Execute locally with 4 cores
-uv run snakemake -j 4
+# Execute on SLURM cluster
+uv run python flows/parsl_llc.py --parsl-config parsl_config_slurm.py
 
-# Execute on HPC with a profile
-uv run snakemake --profile slurm -j 100
+# With optional promotion (gallery generation)
+uv run python flows/parsl_llc.py --local --promote
 ```
+
+See [Parallel Execution Guide](./parallelism.md) for detailed execution instructions.
 
 ## Configuration Groups
 
