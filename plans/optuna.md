@@ -1,3 +1,14 @@
+Here’s a design that gives you a *single, resumable, file‑backed* exploration loop that (a) generates multiple teacher/target problems, (b) computes a long‑run HMC reference per problem, and (c) *optimizes* SGLD, VI, and MCLMC hyperparameters to match that reference under a fixed wall‑time budget per run (100 minutes). It runs locally (laptop) and scales to SLURM/PBSPro with the same commands. No database daemons, minimal moving parts, and clean on‑disk bookkeeping.
+
+---
+
+## TL;DR architecture
+
+**One orchestrator process**
+
+* **Orchestrator (Python, long‑running, resumable)**
+  Uses an *ask‑and‑tell* Bayesian optimizer to propose batches of hyperparameters; materializes them as run directories; calls parsl to realize those runs; ingests finished metrics from disk; “tells” the optimizer; repeats until the budget is spent per problem/method.
+  (Optuna’s ask‑and‑tell fits perfectly and doesn’t require a DB; if you ever want multiprocess/multinode optimizers, Optuna’s *JournalStorage* is a file‑based NFS‑safe store, so still no DB process. ([optuna.readthedocs.io][1]))
 
 ---
 

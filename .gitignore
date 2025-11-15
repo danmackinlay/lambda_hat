@@ -11,10 +11,6 @@ wheels/
 .claude/
 .idea/
 
-# Slurm cruft
-slurm_logs/
-
-
 
 # Virtual environments
 .venv
@@ -31,6 +27,7 @@ results/
 temp_*
 test_*
 parsl_runinfo/
+logs/
 
 # Exception: tracked README example images
 !assets/readme/*.png

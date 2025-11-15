@@ -24,6 +24,7 @@ dependencies = [
     "numpy>=1.24.0",
     "omegaconf>=2.3.0",
     "optax>=0.2.5",
+    "optuna>=4.2.0",
     "pandas>=2.0.0",
     "parsl>=2024.11.18",
     "pyarrow>=14.0.0",
