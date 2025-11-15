@@ -12,7 +12,7 @@ from lambda_hat.config import validate_teacher_cfg
 from .config import Config
 from .data import make_dataset
 from .losses import as_dtype, make_loss_fns
-from .models import build_mlp_forward_fn, count_params, infer_widths
+from .nn_eqx import build_mlp, count_params, infer_widths
 from .training import train_erm
 
 
@@ -38,19 +38,19 @@ def make_loss_full(loss_fn: Callable) -> Callable:
 @dataclass
 class TargetBundle:
     d: int
-    params0: Dict[str, Any]  # Haiku params (single precision)
+    params0: Any  # Equinox model (ERM solution, single precision)
     # loss(params) -> scalar
-    loss_full: Callable[[Dict[str, Any]], jnp.ndarray]
-    loss_minibatch: Callable[[Dict[str, Any], jnp.ndarray, jnp.ndarray], jnp.ndarray]
+    loss_full: Callable[[Any], jnp.ndarray]
+    loss_minibatch: Callable[[Any, jnp.ndarray, jnp.ndarray], jnp.ndarray]
     # data for minibatching (single precision)
     X: jnp.ndarray
     Y: jnp.ndarray
     L0: float  # L_n at params0
-    # Haiku model for forward passes
+    # Model is now same as params0 for Equinox (kept for backward compat)
     model: Any
     # VI-specific fields (flattened params and unravel function)
     params0_flat: jnp.ndarray  # Flattened ERM solution
-    unravel_fn: Callable[[jnp.ndarray], Dict[str, Any]]  # flat -> pytree
+    unravel_fn: Callable[[jnp.ndarray], Any]  # flat -> pytree
 
 
 def build_target(key, cfg: Config) -> tuple[TargetBundle, list[int], list[int] | None]:
@@ -100,19 +100,18 @@ def build_target(key, cfg: Config) -> tuple[TargetBundle, list[int], list[int] |
         else:
             used_teacher_widths = None  # no teacher
 
-        model = build_mlp_forward_fn(
+        # Build Equinox model (model IS the params)
+        key, subkey = jax.random.split(key)
+        model = build_mlp(
             in_dim=m_cfg.in_dim,
             widths=used_model_widths,
             out_dim=m_cfg.out_dim,
             activation=m_cfg.activation,
             bias=m_cfg.bias,
-            init=m_cfg.init,
             layernorm=m_cfg.layernorm,
+            key=subkey,
         )
-
-        # Initialize parameters
-        key, subkey = jax.random.split(key)
-        params_init = model.init(subkey, X[:1])  # Use first data point for init
+        params_init = model  # For Equinox, model IS the params
 
         # Determine loss parameters explicitly (required for make_loss_fns)
         loss_type = cfg.posterior.loss
@@ -127,8 +126,10 @@ def build_target(key, cfg: Config) -> tuple[TargetBundle, list[int], list[int] |
         params_init_f32 = as_dtype(params_init, "float32")
 
         # Create F32 loss functions for training
+        # Equinox models are called directly: model(x), not model.apply(params, None, x)
+        predict_fn = lambda m, x: m(x)
         loss_full_f32, loss_minibatch_f32 = make_loss_fns(
-            model.apply,
+            predict_fn,
             X_f32,
             Y_f32,
             loss_type=loss_type,
@@ -166,7 +167,7 @@ def build_target(key, cfg: Config) -> tuple[TargetBundle, list[int], list[int] |
 
     elif target_name == "quadratic":
         # ----- Analytic diagnostic: L_n(θ) = 0.5 ||θ||^2 -----
-        # For quadratic target, we'll use a dummy Haiku model structure
+        # For quadratic target, we use a dummy PyTree params structure
         d = int(cfg.quad_dim or m_cfg.target_params or m_cfg.in_dim)
 
         # Create dummy params structure (single layer with d parameters) - f32 for efficiency

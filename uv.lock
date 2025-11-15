@@ -333,21 +333,6 @@ wheels = [
 ]
 
 [[package]]
-name = "dm-haiku"
-version = "0.0.15"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "absl-py" },
-    { name = "jmp" },
-    { name = "numpy" },
-    { name = "tabulate" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/8c/23/9ef52649e8da5771354d6916b420c065c5b551b10796b33949ad9419738b/dm_haiku-0.0.15.tar.gz", hash = "sha256:de08b3673d8ef1148daa5793653fbeb4e8d87de78164c4f6ecaca7c36eadfbb2", size = 262919, upload-time = "2025-09-18T14:58:37.314Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/c4/b2/6f8e3d6dda02e30fde68dbaf5cb09c98db0383a755c0c72c9d13064d3138/dm_haiku-0.0.15-py3-none-any.whl", hash = "sha256:bcdae40ae21ada79b9295e961fb5e9f212440aaf690238011ee3956aaf2566c6", size = 374099, upload-time = "2025-09-18T14:58:36.055Z" },
-]
-
-[[package]]
 name = "docutils"
 version = "0.22"
 source = { registry = "https://pypi.org/simple" }
@@ -728,18 +713,6 @@ wheels = [
 ]
 
 [[package]]
-name = "jmp"
-version = "0.0.4"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "numpy" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/ab/b0/e90fbbffef4b345329c878a69f0336d3edc5a1f9fcba193931aca2132d62/jmp-0.0.4.tar.gz", hash = "sha256:5dfeb0fd7c7a9f72a70fff0aab9d0cbfae32a809c02f4037ff3485ceb33e1730", size = 18582, upload-time = "2023-01-30T12:47:13.634Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/27/e5/cce82de2831e5aff9332d8d624bb57188f1b2af6ccf6979caf898a8a4348/jmp-0.0.4-py3-none-any.whl", hash = "sha256:6aa7adbddf2bd574b28c7faf6e81a735eb11f53386447896909c6968dc36807d", size = 18274, upload-time = "2023-01-30T12:47:11.931Z" },
-]
-
-[[package]]
 name = "kiwisolver"
 version = "1.4.9"
 source = { registry = "https://pypi.org/simple" }
@@ -786,7 +759,7 @@ dependencies = [
     { name = "arviz" },
     { name = "blackjax" },
     { name = "cookiecutter" },
-    { name = "dm-haiku" },
+    { name = "equinox" },
     { name = "flax" },
     { name = "matplotlib" },
     { name = "numpy" },
@@ -809,7 +782,6 @@ cuda12 = [
     { name = "jax", extra = ["cuda12-local"] },
 ]
 flowvi = [
-    { name = "equinox" },
     { name = "flowjax" },
 ]
 
@@ -826,8 +798,7 @@ requires-dist = [
     { name = "arviz", specifier = "~=0.22.0" },
     { name = "blackjax", specifier = "==1.2.5" },
     { name = "cookiecutter", specifier = ">=2.6.0" },
-    { name = "dm-haiku", specifier = ">=0.0.10" },
-    { name = "equinox", marker = "extra == 'flowvi'", specifier = ">=0.13.1" },
+    { name = "equinox", specifier = ">=0.13.1" },
     { name = "flax", specifier = ">=0.12.0" },
     { name = "flowjax", marker = "extra == 'flowvi'", specifier = ">=0.11.0" },
     { name = "jax", marker = "extra == 'cpu'", specifier = "~=0.7.2" },
@@ -1773,15 +1744,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/15/b9/cc3017f9a9c9b6e27c5106cc10cc7904653c3eec0729793aec10479dd669/starlette-0.47.3.tar.gz", hash = "sha256:6bc94f839cc176c4858894f1f8908f0ab79dfec1a6b8402f6da9be26ebea52e9", size = 2584144, upload-time = "2025-08-24T13:36:42.122Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/ce/fd/901cfa59aaa5b30a99e16876f11abe38b59a1a2c51ffb3d7142bb6089069/starlette-0.47.3-py3-none-any.whl", hash = "sha256:89c0778ca62a76b826101e7c709e70680a1699ca7da6b44d38eb0a7e61fe4b51", size = 72991, upload-time = "2025-08-24T13:36:40.887Z" },
-]
-
-[[package]]
-name = "tabulate"
-version = "0.9.0"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/ec/fe/802052aecb21e3797b8f7902564ab6ea0d60ff8ca23952079064155d1ae1/tabulate-0.9.0.tar.gz", hash = "sha256:0095b12bf5966de529c0feb1fa08671671b3368eec77d7ef7ab114be2c068b3c", size = 81090, upload-time = "2022-10-06T17:21:48.54Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/40/44/4a5f08c96eb108af5cb50b41f76142f0afa346dfa99d5296fe7202a11854/tabulate-0.9.0-py3-none-any.whl", hash = "sha256:024ca478df22e9340661486f85298cff5f6dcdba14f3813e8830015b9ed1948f", size = 35252, upload-time = "2022-10-06T17:21:44.262Z" },
 ]
 
 [[package]]

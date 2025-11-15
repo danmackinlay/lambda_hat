@@ -6,6 +6,8 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Any, Dict
 
+import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 
@@ -34,63 +36,84 @@ def _ensure_dir(p: Path) -> None:
     p.mkdir(parents=True, exist_ok=True)
 
 
-# ---------- Serialization for Haiku params (Flat NPZ) ----------
-
-# Use '::' as a separator, as it's highly unlikely in module/param names.
-_NPZ_SEP = "::"
+# ---------- Serialization for Equinox models ----------
 
 
-def _flatten_params_dict(params: Dict[str, Any]) -> Dict[str, np.ndarray]:
-    """Converts Haiku params {'module': {'param': arr}} to flat NPZ format."""
-    flat = {}
-    # params is {'module_name': {'param_name': array}, ...}
-    for module_name, module_params in params.items():
-        # Ensure module_params is a dictionary (Haiku invariant for parameters)
-        if not isinstance(module_params, dict):
-            continue
+def _serialize_model(model: Any, path: Path) -> None:
+    """Serialize an Equinox model to disk.
 
-        for param_name, param_value in module_params.items():
-            # Basic check that the leaf is an array-like object
-            if hasattr(param_value, "shape"):
-                key = f"{module_name}{_NPZ_SEP}{param_name}"
-                flat[key] = np.asarray(param_value)  # move to host np
-            else:
-                print(
-                    f"Warning: Skipping non-array parameter during save: {module_name}/{param_name}"
-                )
-    return flat
+    Args:
+        model: Equinox module to serialize
+        path: Directory to write model files (params.eqx + static.eqx)
+    """
+    path.mkdir(parents=True, exist_ok=True)
 
+    # Split into trainable parameters and static structure
+    params, static = eqx.partition(model, eqx.is_array)
 
-def _unflatten_params_dict(flat: Dict[str, np.ndarray]) -> Dict[str, Any]:
-    """Converts flat NPZ format back to Haiku params structure."""
-    params: Dict[str, Dict[str, Any]] = {}
-    # flat is {'module_name::param_name': array, ...}
-    for key, value in flat.items():
-        if _NPZ_SEP not in key:
-            # Since backwards compatibility is not required, we fail fast on old formats.
-            raise ValueError(
-                f"Invalid key format in NPZ: {key}. Expected 'module::param'. "
-                f"Artifact may be legacy format."
-            )
+    # Save parameters (arrays)
+    with open(path / "params.eqx", "wb") as f:
+        eqx.tree_serialise_leaves(f, params)
 
-        module_name, param_name = key.split(_NPZ_SEP, 1)
-        if module_name not in params:
-            params[module_name] = {}
-        params[module_name][param_name] = jnp.asarray(value)  # Move back to JAX array
-    return params
+    # Save static structure
+    with open(path / "static.eqx", "wb") as f:
+        eqx.tree_serialise_leaves(f, static)
 
 
-def _hash_arrays(flat: Dict[str, np.ndarray]) -> str:
-    # Order by key for deterministic hashing.
-    items = [(k, flat[k]) for k in sorted(flat)]
-    # Hash concatenated bytes with shapes/dtypes so collisions are unlikely.
+def _deserialize_model(model_template: Any, path: Path) -> Any:
+    """Deserialize an Equinox model from disk.
+
+    Args:
+        model_template: Equinox module with correct structure (shapes only)
+        path: Directory containing model files (params.eqx + static.eqx)
+
+    Returns:
+        Reconstructed Equinox module
+    """
+    # Split template into params and static
+    params, static = eqx.partition(model_template, eqx.is_array)
+
+    # Load parameters
+    with open(path / "params.eqx", "rb") as f:
+        params = eqx.tree_deserialise_leaves(f, params)
+
+    # Load static structure
+    with open(path / "static.eqx", "rb") as f:
+        static = eqx.tree_deserialise_leaves(f, static)
+
+    # Combine and return
+    return eqx.combine(params, static)
+
+
+def _check_legacy_format(path: Path) -> bool:
+    """Check if directory contains legacy Haiku format artifacts."""
+    npz_params = path / "params.npz"
+    eqx_params = path / "params.eqx"
+
+    if npz_params.exists() and not eqx_params.exists():
+        return True
+    return False
+
+
+def _hash_model(model: Any) -> str:
+    """Hash an Equinox model for deterministic artifact tracking.
+
+    Args:
+        model: Equinox module to hash
+
+    Returns:
+        SHA256 hash string
+    """
+    params, _ = eqx.partition(model, eqx.is_array)
+    leaves = jax.tree.leaves(params)
 
     h = sha256()
-    for k, arr in items:
-        h.update(k.encode())
-        h.update(str(arr.shape).encode())
-        h.update(str(arr.dtype).encode())
-        h.update(arr.tobytes(order="C"))
+    for arr in leaves:
+        arr_np = np.asarray(arr)
+        h.update(str(arr_np.shape).encode())
+        h.update(str(arr_np.dtype).encode())
+        h.update(arr_np.tobytes(order="C"))
+
     return "sha256:" + h.hexdigest()
 
 
@@ -98,18 +121,25 @@ def _hash_arrays(flat: Dict[str, np.ndarray]) -> str:
 
 
 def save_target_artifact_explicit(out_dir, X, Y, params0, meta):
-    """Save target artifact to explicit directory"""
+    """Save target artifact to explicit directory.
+
+    Args:
+        out_dir: Output directory path
+        X: Input data array
+        Y: Target data array
+        params0: Equinox model (ERM solution)
+        meta: TargetMeta metadata object
+    """
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    # Arrays
+    # Arrays (data)
     np.savez_compressed(out_dir / "data.npz", X=np.asarray(X), Y=np.asarray(Y))
 
-    # Params
-    flat = _flatten_params_dict(params0)
-    np.savez_compressed(out_dir / "params.npz", **flat)
+    # Model (Equinox format)
+    _serialize_model(params0, out_dir)
 
-    # Meta
+    # Metadata
     with open(out_dir / "meta.json", "w") as f:
         json.dump(asdict(meta), f, indent=2, sort_keys=True)
 
@@ -117,23 +147,50 @@ def save_target_artifact_explicit(out_dir, X, Y, params0, meta):
 
 
 # Optional explicit loader for target dir
-def load_target_artifact_from_dir(target_dir):
-    """Load target artifact directly from target directory."""
+def load_target_artifact_from_dir(target_dir, model_template=None):
+    """Load target artifact directly from target directory.
+
+    Args:
+        target_dir: Path to target directory
+        model_template: Equinox model template for reconstruction (required for new format)
+
+    Returns:
+        Tuple of (X, Y, model, meta_dict, target_dir)
+
+    Raises:
+        ValueError: If legacy Haiku format detected
+        FileNotFoundError: If target directory doesn't exist
+    """
     target_dir = Path(target_dir)
     if not target_dir.exists():
         raise FileNotFoundError(f"Target directory not found: {target_dir}")
 
+    # Check for legacy format
+    if _check_legacy_format(target_dir):
+        raise ValueError(
+            f"Legacy Haiku format detected at {target_dir}. "
+            f"This artifact uses the old params.npz format. "
+            f"Please rebuild the target with the new Equinox-based code."
+        )
+
+    # Load data
     data = np.load(target_dir / "data.npz")
     X, Y = data["X"], data["Y"]
 
-    pz = np.load(target_dir / "params.npz")
-    flat = {k: pz[k] for k in pz.files}
-    params = _unflatten_params_dict(flat)
-
+    # Load metadata
     with open(target_dir / "meta.json") as f:
         meta = json.load(f)
 
-    return X, Y, params, meta, target_dir
+    # Load Equinox model
+    if model_template is None:
+        raise ValueError(
+            "model_template is required to load Equinox models. "
+            "Build a model with the same architecture from metadata, then pass it here."
+        )
+
+    model = _deserialize_model(model_template, target_dir)
+
+    return X, Y, model, meta, target_dir
 
 
 def save_target_artifact(
@@ -141,22 +198,32 @@ def save_target_artifact(
     target_id: str,
     X: np.ndarray,
     Y: np.ndarray,
-    params: Dict[str, Any],
+    params: Any,  # Equinox model
     meta: TargetMeta,
 ) -> Path:
-    """Writes X, Y, params, meta under runs/targets/<target_id>."""
+    """Writes X, Y, model, meta under runs/targets/<target_id>.
+
+    Args:
+        root: Root directory for artifacts
+        target_id: Target identifier
+        X: Input data
+        Y: Target data
+        params: Equinox model (ERM solution)
+        meta: Target metadata
+
+    Returns:
+        Path to target directory
+    """
     tdir = Path(root) / "targets" / target_id
     _ensure_dir(tdir)
 
-    # Arrays
+    # Arrays (data)
     np.savez_compressed(tdir / "data.npz", X=np.asarray(X), Y=np.asarray(Y))
 
-    # Params
-    flat = _flatten_params_dict(params)
-    # Store as a single NPZ; keys are parameter paths.
-    np.savez_compressed(tdir / "params.npz", **flat)
+    # Model (Equinox format)
+    _serialize_model(params, tdir)
 
-    # Meta
+    # Metadata
     with open(tdir / "meta.json", "w") as f:
         json.dump(asdict(meta), f, indent=2, sort_keys=True)
 
@@ -166,8 +233,21 @@ def save_target_artifact(
     return tdir
 
 
-def load_target_artifact(root: str | Path, target_id_or_path: str | Path):
-    """Returns (X, Y, params, meta_dict, tdir Path)."""
+def load_target_artifact(root: str | Path, target_id_or_path: str | Path, model_template=None):
+    """Load target artifact (data + model + metadata).
+
+    Args:
+        root: Root directory for artifacts
+        target_id_or_path: Target ID or full path to target directory
+        model_template: Equinox model template for reconstruction (required)
+
+    Returns:
+        Tuple of (X, Y, model, meta_dict, tdir Path)
+
+    Raises:
+        ValueError: If legacy Haiku format detected or model_template not provided
+        FileNotFoundError: If target not found
+    """
     # Resolve id/path
     tdir = Path(target_id_or_path)
     if not tdir.exists():
@@ -175,17 +255,32 @@ def load_target_artifact(root: str | Path, target_id_or_path: str | Path):
     if not tdir.exists():
         raise FileNotFoundError(f"Target not found: {target_id_or_path}")
 
+    # Check for legacy format
+    if _check_legacy_format(tdir):
+        raise ValueError(
+            f"Legacy Haiku format detected at {tdir}. "
+            f"This artifact uses the old params.npz format. "
+            f"Please rebuild the target with the new Equinox-based code."
+        )
+
+    # Load data
     data = np.load(tdir / "data.npz")
     X, Y = data["X"], data["Y"]
 
-    pz = np.load(tdir / "params.npz")
-    flat = {k: pz[k] for k in pz.files}
-    params = _unflatten_params_dict(flat)
-
+    # Load metadata
     with open(tdir / "meta.json") as f:
         meta = json.load(f)
 
-    return X, Y, params, meta, tdir
+    # Load Equinox model
+    if model_template is None:
+        raise ValueError(
+            "model_template is required to load Equinox models. "
+            "Build a model with the same architecture from metadata, then pass it here."
+        )
+
+    model = _deserialize_model(model_template, tdir)
+
+    return X, Y, model, meta, tdir
 
 
 def _append_catalog(root: Path, meta: TargetMeta):
