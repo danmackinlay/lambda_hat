@@ -15,10 +15,6 @@ wheels/
 slurm_logs/
 
 
-# Snakemake
-.snakemake/
-logs/
-temp_config/
 
 # Virtual environments
 .venv

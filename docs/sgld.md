@@ -22,7 +22,7 @@ samplers:
 
 Then execute:
 ```bash
-uv run python flows/parsl_llc.py --local
+uv run python workflows/parsl_llc.py --local
 ```
 
 ## Configuration Options

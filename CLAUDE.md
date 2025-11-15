@@ -29,13 +29,13 @@ uv run lambda-hat-promote      --help
 
 ```bash
 # Local execution (testing)
-uv run python flows/parsl_llc.py --local
+uv run python workflows/parsl_llc.py --local
 
 # SLURM cluster execution
-uv run python flows/parsl_llc.py --parsl-config parsl_config_slurm.py
+uv run python workflows/parsl_llc.py --parsl-config parsl_config_slurm.py
 
 # Custom config
-uv run python flows/parsl_llc.py --config config/experiments.yaml
+uv run python workflows/parsl_llc.py --config config/experiments.yaml
 ```
 
 ## Testing & Lint

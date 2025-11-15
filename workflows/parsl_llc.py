@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 """Parsl workflow for Lambda-Hat: N targets × M samplers with optional promotion.
 
-Replaces Snakemake with Python-native DAG execution.
-
 Stages:
   A. Build targets (neural networks + datasets)
   B. Run samplers (MCMC/VI) for each target
@@ -10,10 +8,10 @@ Stages:
 
 Usage:
   # Local testing (no promotion)
-  python flows/parsl_llc.py --config config/experiments.yaml --local
+  python workflows/parsl_llc.py --config config/experiments.yaml --local
 
   # SLURM cluster with promotion
-  python flows/parsl_llc.py --config config/experiments.yaml \\
+  python workflows/parsl_llc.py --config config/experiments.yaml \\
       --parsl-config parsl_config_slurm.py --promote
 """
 

@@ -116,7 +116,6 @@ def main():
         hostname=cfg.runtime.hostname,
     )
 
-    # Write exactly where Snakemake told us
     save_target_artifact_explicit(args.target_dir, X, Y, theta, meta)
     print(f"[build-target] wrote {args.target_dir}")
     print(f"[build-target] L0 = {L0:.6f}")

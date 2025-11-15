@@ -3,7 +3,7 @@
 
 # Unified Workflow Configuration for N x M Sweeps
 
-# NOTE: This file is consumed via OmegaConf mergers from the Snakefile 
+# NOTE: This file is consumed via OmegaConf mergers from the Snakefile
 
 # --- Shared Config ---
 jax:
@@ -50,5 +50,3 @@ training:
 
 # Teacher configuration is loaded via config group defaults (teacher: _null)
 
-# --- Dynamic Target ID Resolution ---
-# Target ID will be passed from Snakemake

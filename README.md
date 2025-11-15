@@ -137,10 +137,10 @@ We use **Parsl** for the full pipeline. Parsl provides Python-native DAG executi
 
 ```bash
 # Run locally (uses ThreadPoolExecutor)
-uv run python flows/parsl_llc.py --local
+uv run python workflows/parsl_llc.py --local
 
 # Run locally with promotion (generates galleries)
-uv run python flows/parsl_llc.py --local --promote
+uv run python workflows/parsl_llc.py --local --promote
 ```
 
 ### Editing experiments
@@ -154,10 +154,10 @@ Promotion generates asset galleries from sampling runs. It's opt-in via the `--p
 
 ```bash
 # Run workflow with promotion
-uv run python flows/parsl_llc.py --local --promote
+uv run python workflows/parsl_llc.py --local --promote
 
 # Specify which plots to promote
-uv run python flows/parsl_llc.py --local --promote \
+uv run python workflows/parsl_llc.py --local --promote \
     --promote-plots trace.png,llc_convergence_combined.png
 ```
 
@@ -167,17 +167,11 @@ For SLURM clusters, use the SLURM Parsl config:
 
 ```bash
 # Run on SLURM cluster (auto-scales 0-50 jobs)
-uv run python flows/parsl_llc.py --parsl-config parsl_config_slurm.py
+uv run python workflows/parsl_llc.py --parsl-config parsl_config_slurm.py
 
 # Customize Parsl config
 # Edit parsl_config_slurm.py to adjust partition, walltime, resources
 ```
-
-**Key differences from Snakemake:**
-- Explicit dependencies via Python futures instead of implicit file-based rules
-- All orchestration logic in Python (flows/parsl_llc.py)
-- Direct control over parallelism and job submission
-- Easier parameter sweeps and dynamic workflows
 
 ---
 

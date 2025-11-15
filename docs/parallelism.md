@@ -27,10 +27,10 @@ Run the workflow locally using ThreadPoolExecutor:
 
 ```bash
 # Run locally (uses up to 8 CPU cores by default)
-uv run python flows/parsl_llc.py --local
+uv run python workflows/parsl_llc.py --local
 
 # With promotion enabled
-uv run python flows/parsl_llc.py --local --promote
+uv run python workflows/parsl_llc.py --local --promote
 ```
 
 ### Controlling Parallelism
@@ -85,10 +85,10 @@ Run the workflow on a SLURM cluster:
 
 ```bash
 # Submit workflow to SLURM
-uv run python flows/parsl_llc.py --parsl-config parsl_config_slurm.py
+uv run python workflows/parsl_llc.py --parsl-config parsl_config_slurm.py
 
 # With promotion
-uv run python flows/parsl_llc.py --parsl-config parsl_config_slurm.py --promote
+uv run python workflows/parsl_llc.py --parsl-config parsl_config_slurm.py --promote
 ```
 
 **How it works:**
@@ -275,26 +275,6 @@ jupyter notebook  # Load and analyze parquet file
 - Small model (d=50): ~2-4 GB
 - Base model (d=500): ~8-16 GB
 - Large model (d=5000): ~32-64 GB
-
----
-
-## Comparison with Snakemake
-
-If you're familiar with Snakemake, here are the key differences:
-
-| Aspect | Snakemake | Parsl |
-|--------|-----------|-------|
-| DAG Definition | Implicit (file-based rules) | Explicit (Python futures) |
-| Parallelism | `-j N` flag | Config `max_workers`/`max_blocks` |
-| HPC Submission | Profiles (YAML) | Provider config (Python) |
-| Dependency | File existence | Future completion |
-| Debugging | Check logs + Snakemake DAG | Check logs + Python tracebacks |
-
-**Why Parsl?**
-- Python-native: all logic in Python, easier to reason about
-- Dynamic workflows: easier to add conditional logic
-- Explicit dependencies: clearer what depends on what
-- Better for parameter sweeps: just Python loops over configs
 
 ---
 

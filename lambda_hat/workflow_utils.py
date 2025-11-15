@@ -1,6 +1,4 @@
 """Workflow utilities for target/run ID computation and config composition.
-
-Extracted from Snakefile to support both Snakemake and Parsl workflows.
 """
 
 import hashlib

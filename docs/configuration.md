@@ -36,13 +36,13 @@ Then run the full pipeline:
 
 ```bash
 # Execute locally (testing)
-uv run python flows/parsl_llc.py --local
+uv run python workflows/parsl_llc.py --local
 
 # Execute on SLURM cluster
-uv run python flows/parsl_llc.py --parsl-config parsl_config_slurm.py
+uv run python workflows/parsl_llc.py --parsl-config parsl_config_slurm.py
 
 # With optional promotion (gallery generation)
-uv run python flows/parsl_llc.py --local --promote
+uv run python workflows/parsl_llc.py --local --promote
 ```
 
 See [Parallel Execution Guide](./parallelism.md) for detailed execution instructions.

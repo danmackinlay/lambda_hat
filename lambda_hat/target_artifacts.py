@@ -96,10 +96,8 @@ def _hash_arrays(flat: Dict[str, np.ndarray]) -> str:
 
 # ---------- Public API ----------
 
-
-# New explicit saver that does NOT reconstruct paths
 def save_target_artifact_explicit(out_dir, X, Y, params0, meta):
-    """Save target artifact to explicit directory (used by new Snakemake entrypoints)."""
+    """Save target artifact to explicit directory"""
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 

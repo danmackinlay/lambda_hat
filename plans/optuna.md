@@ -1,13 +1,3 @@
-Below is a concrete revision of your Optuna plan for a **Parsl‑based orchestration chain** that runs on SLURM/PBS and keeps maintenance low. I’ve collapsed the objective to what you actually care about: **error of a method’s LLC estimate versus an HMC reference LLC** for the same problem. Everything else (distributional distances) is dropped.
-
----
-
-## What changes when moving from Snakemake → Parsl
-
-* **DAG is Python**, not a Snakefile. Dependencies are expressed by passing Parsl futures (e.g., “don’t run the method until the HMC reference for this problem has finished”).
-* **Parallelism is native**: Parsl submits jobs to SLURM/PBS via providers. You control concurrency with the executor config (blocks/workers) rather than profiles.
-* **Optuna stays ask‑and‑tell**: a single orchestrator process proposes trials, submits them as Parsl tasks, consumes results as futures complete, and updates the optimizer. No DB required (use file‑based journal if you want resume across processes).
-* **One config system**: keep your current OmegaConf + dataclasses for *problem/method configs*. Parsl’s config is only for cluster execution.
 
 ---
 
@@ -44,7 +34,7 @@ You will still **record** supporting metrics (runtime, SE/CI if available, diagn
 ## Files and layout (minimal, explicit)
 
 ```
-flows/
+workflows/
   parsl_config_slurm.py
   parsl_config_pbs.py
   parsl_optuna.py           # the orchestrator (this replaces the Snakefile + BO wrapper)
@@ -75,10 +65,10 @@ IDs (`pid`, `trial_id`) are content‑addressed hashes of normalized configs (pr
 
 ## Parsl config (SLURM & PBS)
 
-**SLURM** (`flows/parsl_config_slurm.py`):
+**SLURM** (`workflows/parsl_config_slurm.py`):
 
 ```python
-# flows/parsl_config_slurm.py
+# workflows/parsl_config_slurm.py
 from parsl.config import Config
 from parsl.executors import HighThroughputExecutor
 from parsl.providers import SlurmProvider
@@ -110,7 +100,7 @@ config = Config(
 )
 ```
 
-**PBS/PBSPro** (`flows/parsl_config_pbs.py`): identical structure, swap `SlurmProvider` → `PBSProProvider` (or `TorqueProvider`) and adjust resource strings.
+**PBS/PBSPro** (`workflows/parsl_config_pbs.py`): identical structure, swap `SlurmProvider` → `PBSProProvider` (or `TorqueProvider`) and adjust resource strings.
 
 ---
 
@@ -119,7 +109,7 @@ config = Config(
 Keep them **thin** and call your existing library functions. Use `@python_app` to get structured return values. If you want shell‑captured logs, wrap them with `@bash_app` and call `python -m lambda_hat.runners.*`—but it’s unnecessary if your runners write `metrics.json` themselves.
 
 ```python
-# flows/apps.py
+# workflows/apps.py
 from parsl import python_app
 
 @python_app
@@ -154,7 +144,7 @@ Key ideas:
 * Write every finished trial to a **single DataFrame** (results/runs.parquet).
 
 ```python
-# flows/parsl_optuna.py
+# workflows/parsl_optuna.py
 import os, json, time, pickle
 from pathlib import Path
 import optuna
@@ -164,14 +154,14 @@ from importlib import import_module
 
 from omegaconf import OmegaConf
 from lambda_hat.id_utils import stable_hash   # implement as blake2/sha1 of normalized dict
-from flows.apps import compute_hmc_reference, run_method_trial
+from workflows.apps import compute_hmc_reference, run_method_trial
 
 ROOT = Path(__file__).resolve().parents[1]
 ART = ROOT / "artifacts"
 RES = ROOT / "results"
 RES.mkdir(exist_ok=True, parents=True)
 
-def load_parsl(cfg="flows.parsl_config_slurm"):
+def load_parsl(cfg="workflows.parsl_config_slurm"):
     m = import_module(cfg)
     return parsl.load(m.config)
 
@@ -205,7 +195,7 @@ def suggest_method_params(trial, method_name):
 
 def main():
     # --- Parsl backend ---
-    load_parsl("flows.parsl_config_slurm")  # or pbs
+    load_parsl("workflows.parsl_config_slurm")  # or pbs
 
     # --- Problems list (OmegaConf -> dicts) ---
     exp = OmegaConf.load("config/experiments.yaml")  # your existing config
@@ -383,9 +373,9 @@ The orchestrator computes the objective and tells Optuna.
 ## Minimal commands you’ll actually run
 
 ```bash
-# 1) Configure Parsl backend (edit flows/parsl_config_slurm.py or parsl_config_pbs.py)
+# 1) Configure Parsl backend (edit workflows/parsl_config_slurm.py or parsl_config_pbs.py)
 # 2) Kick off orchestration (single process on a login node)
-python -m flows.parsl_optuna
+python -m workflows.parsl_optuna
 # This launches HMC refs and then continuously fills the cluster with trials.
 ```
 
