@@ -7,8 +7,8 @@
 # The Parsl workflow automatically creates N targets × M samplers jobs.
 #
 # Execution:
-#   Local testing:  uv run python workflows/parsl_llc.py --local
-#   SLURM cluster:  uv run python workflows/parsl_llc.py --parsl-config parsl_config_slurm.py
+#   Local testing:  uv run parsl-llc --local
+#   SLURM cluster:  uv run parsl-llc --parsl-config parsl_config_slurm.py
 #
 # See docs/configuration.md for detailed parameter documentation.
 # See docs/sweeps.md for sweep design patterns and examples.

@@ -202,7 +202,7 @@ See [`docs/optuna_workflow.md`](docs/optuna_workflow.md) for detailed configurat
 
 ## Artifact Layout
 
-**Standard workflow** (`workflows/parsl_llc.py`):
+**Standard workflow** (`parsl-llc`):
 ```
 runs/
 └── targets/
@@ -222,7 +222,7 @@ runs/
         └── run_mclmc_gh901234/
 ```
 
-**Optuna workflow** (`workflows/parsl_optuna.py`):
+**Optuna workflow** (`parsl-optuna`):
 ```
 artifacts/
 ├── problems/
@@ -243,7 +243,7 @@ results/
         └── p_abc123:vi.pkl          # Optuna study (for resume)
 ```
 
-Artifacts are written to `runs/...` (standard workflow) or `artifacts/...` (Optuna workflow). The sampler name is included in folder names as a human-useful facet; all other hyperparameters live in `analysis.json` or `metrics.json`.
+Artifacts are written to `runs/...` (default for `parsl-llc`) or `artifacts/...` (default for `parsl-optuna`). These paths are configurable via CLI arguments (`--logs-dir`, `--temp-cfg-dir`, `--results-dir`, `--artifacts-dir`). The sampler name is included in folder names as a human-useful facet; all other hyperparameters live in `analysis.json` or `metrics.json`.
 
 ---
 

@@ -285,12 +285,58 @@ def run_workflow(
     # ========================================================================
 
     print(f"\n=== Waiting for {len(run_futures)} sampling runs to complete ===")
-    for i, future in enumerate(run_futures, 1):
+    failed_runs = []
+
+    for i, (future, record) in enumerate(zip(run_futures, run_records), 1):
         try:
             future.result()
-            print(f"  [{i}/{len(run_futures)}] completed")
+            print(
+                f"  [{i}/{len(run_futures)}] ✓ {record['target_id']}/{record['sampler']}/{record['run_id']}"
+            )
         except Exception as e:
-            print(f"  [{i}/{len(run_futures)}] FAILED: {e}")
+            # Construct log paths from record metadata
+            stderr_path = (
+                logs_dir
+                / "run_sampler"
+                / f"{record['target_id']}_{record['sampler']}_{record['run_id']}.err"
+            )
+            stdout_path = (
+                logs_dir
+                / "run_sampler"
+                / f"{record['target_id']}_{record['sampler']}_{record['run_id']}.log"
+            )
+
+            # Read last 15 lines of stderr if available
+            stderr_tail = ""
+            if stderr_path.exists():
+                try:
+                    with open(stderr_path) as f:
+                        lines = f.readlines()
+                        stderr_tail = "".join(lines[-15:])
+                except Exception:
+                    pass
+
+            print(
+                f"  [{i}/{len(run_futures)}] ✗ FAILED: {record['target_id']}/{record['sampler']}/{record['run_id']}"
+            )
+            print(f"    Run dir: {record['run_dir']}")
+            print(f"    Stderr:  {stderr_path}")
+            print(f"    Stdout:  {stdout_path}")
+
+            if stderr_tail:
+                print("    --- Last 15 lines of stderr ---")
+                for line in stderr_tail.splitlines():
+                    print(f"    {line}")
+                print("    --- End stderr ---")
+
+            failed_runs.append({**record, "error": str(e), "stderr_path": str(stderr_path)})
+
+    # Summary of failures
+    if failed_runs:
+        print(f"\n⚠ FAILURE SUMMARY: {len(failed_runs)} of {len(run_futures)} runs failed")
+        for fr in failed_runs:
+            print(f"  • {fr['target_id']}/{fr['sampler']}/{fr['run_id']}")
+            print(f"    Check logs: {fr['stderr_path']}")
 
     # ========================================================================
     # Stage C: Promotion (optional, opt-in)

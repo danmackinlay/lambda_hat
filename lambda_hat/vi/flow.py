@@ -47,8 +47,10 @@ try:
     _FLOWJAX_AVAILABLE = True
 except ImportError as e:
     _IMPORT_ERROR = e
-    # Create placeholder objects for type checking
-    eqx = None  # type: ignore
+    # Create placeholder objects for type checking and class inheritance
+    from types import SimpleNamespace
+
+    eqx = SimpleNamespace(Module=object)  # type: ignore
     fjx_bij = None  # type: ignore
     fjx_dist = None  # type: ignore
     fjx_flows = None  # type: ignore
@@ -650,7 +652,8 @@ def make_flow_algo() -> _FlowAlgorithm:
     return _FlowAlgorithm()
 
 
-# Register the algorithm
-from lambda_hat.vi import registry  # noqa: E402
+# Register the algorithm only if flowjax is available
+if _FLOWJAX_AVAILABLE:
+    from lambda_hat.vi import registry  # noqa: E402
 
-registry.register("flow", make_flow_algo)
+    registry.register("flow", make_flow_algo)

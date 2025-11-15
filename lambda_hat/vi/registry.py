@@ -41,6 +41,15 @@ def get(name: str) -> VIAlgorithm:
 
     if name not in _REGISTRY:
         available = sorted(_REGISTRY.keys())
+
+        # Special error message for 'flow' when flowvi is not installed
+        if name == "flow":
+            raise ValueError(
+                f"VI algorithm 'flow' requires optional dependencies. "
+                f"Install with: uv sync --extra flowvi\n"
+                f"Available algorithms without extra dependencies: {available}"
+            )
+
         raise ValueError(f"Unknown VI algorithm '{name}'. Available algorithms: {available}")
     return _REGISTRY[name]()
 
