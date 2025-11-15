@@ -36,13 +36,13 @@ Then run the full pipeline:
 
 ```bash
 # Execute locally (testing)
-uv run python workflows/parsl_llc.py --local
+uv run parsl-llc --local
 
 # Execute on SLURM cluster
-uv run python workflows/parsl_llc.py --parsl-config parsl_config_slurm.py
+uv run parsl-llc --parsl-config parsl_config_slurm.py
 
 # With optional promotion (gallery generation)
-uv run python workflows/parsl_llc.py --local --promote
+uv run parsl-llc --local --promote
 ```
 
 See [Parallel Execution Guide](./parallelism.md) for detailed execution instructions.
@@ -280,7 +280,7 @@ optuna:
 
 **CLI overrides** available:
 ```bash
-uv run python workflows/parsl_optuna.py \
+uv run parsl-optuna \
     --config config/my_optuna.yaml \
     --max-trials 50 \
     --batch-size 8 \
@@ -292,13 +292,13 @@ uv run python workflows/parsl_optuna.py \
 
 ```bash
 # Local testing
-uv run python workflows/parsl_optuna.py --config config/optuna_demo.yaml --local
+uv run parsl-optuna --config config/optuna_demo.yaml --local
 
 # SLURM cluster
-uv run python workflows/parsl_optuna.py --config config/optuna_demo.yaml
+uv run parsl-optuna --config config/optuna_demo.yaml
 
 # Custom settings
-uv run python workflows/parsl_optuna.py \
+uv run parsl-optuna \
     --config config/my_optuna.yaml \
     --max-trials 100 \
     --batch-size 16

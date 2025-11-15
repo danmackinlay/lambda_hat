@@ -11,7 +11,7 @@ from omegaconf import OmegaConf
 # Add project root to path
 ROOT = Path(__file__).resolve().parent.parent
 
-from workflows.parsl_optuna import run_optuna_workflow
+from lambda_hat.entrypoints.parsl_optuna import run_optuna_workflow
 
 
 @pytest.fixture

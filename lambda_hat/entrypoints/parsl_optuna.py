@@ -9,16 +9,17 @@ Bayesian optimization workflow that:
 
 Usage:
   # Local testing
-  python workflows/parsl_optuna.py --config config/optuna_demo.yaml --local
+  parsl-optuna --config config/optuna_demo.yaml --local
 
   # SLURM cluster
-  python workflows/parsl_optuna.py --config config/optuna_demo.yaml \
+  parsl-optuna --config config/optuna_demo.yaml \\
       --parsl-config parsl_config_slurm.py
 
 See plans/optuna.md for design details.
 """
 
 import argparse
+import importlib.util
 import json
 import pickle
 import sys
@@ -30,17 +31,8 @@ import pandas as pd
 import parsl
 from omegaconf import OmegaConf
 
-# Add project root to path
-ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT))
-
-from lambda_hat.id_utils import problem_id, stable_hash, trial_id
-from workflows.apps import compute_hmc_reference, run_method_trial
-
-# Directories
-ART = ROOT / "artifacts"
-RES = ROOT / "results"
-RES.mkdir(exist_ok=True, parents=True)
+from lambda_hat.id_utils import problem_id, trial_id
+from lambda_hat.runners.parsl_apps import compute_hmc_reference, run_method_trial
 
 
 def load_parsl_config(config_path):
@@ -52,8 +44,6 @@ def load_parsl_config(config_path):
     Returns:
         Parsl Config object
     """
-    import importlib.util
-
     spec = importlib.util.spec_from_file_location("parsl_config", config_path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -112,7 +102,9 @@ def suggest_method_params(trial, method_name):
             "lr": trial.suggest_float("lr", 1e-5, 5e-2, log=True),
             "M": trial.suggest_categorical("M", [4, 8, 16]),
             "r": trial.suggest_categorical("r", [1, 2, 4]),
-            "whitening_mode": trial.suggest_categorical("whitening_mode", ["none", "rmsprop", "adam"]),
+            "whitening_mode": trial.suggest_categorical(
+                "whitening_mode", ["none", "rmsprop", "adam"]
+            ),
             "steps": trial.suggest_int("steps", 3000, 10000, step=500),
             "batch_size": trial.suggest_categorical("batch_size", [128, 256, 512]),
         }
@@ -134,6 +126,8 @@ def run_optuna_workflow(
     batch_size=32,
     hmc_budget_sec=36000,
     method_budget_sec=6000,
+    artifacts_dir="artifacts",
+    results_dir="results",
 ):
     """Execute Optuna hyperparameter optimization workflow.
 
@@ -144,10 +138,17 @@ def run_optuna_workflow(
         batch_size: Concurrent trials per (problem, method) (default: 32)
         hmc_budget_sec: HMC reference time budget (default: 36000 = 10h)
         method_budget_sec: Method trial time budget (default: 6000 = 100min)
+        artifacts_dir: Directory for artifacts (default: "artifacts", relative to CWD)
+        results_dir: Directory for results (default: "results", relative to CWD)
 
     Returns:
         Path to results parquet file
     """
+    # Convert paths to Path objects
+    artifacts_dir = Path(artifacts_dir)
+    results_dir = Path(results_dir)
+    results_dir.mkdir(exist_ok=True, parents=True)
+
     # Load Parsl config and initialize
     print(f"Loading Parsl config from {parsl_config_path}...")
     parsl_cfg = load_parsl_config(parsl_config_path)
@@ -161,13 +162,14 @@ def run_optuna_workflow(
     problems = list(exp.get("problems", []))
     methods = list(exp.get("methods", ["sgld", "vi", "mclmc"]))
 
-    print(f"\n=== Optuna Workflow Configuration ===")
+    print("\n=== Optuna Workflow Configuration ===")
     print(f"Problems: {len(problems)}")
     print(f"Methods: {methods}")
     print(f"Max trials per (problem, method): {max_trials_per_method}")
     print(f"Batch size (concurrent trials): {batch_size}")
-    print(f"HMC budget: {hmc_budget_sec}s ({hmc_budget_sec/3600:.1f}h)")
-    print(f"Method budget: {method_budget_sec}s ({method_budget_sec/60:.1f}min)")
+    print(f"HMC budget: {hmc_budget_sec}s ({hmc_budget_sec / 3600:.1f}h)")
+    print(f"Method budget: {method_budget_sec}s ({method_budget_sec / 60:.1f}min)")
+    print(f"Artifacts: {artifacts_dir}, Results: {results_dir}")
     print()
 
     # ========================================================================
@@ -182,7 +184,7 @@ def run_optuna_workflow(
         # Normalize problem spec to dict
         problem_spec = OmegaConf.to_container(p, resolve=True)
         pid = problem_id(problem_spec)
-        out_ref = ART / "problems" / pid / "ref.json"
+        out_ref = artifacts_dir / "problems" / pid / "ref.json"
         out_ref.parent.mkdir(parents=True, exist_ok=True)
 
         print(f"  Problem {pid}:")
@@ -193,7 +195,7 @@ def run_optuna_workflow(
             print(f"    Reference exists, loading from {out_ref}")
             ref_meta[pid] = json.loads(out_ref.read_text())
         else:
-            print(f"    Submitting HMC reference computation...")
+            print("    Submitting HMC reference computation...")
             ref_futs[pid] = compute_hmc_reference(
                 problem_spec, str(out_ref), budget_sec=hmc_budget_sec
             )
@@ -217,7 +219,7 @@ def run_optuna_workflow(
     print("\n=== Stage 2: Hyperparameter Optimization ===")
 
     # Storage for Optuna studies (in-memory + periodic pickle)
-    study_dir = RES / "studies" / "optuna_llc"
+    study_dir = results_dir / "studies" / "optuna_llc"
     study_dir.mkdir(parents=True, exist_ok=True)
 
     def save_study(study, path):
@@ -269,7 +271,7 @@ def run_optuna_workflow(
                 tid = trial_id(manifest)
 
                 # Prepare run directory
-                run_dir = ART / "runs" / pid / method_name / tid
+                run_dir = artifacts_dir / "runs" / pid / method_name / tid
                 run_dir.mkdir(parents=True, exist_ok=True)
                 (run_dir / "manifest.json").write_text(json.dumps(manifest, indent=2))
 
@@ -292,7 +294,9 @@ def run_optuna_workflow(
                 return fut
 
             # Prime the pump: fill initial batch
-            print(f"      Submitting initial batch of {min(batch_size, max_trials_per_method)} trials...")
+            print(
+                f"      Submitting initial batch of {min(batch_size, max_trials_per_method)} trials..."
+            )
             while submitted < min(batch_size, max_trials_per_method):
                 submit_one()
 
@@ -360,7 +364,7 @@ def run_optuna_workflow(
             # Report best trial
             best_trial = study.best_trial
             if best_trial.value == float("inf"):
-                print(f"      ⚠ All trials failed - no valid hyperparameters found")
+                print("      ⚠ All trials failed - no valid hyperparameters found")
             else:
                 print(f"      ✓ Best trial: obj={best_trial.value:.4f}")
                 print(f"        Hyperparams: {best_trial.params}")
@@ -371,11 +375,11 @@ def run_optuna_workflow(
 
     print("\n=== Stage 3: Aggregating Results ===")
     df = pd.DataFrame(all_rows)
-    output_path = RES / "optuna_trials.parquet"
+    output_path = results_dir / "optuna_trials.parquet"
     df.to_parquet(output_path, index=False)
 
     print(f"  Wrote {len(df)} trials to {output_path}")
-    print(f"\n✓ Optuna workflow complete!")
+    print("\n✓ Optuna workflow complete!")
 
     return output_path
 
@@ -426,16 +430,27 @@ def main():
         default=6000,
         help="Method trial time budget in seconds (default: 6000 = 100min)",
     )
+    parser.add_argument(
+        "--artifacts-dir",
+        default="artifacts",
+        help="Directory for artifacts (default: artifacts, relative to CWD)",
+    )
+    parser.add_argument(
+        "--results-dir",
+        default="results",
+        help="Directory for results (default: results, relative to CWD)",
+    )
 
     args = parser.parse_args()
 
     # Resolve Parsl config
+    cwd = Path.cwd()
     if args.local:
-        parsl_config_path = ROOT / "parsl_config_local.py"
+        parsl_config_path = cwd / "parsl_config_local.py"
     else:
         parsl_config_path = Path(args.parsl_config)
         if not parsl_config_path.is_absolute():
-            parsl_config_path = ROOT / parsl_config_path
+            parsl_config_path = cwd / parsl_config_path
 
     if not parsl_config_path.exists():
         print(f"Error: Parsl config not found: {parsl_config_path}", file=sys.stderr)
@@ -453,6 +468,8 @@ def main():
             batch_size=args.batch_size,
             hmc_budget_sec=args.hmc_budget,
             method_budget_sec=args.method_budget,
+            artifacts_dir=args.artifacts_dir,
+            results_dir=args.results_dir,
         )
         print(f"\n✓ Results: {output_path}")
     except Exception as e:

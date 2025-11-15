@@ -8,10 +8,10 @@ Stages:
 
 Usage:
   # Local testing (no promotion)
-  python workflows/parsl_llc.py --config config/experiments.yaml --local
+  parsl-llc --config config/experiments.yaml --local
 
   # SLURM cluster with promotion
-  python workflows/parsl_llc.py --config config/experiments.yaml \\
+  parsl-llc --config config/experiments.yaml \\
       --parsl-config parsl_config_slurm.py --promote
 """
 
@@ -26,12 +26,8 @@ import parsl
 from omegaconf import OmegaConf
 from parsl import bash_app, python_app
 
-# Add project root to path for imports
-ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT))
-
-from lambda_hat.promote.core import promote_gallery  # noqa: E402
-from lambda_hat.workflow_utils import (  # noqa: E402
+from lambda_hat.promote.core import promote_gallery
+from lambda_hat.workflow_utils import (
     compose_build_cfg,
     compose_sample_cfg,
     run_id_for,
@@ -145,7 +141,15 @@ def load_parsl_config(config_path):
     return module.config
 
 
-def run_workflow(experiments_yaml, parsl_config_path, enable_promotion=False, promote_plots=None):
+def run_workflow(
+    experiments_yaml,
+    parsl_config_path,
+    enable_promotion=False,
+    promote_plots=None,
+    logs_dir="logs",
+    temp_cfg_dir="temp_parsl_cfg",
+    results_dir="results",
+):
     """Execute the full Lambda-Hat workflow: build → sample → (optional) promote.
 
     Args:
@@ -153,12 +157,20 @@ def run_workflow(experiments_yaml, parsl_config_path, enable_promotion=False, pr
         parsl_config_path: Path to Parsl executor config
         enable_promotion: Whether to run promotion stage (default: False, opt-in)
         promote_plots: List of plot names to promote (default: ['trace.png'])
+        logs_dir: Directory for log files (default: "logs")
+        temp_cfg_dir: Directory for temporary config files (default: "temp_parsl_cfg")
+        results_dir: Directory for aggregated results (default: "results")
 
     Returns:
         Path to aggregated results parquet file
     """
     if promote_plots is None:
         promote_plots = ["trace.png", "llc_convergence_combined.png"]
+
+    # Convert paths to Path objects
+    logs_dir = Path(logs_dir)
+    temp_cfg_dir = Path(temp_cfg_dir)
+    results_dir = Path(results_dir)
 
     # Load Parsl config and initialize
     parsl_cfg = load_parsl_config(parsl_config_path)
@@ -175,9 +187,9 @@ def run_workflow(experiments_yaml, parsl_config_path, enable_promotion=False, pr
 
     print(f"Loaded {len(targets_conf)} targets and {len(samplers_conf)} samplers")
     print(f"Store root: {store_root}, JAX x64: {jax_x64}")
+    print(f"Logs: {logs_dir}, Temp configs: {temp_cfg_dir}, Results: {results_dir}")
 
     # Create temp config directory
-    temp_cfg_dir = ROOT / "temp_parsl_cfg"
     temp_cfg_dir.mkdir(exist_ok=True, parents=True)
 
     # ========================================================================
@@ -203,7 +215,7 @@ def run_workflow(experiments_yaml, parsl_config_path, enable_promotion=False, pr
         target_dir.mkdir(parents=True, exist_ok=True)
 
         # Create log directory
-        log_dir = ROOT / "logs" / "build_target"
+        log_dir = logs_dir / "build_target"
         log_dir.mkdir(parents=True, exist_ok=True)
 
         # Submit build job
@@ -241,7 +253,7 @@ def run_workflow(experiments_yaml, parsl_config_path, enable_promotion=False, pr
             run_dir.mkdir(parents=True, exist_ok=True)
 
             # Create log directory
-            log_dir = ROOT / "logs" / "run_sampler"
+            log_dir = logs_dir / "run_sampler"
             log_dir.mkdir(parents=True, exist_ok=True)
 
             # Submit sampling job with dependency on target build
@@ -289,7 +301,9 @@ def run_workflow(experiments_yaml, parsl_config_path, enable_promotion=False, pr
         unique_samplers = sorted({s["name"] for s in samplers_conf})
 
         # Load promotion config for output directory
-        prom_cfg = OmegaConf.load(ROOT / "lambda_hat" / "conf" / "promote.yaml")
+        from lambda_hat.conf import promote as promote_conf_module
+
+        prom_cfg = OmegaConf.create(promote_conf_module.__dict__)
         outdir = Path(prom_cfg.get("outdir", "runs/promotion"))
 
         # Promote each plot type
@@ -328,7 +342,6 @@ def run_workflow(experiments_yaml, parsl_config_path, enable_promotion=False, pr
             print(f"  Warning: Missing analysis.json at {analysis_path}")
 
     df = pd.DataFrame(rows)
-    results_dir = ROOT / "results"
     results_dir.mkdir(exist_ok=True)
     output_path = results_dir / "llc_runs.parquet"
 
@@ -375,16 +388,32 @@ def main():
         default="trace.png,llc_convergence_combined.png",
         help="Comma-separated plots to promote when --promote is used (default: trace,convergence)",
     )
+    parser.add_argument(
+        "--logs-dir",
+        default="logs",
+        help="Directory for log files (default: logs, relative to CWD)",
+    )
+    parser.add_argument(
+        "--temp-cfg-dir",
+        default="temp_parsl_cfg",
+        help="Directory for temporary config files (default: temp_parsl_cfg, relative to CWD)",
+    )
+    parser.add_argument(
+        "--results-dir",
+        default="results",
+        help="Directory for aggregated results (default: results, relative to CWD)",
+    )
 
     args = parser.parse_args()
 
     # Resolve config path
+    cwd = Path.cwd()
     if args.local:
-        parsl_config_path = ROOT / "parsl_config_local.py"
+        parsl_config_path = cwd / "parsl_config_local.py"
     else:
         parsl_config_path = Path(args.parsl_config)
         if not parsl_config_path.is_absolute():
-            parsl_config_path = ROOT / parsl_config_path
+            parsl_config_path = cwd / parsl_config_path
 
     if not parsl_config_path.exists():
         print(f"Error: Parsl config not found: {parsl_config_path}", file=sys.stderr)
@@ -407,6 +436,9 @@ def main():
             parsl_config_path,
             enable_promotion=args.promote,
             promote_plots=promote_plots,
+            logs_dir=args.logs_dir,
+            temp_cfg_dir=args.temp_cfg_dir,
+            results_dir=args.results_dir,
         )
         print(f"\n✓ Workflow complete! Results: {output_path}")
     except Exception as e:

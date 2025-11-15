@@ -8,7 +8,9 @@ from parsl import python_app
 
 
 @python_app
-def compute_hmc_reference(problem_spec: dict, out_ref_json: str, budget_sec: int = 36000, seed: int = 42):
+def compute_hmc_reference(
+    problem_spec: dict, out_ref_json: str, budget_sec: int = 36000, seed: int = 42
+):
     """Compute HMC reference LLC estimate (Parsl app).
 
     Args:

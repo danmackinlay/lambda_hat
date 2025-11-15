@@ -9,7 +9,6 @@ import time
 from pathlib import Path
 
 import jax
-import jax.numpy as jnp
 from omegaconf import OmegaConf
 
 from lambda_hat.analysis import analyze_traces
@@ -44,7 +43,7 @@ def run_hmc_reference(problem_spec, out_ref_json, budget_sec=36000, seed=42):
             - n_samples: int, number of HMC samples
     """
     print(f"[HMC Reference] Starting for problem: {problem_spec}")
-    print(f"  Budget: {budget_sec}s ({budget_sec/3600:.1f}h)")
+    print(f"  Budget: {budget_sec}s ({budget_sec / 3600:.1f}h)")
     print(f"  Output: {out_ref_json}")
 
     # Build target using existing workflow infrastructure

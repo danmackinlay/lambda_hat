@@ -1,5 +1,4 @@
-"""Workflow utilities for target/run ID computation and config composition.
-"""
+"""Workflow utilities for target/run ID computation and config composition."""
 
 import hashlib
 import json

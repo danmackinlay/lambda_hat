@@ -137,10 +137,10 @@ We use **Parsl** for the full pipeline. Parsl provides Python-native DAG executi
 
 ```bash
 # Run locally (uses ThreadPoolExecutor)
-uv run python workflows/parsl_llc.py --local
+uv run parsl-llc --local
 
 # Run locally with promotion (generates galleries)
-uv run python workflows/parsl_llc.py --local --promote
+uv run parsl-llc --local --promote
 ```
 
 ### Editing experiments
@@ -154,10 +154,10 @@ Promotion generates asset galleries from sampling runs. It's opt-in via the `--p
 
 ```bash
 # Run workflow with promotion
-uv run python workflows/parsl_llc.py --local --promote
+uv run parsl-llc --local --promote
 
 # Specify which plots to promote
-uv run python workflows/parsl_llc.py --local --promote \
+uv run parsl-llc --local --promote \
     --promote-plots trace.png,llc_convergence_combined.png
 ```
 
@@ -167,7 +167,7 @@ For SLURM clusters, use the SLURM Parsl config:
 
 ```bash
 # Run on SLURM cluster (auto-scales 0-50 jobs)
-uv run python workflows/parsl_llc.py --parsl-config parsl_config_slurm.py
+uv run parsl-llc --parsl-config parsl_config_slurm.py
 
 # Customize Parsl config
 # Edit parsl_config_slurm.py to adjust partition, walltime, resources
@@ -179,10 +179,10 @@ uv run python workflows/parsl_llc.py --parsl-config parsl_config_slurm.py
 
 ```bash
 # Optimize hyperparameters locally
-uv run python workflows/parsl_optuna.py --config config/optuna_demo.yaml --local
+uv run parsl-optuna --config config/optuna_demo.yaml --local
 
 # Optimize on SLURM cluster
-uv run python workflows/parsl_optuna.py --config config/optuna_demo.yaml
+uv run parsl-optuna --config config/optuna_demo.yaml
 ```
 
 **How it works:**

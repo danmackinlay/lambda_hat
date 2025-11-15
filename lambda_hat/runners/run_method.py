@@ -52,7 +52,7 @@ def run_method_trial(
     print(f"[Method Trial] Starting {method_name} trial")
     print(f"  Problem: {problem_spec}")
     print(f"  Hyperparams: {method_cfg}")
-    print(f"  Budget: {budget_sec}s ({budget_sec/60:.1f}min)")
+    print(f"  Budget: {budget_sec}s ({budget_sec / 60:.1f}min)")
     print(f"  Reference LLC: {ref_llc:.4f}")
     print(f"  Output: {out_metrics_json}")
 
@@ -69,7 +69,6 @@ def run_method_trial(
     print(f"  Precision: {'float64' if enable_x64 else 'float32'}")
 
     # Build target (returns TargetBundle and widths)
-    from lambda_hat.targets import build_target
 
     key_build = jax.random.PRNGKey(int(problem_spec.get("seed", 42)))
     target_bundle_init, used_model_widths, used_teacher_widths = build_target(key_build, build_cfg)
@@ -244,7 +243,7 @@ def run_method_trial(
     _write_metrics(out_metrics_json, trial_metrics)
 
     print(f"[Method Trial] LLC_hat = {llc_hat:.4f} ± {se_hat:.4f if se_hat else 0:.4f}")
-    print(f"[Method Trial] Error vs ref = {error:.4f} ({error/ref_llc*100:.1f}%)")
+    print(f"[Method Trial] Error vs ref = {error:.4f} ({error / ref_llc * 100:.1f}%)")
     print(f"[Method Trial] Wrote metrics to {out_metrics_json}")
 
     return trial_metrics
