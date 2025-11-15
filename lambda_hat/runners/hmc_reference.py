@@ -170,6 +170,7 @@ def run_hmc_reference(problem_spec, out_ref_json, budget_sec=36000, seed=42):
                 "gamma": 0.001,  # Standard localizer
                 "beta_mode": "1_over_log_n",
                 "beta0": 1.0,  # Unused when beta_mode="1_over_log_n", but must be set
+                "prior_radius": None,  # No prior radius constraint
                 "loss": "mse",
             },
             "jax": {"enable_x64": True},
