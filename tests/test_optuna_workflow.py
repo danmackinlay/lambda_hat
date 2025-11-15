@@ -30,6 +30,13 @@ def parsl_config():
 def cleanup_optuna_artifacts():
     """Cleanup Optuna test artifacts after test completes."""
     yield
+    # Clear Parsl to allow next test to load config
+    import parsl
+    try:
+        parsl.clear()
+    except Exception:
+        pass  # Ignore if not loaded
+
     # Cleanup paths
     cleanup_paths = [
         ROOT / "artifacts",
