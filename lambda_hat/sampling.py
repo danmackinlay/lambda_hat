@@ -769,6 +769,17 @@ def run_vi(
     # Start timer
     total_start_time = time.time()
 
+    # Ensure rng_key is in modern typed key format (required for FlowJAX compatibility)
+    # JAX 0.7+ uses typed keys; legacy keys need wrapping
+    # Simply pass through jax.random.key_data and wrap to normalize format
+    key_data = jax.random.key_data(rng_key)
+    if key_data.shape[-1] == 2:  # Legacy format
+        # Pad to RBG format (4 elements) by duplicating
+        import jax.numpy as jnp
+
+        key_data = jnp.concatenate([key_data, key_data], axis=-1)
+    rng_key = jax.random.wrap_key_data(key_data)
+
     # Flatten initial parameters
     params_flat, unravel_fn = jax.flatten_util.ravel_pytree(initial_params)
 
@@ -909,13 +920,25 @@ def run_vi(
         # Common diagnostics (all VI algorithms provide these)
         "grad_norm": all_traces["grad_norm"],
         # Algorithm-specific traces (only include if present)
-        **{k: all_traces[k] for k in [
-            "elbo_like", "logq", "radius2", "resp_entropy",  # MFA-specific
-            "pi_min", "pi_max", "pi_entropy",  # MFA mixture weights
-            "D_sqrt_min", "D_sqrt_max", "D_sqrt_med",  # MFA covariance
-            "A_col_norm_max",  # MFA low-rank factor
-            "d_latent", "sigma_perp",  # Flow-specific
-        ] if k in all_traces},
+        **{
+            k: all_traces[k]
+            for k in [
+                "elbo_like",
+                "logq",
+                "radius2",
+                "resp_entropy",  # MFA-specific
+                "pi_min",
+                "pi_max",
+                "pi_entropy",  # MFA mixture weights
+                "D_sqrt_min",
+                "D_sqrt_max",
+                "D_sqrt_med",  # MFA covariance
+                "A_col_norm_max",  # MFA low-rank factor
+                "d_latent",
+                "sigma_perp",  # Flow-specific
+            ]
+            if k in all_traces
+        },
     }
 
     # Use timings from algorithm and override total with actual wall time

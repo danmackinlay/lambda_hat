@@ -18,6 +18,11 @@ runtime:
   code_sha: ${git_sha:}
   hostname: ${hostname:}
 
+# Misc (toplevel Config fields)
+use_tqdm: true
+progress_update_every: 50
+profile_adaptation: true
+
 # --- Stage A: Target Definition (Used for Fingerprinting) ---
 target:
   # Seed for data generation and NN training (Stage A Seed)

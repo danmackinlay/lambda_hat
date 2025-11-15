@@ -34,7 +34,8 @@ This repo provides benchmark estimators of LLC on small but non-trivial neural n
 * [OmegaConf](https://omegaconf.readthedocs.io/) for configuration management
 * [Haiku](https://github.com/haiku/haiku) for neural network definitions
 
-**Supported samplers**: HMC, MCLMC, SGLD, VI (variational inference).
+**Supported samplers**: HMC, MCLMC, SGLD, VI (variational inference with MFA or Flow algorithms).
+**Note**: Flow VI requires `uv sync --extra flowvi` but is currently broken with Parsl workflows (see docs/flow_prng_issue.md).
 
 We target networks with dimension up to about $10^5$ which means we can ground-truth against classic samplers like HMC (which we expect to become non-viable in higher dimension or dataset size).
 In this regime we can relu upon classic MCMC to tell us the “true” LLC rather than relying on analytic results for approximate networks such as Deep Linear Networks.

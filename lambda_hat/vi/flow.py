@@ -288,9 +288,8 @@ def build_flow_elbo_step(
                 perp_component = 0.0
 
             # Lift to parameter space: w = w* + D^{-1/2}(U@z + E_perp@eps)
-            w_flat = (
-                lift_consts["wstar"] +
-                lift_consts["D_inv_sqrt"] * (lift_consts["U"] @ z + perp_component)
+            w_flat = lift_consts["wstar"] + lift_consts["D_inv_sqrt"] * (
+                lift_consts["U"] @ z + perp_component
             )
 
             # Log-determinant of block-triangular Jacobian
@@ -458,14 +457,8 @@ class _FlowAlgorithm:
                 "Flow VI requires flowjax and equinox. Install with: uv sync --extra flowvi"
             ) from _IMPORT_ERROR
 
-        # Convert legacy PRNGKey to new RBG key format if needed
-        # (rng_key may come from jax.random.PRNGKey which has shape (2,), but RBG needs (4,))
-        if hasattr(rng_key, "shape") and rng_key.shape == (2,):
-            # Legacy key - extract seed and create RBG key
-            # JAX legacy keys are uint32[2], first element is the seed
-            seed = int(rng_key[0])
-            rng_key = jax.random.key(seed)
-
+        # Modern JAX (0.7.1+) handles key format conversion automatically
+        # No need for manual legacy key conversion (causes vmap issues)
         key_init, key_train, key_eval = jax.random.split(rng_key, 3)
 
         d = wstar_flat.size
@@ -480,7 +473,9 @@ class _FlowAlgorithm:
 
         # Extract D_inv_sqrt from whitener (provided by run_vi's pre-pass)
         # If whitener is None, A_inv_sqrt will fail fast (no fallback)
-        D_inv_sqrt = whitener.A_inv_sqrt.astype(dtype) if whitener is not None else jnp.ones(d, dtype=dtype)
+        D_inv_sqrt = (
+            whitener.A_inv_sqrt.astype(dtype) if whitener is not None else jnp.ones(d, dtype=dtype)
+        )
 
         # Initialize InjectiveLift
         dist = init_injective_lift(

@@ -75,6 +75,8 @@ uv run ruff check --fix
   - Flow: Normalizing flows via manifold-plus-noise construction (requires `--extra flowvi`)
     - RealNVP coupling flow (default), MAF, or NSF architectures
     - Low-rank latent space with orthogonal noise
+    - **KNOWN ISSUE**: Currently broken with Parsl workflows due to PRNG key format incompatibility in vmap context
+    - Works in unit tests (non-vmapped); see docs/flow_prng_issue.md for diagnosis
     - NOTE: HVP control variate deferred to future work
   - Work metrics: `n_full_loss` (MC samples for lambda), `n_minibatch_grads` (optimization steps), `sampler_flavour`
   - FGE tracking: `cumulative_fge = batch_size / n_data` per step (minibatch accounting)
