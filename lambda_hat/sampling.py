@@ -11,6 +11,7 @@ import jax.numpy as jnp
 
 from lambda_hat import vi
 from lambda_hat.types import SamplerRunResult
+from lambda_hat.utils.rng import ensure_typed_key
 
 if TYPE_CHECKING:
     from lambda_hat.config import SGLDConfig, VIConfig
@@ -769,16 +770,9 @@ def run_vi(
     # Start timer
     total_start_time = time.time()
 
-    # Ensure rng_key is in modern typed key format (required for FlowJAX compatibility)
-    # JAX 0.7+ uses typed keys; legacy keys need wrapping
-    # Simply pass through jax.random.key_data and wrap to normalize format
-    key_data = jax.random.key_data(rng_key)
-    if key_data.shape[-1] == 2:  # Legacy format
-        # Pad to RBG format (4 elements) by duplicating
-        import jax.numpy as jnp
-
-        key_data = jnp.concatenate([key_data, key_data], axis=-1)
-    rng_key = jax.random.wrap_key_data(key_data)
+    # Normalize PRNG key to typed threefry format (host-side, before any vmap/jit)
+    # Required for FlowJAX compatibility - converts legacy uint32[2] keys and ints
+    rng_key = ensure_typed_key(rng_key)
 
     # Flatten initial parameters
     params_flat, unravel_fn = jax.flatten_util.ravel_pytree(initial_params)
@@ -874,6 +868,16 @@ def run_vi(
     )
     algo_timings = first_result["timings"]
     algo_work = first_result["work"]
+
+    # Validate that algorithm returns only vmap-compatible types (arrays/scalars)
+    # Prevents errors like "PjitFunction is not a valid JAX type"
+    def _all_leaves_are_arrays(x):
+        leaves, _ = jax.tree_util.tree_flatten(x)
+        return all(isinstance(l, (jax.Array, jnp.ndarray, int, float, bool)) for l in leaves)
+
+    assert _all_leaves_are_arrays(
+        (first_result["lambda_hat"], first_result["traces"], first_result["extras"])
+    ), f"VI algorithm '{config.algo}' returned non-JAX objects; see docs/flow_vmap_issues.md"
 
     # Vmap across chains: returns (lambda_hats, all_traces, all_extras)
     results = jax.vmap(run_one_chain)(chain_keys)

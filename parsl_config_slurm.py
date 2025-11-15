@@ -27,6 +27,8 @@ module load python || true
 source ~/.bashrc || true
 # Activate uv environment if needed
 export PATH="$HOME/.local/bin:$PATH"
+# Set JAX PRNG implementation for FlowJAX compatibility
+export JAX_DEFAULT_PRNG_IMPL=threefry2x32
                 """.strip(),
                 # Resource allocation
                 nodes_per_block=1,

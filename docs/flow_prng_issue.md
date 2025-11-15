@@ -1,9 +1,11 @@
-# Flow VI PRNG Key Format Issue (Known Bug)
+# Flow VI PRNG Key Format Issue (RESOLVED)
 
-**Status**: Blocking Flow VI usage with Parsl workflows
+**Status**: ✅ **FULLY RESOLVED** - Flow VI now works with Parsl workflows
 **Affects**: Flow algorithm only (MFA unaffected)
-**Severity**: High (Flow unusable with Parsl)
+**Severity**: None (all issues fixed)
 **Created**: 2025-11-15 during variational_snakemake merge
+**Resolved**: 2025-11-15 via typed threefry2x32 keys + vmap-safe returns (QA team guidance)
+**Remaining**: None - see flow_vmap_issues.md for complete resolution details
 
 ---
 
