@@ -4,28 +4,26 @@ import jax
 import jax.numpy as jnp
 import pytest
 
-from lambda_hat.models import build_mlp_forward_fn
+from lambda_hat.nn_eqx import build_mlp
 
 
 def test_mlp_with_skip_connections():
     """Test that MLP can be created with skip=True and runs a forward pass."""
     # Build model with skip connections
-    model = build_mlp_forward_fn(
+    rng = jax.random.PRNGKey(42)
+    model = build_mlp(
         in_dim=10,
         widths=[20, 20],
         out_dim=1,
         activation="relu",
         skip=True,
         residual_period=2,
+        key=rng,
     )
 
-    # Initialize parameters
-    rng = jax.random.PRNGKey(42)
-    x = jnp.ones((5, 10))  # batch of 5, input dim 10
-    params = model.init(rng, x)
-
     # Run forward pass
-    y = model.apply(params, None, x)
+    x = jnp.ones((5, 10))  # batch of 5, input dim 10
+    y = model(x)
 
     # Check output shape
     assert y.shape == (5, 1), f"Expected shape (5, 1), got {y.shape}"
@@ -35,21 +33,19 @@ def test_mlp_with_skip_connections():
 def test_mlp_without_skip_connections():
     """Test that MLP still works without skip connections (default behavior)."""
     # Build model without skip connections (default)
-    model = build_mlp_forward_fn(
+    rng = jax.random.PRNGKey(42)
+    model = build_mlp(
         in_dim=10,
         widths=[20, 20],
         out_dim=1,
         activation="relu",
         skip=False,
+        key=rng,
     )
 
-    # Initialize parameters
-    rng = jax.random.PRNGKey(42)
-    x = jnp.ones((5, 10))
-    params = model.init(rng, x)
-
     # Run forward pass
-    y = model.apply(params, None, x)
+    x = jnp.ones((5, 10))
+    y = model(x)
 
     # Check output shape
     assert y.shape == (5, 1), f"Expected shape (5, 1), got {y.shape}"
@@ -60,12 +56,14 @@ def test_mlp_skip_parameter_accepted():
     """Test that skip and residual_period parameters are accepted without error."""
     # This test ensures the parameters are wired through correctly
     try:
-        model = build_mlp_forward_fn(
+        rng = jax.random.PRNGKey(42)
+        model = build_mlp(
             in_dim=5,
             widths=[10],
             out_dim=1,
             skip=True,
             residual_period=3,
+            key=rng,
         )
         # If we get here, parameters were accepted
         assert True

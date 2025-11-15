@@ -14,7 +14,7 @@ from omegaconf import OmegaConf
 from lambda_hat.analysis import analyze_traces
 from lambda_hat.config import validate_teacher_cfg
 from lambda_hat.losses import as_dtype, make_loss_fns
-from lambda_hat.models import build_mlp_forward_fn, count_params
+from lambda_hat.nn_eqx import build_mlp, count_params
 from lambda_hat.sampling_runner import run_sampler
 from lambda_hat.targets import TargetBundle, build_target
 from lambda_hat.workflow_utils import compose_build_cfg
@@ -107,14 +107,15 @@ def run_method_trial(
     widths = mcfg.get("widths")
     assert widths is not None, "Target missing resolved model widths"
 
-    model = build_mlp_forward_fn(
+    # Create model template for loading (dummy key for structure only)
+    model = build_mlp(
         in_dim=int(X.shape[-1]),
         widths=widths,
         out_dim=int(Y.shape[-1] if Y.ndim > 1 else 1),
         activation=mcfg.get("activation", "relu"),
         bias=mcfg.get("bias", True),
-        init=mcfg.get("init", "he"),
         layernorm=mcfg.get("layernorm", False),
+        key=jax.random.PRNGKey(0),  # Dummy key, will be overwritten
     )
 
     # Cast to appropriate precision
@@ -129,8 +130,10 @@ def run_method_trial(
     noise_scale = data_cfg.get("noise_scale", 0.1)
     student_df = data_cfg.get("student_df", 4.0)
 
+    # Equinox models are called directly: model(x), not model.apply(params, None, x)
+    predict_fn = lambda m, x: m(x)
     loss_full, loss_minibatch = make_loss_fns(
-        model.apply,
+        predict_fn,
         X_cast,
         Y_cast,
         loss_type=loss_type,

@@ -32,6 +32,7 @@ def get(name: str) -> VIAlgorithm:
         ValueError: If algorithm name is not registered
     """
     # Lazy-load flow on first access to avoid requiring flowjax
+    # Note: Equinox is now in base deps, but FlowJAX is still optional
     if name == "flow" and name not in _REGISTRY:
         try:
             from lambda_hat.vi import flow  # noqa: F401

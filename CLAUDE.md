@@ -50,7 +50,7 @@ uv run ruff check --fix
 
 * SGLD: `float32`; HMC/MCLMC: `float64`; VI: `float32` (configurable).
 * Precision is per-sampler via `sampler.<name>.dtype` config field.
-* Haiku call shape: `model.apply(params, None, X)`.
+* Equinox call shape: `model(X)` (model IS the params).
 * Use `jax.tree.map` (not deprecated `tree_map`), `jax.flatten_util.ravel_pytree`, `jax.random.split`.
 
 ## Config

@@ -18,13 +18,13 @@ from lambda_hat.targets import build_target
 
 def _pkg_versions() -> Dict[str, str]:
     import blackjax
-    import haiku as hk
+    import equinox as eqx
     import jax
     import numpy as np
 
     return {
         "jax": getattr(jax, "__version__", "unknown"),
-        "haiku": getattr(hk, "__version__", "unknown"),
+        "equinox": getattr(eqx, "__version__", "unknown"),
         "blackjax": getattr(blackjax, "__version__", "unknown"),
         "numpy": getattr(np, "__version__", "unknown"),
     }

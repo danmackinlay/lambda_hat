@@ -15,7 +15,7 @@ from lambda_hat.analysis import (
 )
 from lambda_hat.config import validate_teacher_cfg
 from lambda_hat.losses import as_dtype, make_loss_fns
-from lambda_hat.models import build_mlp_forward_fn, count_params
+from lambda_hat.nn_eqx import build_mlp, count_params
 from lambda_hat.sampling_runner import run_sampler
 from lambda_hat.target_artifacts import append_sample_manifest, load_target_artifact
 from lambda_hat.targets import TargetBundle
@@ -45,8 +45,12 @@ def main():
         # Fallback to non-resolved view to keep the run alive
         print(OmegaConf.to_yaml(cfg, resolve=False))
 
-    # Load target artifact using store.root and target_id
-    X, Y, params, meta, tdir = load_target_artifact(cfg.store.root, args.target_id)
+    # Recreate model template from metadata (needed for Equinox deserialization)
+    # We need to build the model BEFORE loading to get the correct structure
+    mcfg = OmegaConf.load(args.config_yaml).get("model", {})
+    meta_path = Path(cfg.store.root) / "targets" / args.target_id / "meta.json"
+    with open(meta_path) as f:
+        meta = json.load(f)
 
     # Guardrails
     if bool(cfg.jax.enable_x64) != bool(meta["jax_enable_x64"]):
@@ -55,26 +59,31 @@ def main():
             f"target x64={meta['jax_enable_x64']}"
         )
 
-    # Recreate forward function from stored model config
-    mcfg = meta["model_cfg"]
-
-    # Use persisted widths (should always be present in new artifacts)
-    widths = mcfg.get("widths")
+    # Build model template from metadata
+    model_cfg = meta["model_cfg"]
+    widths = model_cfg.get("widths")
     assert widths is not None, "Artifact missing resolved model widths"
 
     # Validate teacher config if present
     if meta.get("teacher_cfg"):
         validate_teacher_cfg(meta["teacher_cfg"])
 
-    model = build_mlp_forward_fn(
-        in_dim=int(X.shape[-1]),
+    # Create model template for loading (dummy key for structure only)
+    model_template = build_mlp(
+        in_dim=model_cfg.get("in_dim", 2),
         widths=widths,
-        out_dim=int(Y.shape[-1] if Y.ndim > 1 else 1),
-        activation=mcfg.get("activation", "relu"),
-        bias=mcfg.get("bias", True),
-        init=mcfg.get("init", "he"),
-        layernorm=mcfg.get("layernorm", False),
+        out_dim=model_cfg.get("out_dim", 1),
+        activation=model_cfg.get("activation", "relu"),
+        bias=model_cfg.get("bias", True),
+        layernorm=model_cfg.get("layernorm", False),
+        key=jax.random.PRNGKey(0),  # Dummy key, will be overwritten
     )
+
+    # Load target artifact with model template
+    X, Y, model, meta, tdir = load_target_artifact(
+        cfg.store.root, args.target_id, model_template=model_template
+    )
+    params = model  # For Equinox, model IS the params
 
     # Get L0 from metadata
     L0 = meta.get("metrics", {}).get("L0")
@@ -100,8 +109,10 @@ def main():
     student_df = data_cfg.get("student_df", 4.0)
 
     # Loss fns (float32)
+    # Equinox models are called directly: model(x), not model.apply(params, None, x)
+    predict_fn = lambda m, x: m(x)
     loss_full_f32, loss_minibatch_f32 = make_loss_fns(
-        model.apply,
+        predict_fn,
         X_f32,
         Y_f32,
         loss_type=loss_type,
