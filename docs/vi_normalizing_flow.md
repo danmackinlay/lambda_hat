@@ -1,6 +1,3 @@
-Here’s a concrete blueprint for **training a (low‑dimensional) normalizing flow that targets a local posterior around a MAP solution (w^*)**, using the best reparameterization tricks and variance‑reduction ideas I’d deploy today. I’ll keep notation consistent with your draft: random vectors as (\rv{x}), matrices (\mm{A}), etc., and I’ll avoid LaTeX blocks.
-
----
 
 ## 0) Core modeling idea (low‑dimensional flow + thin ambient noise)
 
@@ -264,7 +261,208 @@ for step in 1..T:
 
 ---
 
-If you want, I can also tailor this to **your exact training stack** (e.g., how you’re computing HVPs at (w^*), what your data minibatching looks like, and whether you want to train (\mm{U}) jointly or freeze it after a warm‑start).
+## 13) Practical JAX/vmap Implementation Learnings
+
+**Context:** This section documents critical lessons learned from implementing Flow VI with JAX vmap for multi-chain parallel execution (Nov 2025).
+
+### 13.1 PRNG Key Management
+
+**Issue:** FlowJAX and JAX vmap have strict requirements for PRNG key formats.
+
+**Solution:**
+* Use **typed threefry2x32 keys globally**: Set `jax.config.update("jax_default_prng_impl", "threefry2x32")` at package import time
+* **Avoid RBG**: RBG keys have unusual vmap batching semantics that can cause shape mismatches
+* **Normalize keys on the host**: Convert legacy `uint32[2]` keys to typed keys *before* entering vmap/jit:
+  ```python
+  def ensure_typed_key(key):
+      """Host-side normalization (outside jit/vmap)."""
+      if isinstance(key, jax.Array) and key.dtype == jnp.uint32:
+          if key.ndim == 1 and key.shape[-1] == 2:
+              return jr.wrap_key_data(key, impl="threefry2x32")
+      return key
+  ```
+* Set `JAX_DEFAULT_PRNG_IMPL=threefry2x32` in worker environments (Parsl, SLURM, etc.)
+
+### 13.2 Vmap Compatibility: Returns Must Be Pure Data
+
+**Critical constraint:** `jax.vmap` can only batch over **valid JAX types** (arrays, scalars). Functions, Equinox modules, or objects with static components will cause:
+```
+TypeError: Output from batched function ... with type <class 'jaxlib._jax.PjitFunction'> is not a valid JAX type
+```
+
+**Rules for VI algorithm returns:**
+1. **Return only JAX arrays and Python scalars**
+   * ✅ Good: `{"lambda_hat": jnp.array(...), "traces": {"elbo": jnp.array(...)}}`
+   * ❌ Bad: `{"final_dist": flow_object}` (Equinox module with function references)
+
+2. **No FlowJAX modules in return values**
+   * FlowJAX `Flow` objects contain static parts (bijector functions like `jax.nn.softplus`)
+   * These cannot pass through vmap - extract numerical arrays only
+
+3. **Wrap all values in `jnp.asarray()` for type safety**
+   ```python
+   extras = {
+       "Eq_Ln": jnp.asarray(E_L),           # Not just E_L
+       "Ln_wstar": jnp.asarray(L0),
+       "variance_reduction": jnp.asarray(1.0, dtype=E_L.dtype),  # Even scalars
+   }
+   ```
+
+4. **Add vmap-safety validation during development**
+   ```python
+   def _all_leaves_are_arrays(x):
+       leaves, _ = jax.tree_util.tree_flatten(x)
+       return all(isinstance(l, (jax.Array, jnp.ndarray, int, float, bool)) for l in leaves)
+
+   assert _all_leaves_are_arrays(result), "Non-JAX objects in returns"
+   ```
+
+### 13.3 No Python Casts Inside Traced Code
+
+**Issue:** Cannot use `float()`, `int()`, `list()` on traced values inside `@jax.jit` or `jax.vmap`:
+```python
+# Inside @jax.jit function:
+work_fge = jnp.asarray(batch_size / float(n_data), dtype=jnp.float64)  # ❌ FAILS
+# Error: ConcretizationTypeError when n_data is traced
+```
+
+**Solution:** Let JAX handle type promotion automatically:
+```python
+work_fge = jnp.asarray(batch_size / n_data, dtype=jnp.float64)  # ✅ Works
+```
+
+**Rule:** Inside jit/vmap/scan, **never** call:
+* `float(x)`, `int(x)` on arrays or traced values
+* `len(x)` on traced arrays (use `.shape[0]` or pass length as static arg)
+* `list(x)`, `tuple(x)` on traced arrays
+
+### 13.4 STL Implementation Details
+
+The theoretical "Sticking the Landing" gradient estimator requires **keeping gradients flowing through the model term but not through the entropy term via samples**.
+
+**Practical implementation:**
+* Return `lambda_hat` (and all results) as **JAX arrays**, not Python floats:
+  ```python
+  # ❌ Bad (breaks vmap, breaks STL):
+  return {"lambda_hat": float(lambda_hat), ...}
+
+  # ✅ Good (vmap-safe, STL-compatible):
+  return {"lambda_hat": lambda_hat, ...}  # Keep as JAX array
+  ```
+* The gradient stopping happens in the loss computation, not in the return values
+* Converting to Python types breaks both vmap AND gradient flow
+
+### 13.5 Interface Consistency Across VI Algorithms
+
+**Problem:** Different VI algorithms (MFA, Flow) must return compatible structures for the sampling infrastructure.
+
+**Required return structure:**
+```python
+{
+    "lambda_hat": jnp.array(...),           # Shape: scalar or (,)
+    "traces": {                             # Per-iteration metrics
+        "elbo": jnp.array(...),             # Shape: (num_steps,)
+        "grad_norm": jnp.array(...),
+        # ... other traces
+    },
+    "extras": {                             # Final evaluation metrics
+        "Eq_Ln": jnp.array(...),            # Expected negative log-likelihood
+        "Ln_wstar": jnp.array(...),         # Log-likelihood at MAP
+        "cv_info": {                        # Control variate diagnostics
+            "Eq_Ln_mc": jnp.array(...),
+            "Eq_Ln_cv": jnp.array(...),
+            "variance_reduction": jnp.array(...),
+        },
+    },
+    "timings": {                            # Wall-clock times (Python floats OK here)
+        "adaptation": 0.0,                  # Flow/MFA have no adaptation phase
+        "sampling": float(...),             # Total training+eval time
+        "total": float(...),
+    },
+    "work": {                               # FGE accounting (Python ints/floats OK)
+        "n_full_loss": int(...),
+        "n_grad": int(...),
+        # ...
+    },
+}
+```
+
+**Key points:**
+* `timings` uses `"adaptation"/"sampling"/"total"` keys (not `"train"/"eval"`)
+* `extras` follows MFA's structure with `Eq_Ln`, `Ln_wstar`, `cv_info`
+* All arrays wrapped in `jnp.asarray()` for type safety
+
+### 13.6 Equinox Module Handling
+
+**FlowJAX uses Equinox**, which partitions modules into:
+* **Dynamic part** (arrays): Can be vmapped, differentiated
+* **Static part** (functions, shapes): Cannot change during tracing
+
+**When using Equinox flows:**
+1. **Partition at the start of `run()`** (outside loops):
+   ```python
+   flow_params, flow_static = eqx.partition(flow, eqx.is_array)
+   ```
+
+2. **Use only `flow_params` inside jit/vmap/scan**
+
+3. **Recombine when needed** inside traced code:
+   ```python
+   flow = eqx.combine(flow_params, flow_static)
+   samples = flow.sample(key, ...)
+   ```
+
+4. **Never return `flow_static` or combined modules** from vmapped functions
+
+### 13.7 Debugging Vmap Issues
+
+**Symptoms of vmap incompatibility:**
+* `TypeError: ... is not a valid JAX type`
+* `ConcretizationTypeError` when calling `float()`, `int()`, etc.
+* `PRNG key shape mismatch` errors
+
+**Debugging steps:**
+1. **Check return types** by adding this before your vmap call:
+   ```python
+   test_result = run_one_chain(chain_keys[0])  # Run single chain
+   leaves, _ = jax.tree_util.tree_flatten(test_result)
+   for i, leaf in enumerate(leaves):
+       print(f"Leaf {i}: type={type(leaf)}, shape={getattr(leaf, 'shape', '?')}")
+   ```
+
+2. **Look for non-array types**: Functions, modules, or objects in the output
+
+3. **Check PRNG keys**: Ensure all keys are typed and consistent:
+   ```python
+   key_data = jax.random.key_data(rng_key)
+   print(f"Key shape: {key_data.shape}, impl: {rng_key._impl}")
+   ```
+
+4. **Use `JAX_TRACEBACK_FILTERING=off`** to see full stack traces
+
+### 13.8 Multi-Chain Execution Patterns
+
+**For vmap-compatible algorithms (MFA, fixed Flow):**
+```python
+def run_one_chain(chain_key):
+    return algo.run(rng_key=chain_key, ...)
+
+results = jax.vmap(run_one_chain)(chain_keys)  # Parallel across chains
+```
+
+**For algorithms with vmap issues (legacy pattern, now deprecated):**
+```python
+# Sequential fallback (slower, but works with any return type)
+results_list = [run_one_chain(k) for k in chain_keys]
+lambda_hats = jnp.stack([r["lambda_hat"] for r in results_list])
+# ... manually stack other results
+```
+
+**Current status:** Flow VI is now vmap-compatible (as of Nov 2025 fixes).
+
+---
+
+If you want, I can also tailor this to **your exact training stack** (e.g., how you're computing HVPs at (w^*), what your data minibatching looks like, and whether you want to train (\mm{U}) jointly or freeze it after a warm‑start).
 
 [1]: https://arxiv.org/abs/2006.13070 "Normalizing Flows Across Dimensions"
 [2]: https://arxiv.org/abs/1703.09194 "Sticking the Landing: Simple, Lower-Variance Gradient Estimators for Variational Inference"
