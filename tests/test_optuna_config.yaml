@@ -1,0 +1,18 @@
+# Ultra-minimal Optuna config for integration testing
+# Designed for fast execution (<10 minutes total)
+
+problems:
+  # Tiny problem for speed
+  - model: small      # Small network (~1000 params)
+    data: small       # Small dataset (~100 samples)
+    teacher: _null    # No teacher (null synthetic)
+    seed: 42
+
+methods:
+  - vi               # Only VI for speed (HMC/SGLD/MCLMC slower)
+
+optuna:
+  max_trials: 3          # Just 3 trials for testing
+  batch_size: 2          # Small batch size
+  hmc_budget_sec: 180    # 3 minutes for HMC (reduced from default 10h)
+  method_budget_sec: 60  # 1 minute per trial (reduced from default 100min)

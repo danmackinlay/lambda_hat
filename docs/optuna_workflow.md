@@ -42,6 +42,12 @@ optuna:
   method_budget_sec: 600   # Method trial: 10 minutes
 ```
 
+**Note on budgets**: Default HMC budget (10 hours) is generous for production-quality references. For local testing or quick iteration, use shorter budgets via CLI:
+```bash
+uv run python workflows/parsl_optuna.py --config config/my_optuna_run.yaml --local \
+    --hmc-budget 1800 --method-budget 300  # 30min HMC, 5min trials
+```
+
 ### 2. Run locally (testing)
 
 ```bash
@@ -269,6 +275,46 @@ To optimize both LLC error **and** runtime:
 **Recommended workflow**:
 1. Use `parsl_optuna.py` to find optimal hyperparameters for your problem class
 2. Use `parsl_llc.py` with tuned hyperparameters for production experiments
+
+---
+
+## Testing
+
+The Optuna workflow includes comprehensive integration tests to verify end-to-end functionality.
+
+### Running Tests
+
+```bash
+# Run all Optuna integration tests
+uv run pytest tests/test_optuna_workflow.py -v
+
+# Run specific test
+uv run pytest tests/test_optuna_workflow.py::test_optuna_workflow_integration -v
+
+# Run with output (see print statements)
+uv run pytest tests/test_optuna_workflow.py -v -s
+```
+
+### Test Configuration
+
+Tests use `tests/test_optuna_config.yaml` with minimal settings for fast execution:
+- 1 small problem (model: small, data: small)
+- 1 method (VI only)
+- 3 trials maximum
+- 3-minute HMC budget
+- 1-minute trial budget
+
+**Expected test duration**: ~5-7 minutes total
+
+### What Tests Verify
+
+1. **HMC reference computation**: Validates reference LLC is computed and cached correctly
+2. **Trial execution**: Verifies trials run and produce valid results
+3. **Results structure**: Checks parquet file has correct columns and data
+4. **Artifacts**: Validates manifest.json, metrics.json, study pickle exist
+5. **Caching**: Ensures HMC references are reused across runs
+
+**Note**: Tests cleanup `artifacts/`, `results/`, and other temporary directories automatically.
 
 ---
 

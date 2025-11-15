@@ -196,3 +196,124 @@ jax_enable_x64: false  # Use float32 (faster, good for SGLD)
 ```
 
 Individual samplers can override with `dtype` parameter in their preset files.
+
+---
+
+## Optuna Configuration (Hyperparameter Optimization)
+
+The Optuna workflow (`workflows/parsl_optuna.py`) uses a separate configuration format focused on hyperparameter optimization. See [`docs/optuna_workflow.md`](./optuna_workflow.md) for complete details.
+
+### Config Structure
+
+Optuna configs are defined in files like `config/optuna_demo.yaml`:
+
+```yaml
+# Problems to optimize hyperparameters for
+problems:
+  - model: small        # Model preset (same as targets)
+    data: base          # Data preset (same as targets)
+    teacher: _null      # Teacher preset (same as targets)
+    seed: 42            # Training seed
+
+# Methods to optimize
+methods:
+  - vi
+  - sgld
+  - mclmc
+
+# Optuna settings (optional - can override via CLI)
+optuna:
+  max_trials: 100          # Trials per (problem, method)
+  batch_size: 16           # Concurrent trials
+  hmc_budget_sec: 7200     # HMC reference: 2 hours
+  method_budget_sec: 600   # Method trial: 10 minutes
+```
+
+### Problem Specifications
+
+Problems use the **same format as targets** in `experiments.yaml`:
+- `model`, `data`, `teacher` reference presets in `lambda_hat/conf/`
+- `seed` controls target network initialization
+- `overrides` can customize preset parameters (same as targets)
+
+**Example with overrides:**
+```yaml
+problems:
+  - model: base
+    data: base
+    teacher: _null
+    seed: 42
+    overrides:
+      model:
+        depth: 4
+        target_params: 15000
+      data:
+        noise_scale: 0.05
+```
+
+### Methods
+
+List method names to optimize:
+```yaml
+methods:
+  - vi      # Variational Inference (MFA)
+  - sgld   # Stochastic Gradient Langevin Dynamics
+  - mclmc  # MCLMC sampler
+```
+
+**Hyperparameter search spaces** are defined in `workflows/parsl_optuna.py::suggest_method_params()`:
+- **VI**: `lr`, `M`, `r`, `whitening_mode`, `steps`, `batch_size`
+- **SGLD**: `eta0`, `gamma`, `batch`, `precond_type`, `steps`
+- **MCLMC**: `step_size`, `target_accept`, `L`, `steps`
+
+### Optuna Settings
+
+Control optimization behavior:
+
+```yaml
+optuna:
+  max_trials: 200            # Stop after N trials per (problem, method)
+  batch_size: 32             # Concurrent trials (cluster capacity)
+  hmc_budget_sec: 36000      # HMC reference: 10 hours (default)
+  method_budget_sec: 6000    # Method trial: 100 minutes (default)
+```
+
+**CLI overrides** available:
+```bash
+uv run python workflows/parsl_optuna.py \
+    --config config/my_optuna.yaml \
+    --max-trials 50 \
+    --batch-size 8 \
+    --hmc-budget 3600 \
+    --method-budget 300
+```
+
+### Running Optuna Workflow
+
+```bash
+# Local testing
+uv run python workflows/parsl_optuna.py --config config/optuna_demo.yaml --local
+
+# SLURM cluster
+uv run python workflows/parsl_optuna.py --config config/optuna_demo.yaml
+
+# Custom settings
+uv run python workflows/parsl_optuna.py \
+    --config config/my_optuna.yaml \
+    --max-trials 100 \
+    --batch-size 16
+```
+
+### Output
+
+Results are written to `results/optuna_trials.parquet` with columns:
+- `pid`: Problem ID (content-addressed)
+- `method`: Method name
+- `trial_id`: Trial ID (content-addressed)
+- `hyperparams`: Suggested hyperparameters
+- `llc_hat`: Estimated LLC
+- `llc_ref`: Reference LLC (from HMC)
+- `objective`: `|llc_hat - llc_ref|`
+- `runtime_sec`: Wall-time for trial
+
+Optuna studies are saved to `results/studies/optuna_llc/<pid>:<method>.pkl` for resumability.

@@ -23,7 +23,6 @@ import json
 import pickle
 import sys
 import time
-from importlib import import_module
 from pathlib import Path
 
 import optuna
@@ -44,22 +43,21 @@ RES = ROOT / "results"
 RES.mkdir(exist_ok=True, parents=True)
 
 
-def load_parsl_config(cfg_path):
+def load_parsl_config(config_path):
     """Load Parsl config from Python file.
 
     Args:
-        cfg_path: Path to parsl config module (e.g., parsl_config_slurm.py)
+        config_path: Path to parsl config module (e.g., parsl_config_slurm.py)
 
     Returns:
         Parsl Config object
     """
-    spec = __import__(Path(cfg_path).stem)
-    if hasattr(spec, "config"):
-        return spec.config
+    import importlib.util
 
-    # Try import_module approach if simple import fails
-    mod = import_module(Path(cfg_path).stem)
-    return mod.config
+    spec = importlib.util.spec_from_file_location("parsl_config", config_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.config
 
 
 def huber_loss(x, delta=0.1):
@@ -361,8 +359,11 @@ def run_optuna_workflow(
 
             # Report best trial
             best_trial = study.best_trial
-            print(f"      ✓ Best trial: obj={best_trial.value:.4f}")
-            print(f"        Hyperparams: {best_trial.params}")
+            if best_trial.value == float("inf"):
+                print(f"      ⚠ All trials failed - no valid hyperparameters found")
+            else:
+                print(f"      ✓ Best trial: obj={best_trial.value:.4f}")
+                print(f"        Hyperparams: {best_trial.params}")
 
     # ========================================================================
     # Stage 3: Aggregate Results
