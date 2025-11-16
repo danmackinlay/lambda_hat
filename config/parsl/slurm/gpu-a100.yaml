@@ -1,0 +1,27 @@
+# One A100 GPU, otherwise same defaults as cpu.yaml
+type: slurm
+label: htex_slurm
+partition: gpu
+nodes_per_block: 1
+init_blocks: 0
+min_blocks: 0
+max_blocks: 50
+walltime: "02:00:00"
+cores_per_node: 8
+mem_per_node: 128
+gpus_per_node: 1
+gpu_type: a100
+qos: null
+account: null
+constraint: a100
+scheduler_options_extra: ""   # add site-specific SBATCH here if needed
+retries: 1
+run_dir: parsl_runinfo
+max_workers: 1
+worker_init: |
+  module load cuda/12.1 || true
+  module load python || true
+  source ~/.bashrc || true
+  export PATH="$HOME/.local/bin:$PATH"
+  export JAX_PLATFORMS=cuda
+  export JAX_DEFAULT_PRNG_IMPL=threefry2x32

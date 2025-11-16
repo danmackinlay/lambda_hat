@@ -26,6 +26,7 @@ import parsl
 from omegaconf import OmegaConf
 from parsl import bash_app, python_app
 
+from lambda_hat.parsl_cards import build_parsl_config_from_card, load_parsl_config_from_card
 from lambda_hat.promote.core import promote_gallery
 from lambda_hat.workflow_utils import (
     compose_build_cfg,
@@ -143,7 +144,7 @@ def load_parsl_config(config_path):
 
 def run_workflow(
     experiments_yaml,
-    parsl_config_path,
+    parsl_config_path=None,  # Deprecated, kept for compatibility
     enable_promotion=False,
     promote_plots=None,
     logs_dir="logs",
@@ -154,7 +155,7 @@ def run_workflow(
 
     Args:
         experiments_yaml: Path to experiments config (e.g., config/experiments.yaml)
-        parsl_config_path: Path to Parsl executor config
+        parsl_config_path: [DEPRECATED] Ignored (Parsl config loaded via main())
         enable_promotion: Whether to run promotion stage (default: False, opt-in)
         promote_plots: List of plot names to promote (default: ['trace.png'])
         logs_dir: Directory for log files (default: "logs")
@@ -172,11 +173,7 @@ def run_workflow(
     temp_cfg_dir = Path(temp_cfg_dir)
     results_dir = Path(results_dir)
 
-    # Load Parsl config and initialize
-    parsl_cfg = load_parsl_config(parsl_config_path)
-    parsl.load(parsl_cfg)
-
-    # Load experiment configuration
+    # Load experiment configuration (Parsl config already loaded in main())
     exp = OmegaConf.load(experiments_yaml)
     store_root = exp.get("store_root", "runs")
     jax_x64 = bool(exp.get("jax_enable_x64", True))
@@ -414,14 +411,26 @@ def main():
         help="Path to experiments config (default: config/experiments.yaml)",
     )
     parser.add_argument(
+        "--parsl-card",
+        default=None,
+        help="Path to Parsl YAML card (e.g., config/parsl/slurm/cpu.yaml). Replaces --parsl-config.",
+    )
+    parser.add_argument(
+        "--set",
+        dest="parsl_sets",
+        action="append",
+        default=[],
+        help="Override Parsl card values (OmegaConf dotlist), e.g.: --set walltime=04:00:00 --set gpus_per_node=1",
+    )
+    parser.add_argument(
         "--parsl-config",
         default="parsl_config_slurm.py",
-        help="Path to Parsl executor config (default: parsl_config_slurm.py)",
+        help="[DEPRECATED] Path to Python Parsl config file. Use --parsl-card instead.",
     )
     parser.add_argument(
         "--local",
         action="store_true",
-        help="Use local ThreadPool executor (overrides --parsl-config)",
+        help="Use local ThreadPool executor (equivalent to --parsl-card config/parsl/local.yaml)",
     )
     parser.add_argument(
         "--promote",
@@ -451,34 +460,53 @@ def main():
 
     args = parser.parse_args()
 
-    # Resolve config path
-    cwd = Path.cwd()
-    if args.local:
-        parsl_config_path = cwd / "parsl_config_local.py"
+    # Resolve Parsl config (cards preferred, fallback to legacy Python files)
+    if args.local and not args.parsl_card:
+        # Local mode: build config directly from card spec
+        print("Using Parsl mode: local (ThreadPool)")
+        parsl_cfg = build_parsl_config_from_card(OmegaConf.create({"type": "local"}))
+    elif args.parsl_card:
+        # Card-based config (modern approach)
+        card_path = Path(args.parsl_card)
+        if not card_path.is_absolute():
+            card_path = Path.cwd() / card_path
+        if not card_path.exists():
+            print(f"Error: Parsl card not found: {card_path}", file=sys.stderr)
+            sys.exit(1)
+        print(f"Using Parsl card: {card_path}")
+        if args.parsl_sets:
+            print(f"  Overrides: {args.parsl_sets}")
+        parsl_cfg = load_parsl_config_from_card(card_path, args.parsl_sets)
     else:
+        # Legacy Python config file (deprecated)
+        cwd = Path.cwd()
         parsl_config_path = Path(args.parsl_config)
         if not parsl_config_path.is_absolute():
             parsl_config_path = cwd / parsl_config_path
-
-    if not parsl_config_path.exists():
-        print(f"Error: Parsl config not found: {parsl_config_path}", file=sys.stderr)
-        sys.exit(1)
+        if not parsl_config_path.exists():
+            print(f"Error: Parsl config not found: {parsl_config_path}", file=sys.stderr)
+            sys.exit(1)
+        print(f"[DEPRECATED] Using legacy Python Parsl config: {parsl_config_path}")
+        print("  Consider migrating to --parsl-card (YAML-based config)")
+        parsl_cfg = load_parsl_config(parsl_config_path)
 
     # Parse promote plots
     promote_plots = [p.strip() for p in args.promote_plots.split(",") if p.strip()]
 
     # Run workflow
-    print(f"Using Parsl config: {parsl_config_path}")
     print(f"Using experiments config: {args.config}")
     if args.promote:
         print(f"Promotion enabled: {promote_plots}")
     else:
         print("Promotion disabled (use --promote to enable)\n")
 
+    # Load Parsl config
+    parsl.load(parsl_cfg)
+
     try:
         output_path = run_workflow(
             args.config,
-            parsl_config_path,
+            None,  # No longer pass parsl_config_path
             enable_promotion=args.promote,
             promote_plots=promote_plots,
             logs_dir=args.logs_dir,

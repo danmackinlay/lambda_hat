@@ -32,6 +32,7 @@ import parsl
 from omegaconf import OmegaConf
 
 from lambda_hat.id_utils import problem_id, trial_id
+from lambda_hat.parsl_cards import build_parsl_config_from_card, load_parsl_config_from_card
 from lambda_hat.runners.parsl_apps import compute_hmc_reference, run_method_trial
 
 
@@ -121,7 +122,7 @@ def suggest_method_params(trial, method_name):
 
 def run_optuna_workflow(
     config_path,
-    parsl_config_path,
+    parsl_config_path=None,  # Deprecated, kept for compatibility
     max_trials_per_method=200,
     batch_size=32,
     hmc_budget_sec=36000,
@@ -130,6 +131,10 @@ def run_optuna_workflow(
     results_dir="results",
 ):
     """Execute Optuna hyperparameter optimization workflow.
+
+    Args:
+        config_path: Path to Optuna experiment config
+        parsl_config_path: [DEPRECATED] Ignored (Parsl config loaded via main())
 
     Args:
         config_path: Path to Optuna config YAML (problem specs)
@@ -149,12 +154,7 @@ def run_optuna_workflow(
     results_dir = Path(results_dir)
     results_dir.mkdir(exist_ok=True, parents=True)
 
-    # Load Parsl config and initialize
-    print(f"Loading Parsl config from {parsl_config_path}...")
-    parsl_cfg = load_parsl_config(parsl_config_path)
-    parsl.load(parsl_cfg)
-
-    # Load experiment configuration
+    # Load experiment configuration (Parsl config already loaded in main())
     print(f"Loading experiment config from {config_path}...")
     exp = OmegaConf.load(config_path)
 
@@ -397,14 +397,26 @@ def main():
         help="Path to Optuna experiment config (default: config/optuna_demo.yaml)",
     )
     parser.add_argument(
+        "--parsl-card",
+        default=None,
+        help="Path to Parsl YAML card (e.g., config/parsl/slurm/cpu.yaml). Replaces --parsl-config.",
+    )
+    parser.add_argument(
+        "--set",
+        dest="parsl_sets",
+        action="append",
+        default=[],
+        help="Override Parsl card values (OmegaConf dotlist), e.g.: --set walltime=04:00:00",
+    )
+    parser.add_argument(
         "--parsl-config",
         default="parsl_config_slurm.py",
-        help="Path to Parsl executor config (default: parsl_config_slurm.py)",
+        help="[DEPRECATED] Path to Python Parsl config file. Use --parsl-card instead.",
     )
     parser.add_argument(
         "--local",
         action="store_true",
-        help="Use local ThreadPool executor (overrides --parsl-config)",
+        help="Use local ThreadPool executor (equivalent to --parsl-card config/parsl/local.yaml)",
     )
     parser.add_argument(
         "--max-trials",
@@ -443,27 +455,43 @@ def main():
 
     args = parser.parse_args()
 
-    # Resolve Parsl config
-    cwd = Path.cwd()
-    if args.local:
-        parsl_config_path = cwd / "parsl_config_local.py"
+    # Resolve Parsl config (cards preferred, fallback to legacy Python files)
+    if args.local and not args.parsl_card:
+        print("Using Parsl mode: local (ThreadPool)")
+        parsl_cfg = build_parsl_config_from_card(OmegaConf.create({"type": "local"}))
+    elif args.parsl_card:
+        card_path = Path(args.parsl_card)
+        if not card_path.is_absolute():
+            card_path = Path.cwd() / card_path
+        if not card_path.exists():
+            print(f"Error: Parsl card not found: {card_path}", file=sys.stderr)
+            sys.exit(1)
+        print(f"Using Parsl card: {card_path}")
+        if args.parsl_sets:
+            print(f"  Overrides: {args.parsl_sets}")
+        parsl_cfg = load_parsl_config_from_card(card_path, args.parsl_sets)
     else:
+        cwd = Path.cwd()
         parsl_config_path = Path(args.parsl_config)
         if not parsl_config_path.is_absolute():
             parsl_config_path = cwd / parsl_config_path
-
-    if not parsl_config_path.exists():
-        print(f"Error: Parsl config not found: {parsl_config_path}", file=sys.stderr)
-        sys.exit(1)
+        if not parsl_config_path.exists():
+            print(f"Error: Parsl config not found: {parsl_config_path}", file=sys.stderr)
+            sys.exit(1)
+        print(f"[DEPRECATED] Using legacy Python Parsl config: {parsl_config_path}")
+        print("  Consider migrating to --parsl-card (YAML-based config)")
+        parsl_cfg = load_parsl_config(parsl_config_path)
 
     # Run workflow
-    print(f"Using Parsl config: {parsl_config_path}")
     print(f"Using Optuna config: {args.config}\n")
+
+    # Load Parsl config
+    parsl.load(parsl_cfg)
 
     try:
         output_path = run_optuna_workflow(
             args.config,
-            parsl_config_path,
+            None,  # No longer pass parsl_config_path
             max_trials_per_method=args.max_trials,
             batch_size=args.batch_size,
             hmc_budget_sec=args.hmc_budget,

@@ -1,0 +1,6 @@
+type: local
+label: local_threads
+max_threads: null      # null -> auto: min(cpu_count, 8)
+retries: 1
+run_dir: parsl_runinfo
+jax_default_prng_impl: threefry2x32

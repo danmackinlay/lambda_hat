@@ -1,0 +1,24 @@
+type: slurm
+label: htex_slurm
+partition: normal
+nodes_per_block: 1
+init_blocks: 0
+min_blocks: 0
+max_blocks: 50
+walltime: "01:59:00"
+cores_per_node: 2
+mem_per_node: 64
+gpus_per_node: 0
+gpu_type: null
+qos: null
+account: null
+constraint: null
+scheduler_options_extra: ""   # extra SBATCH lines if needed
+retries: 1
+run_dir: parsl_runinfo
+max_workers: 1
+worker_init: |
+  module load python || true
+  source ~/.bashrc || true
+  export PATH="$HOME/.local/bin:$PATH"
+  export JAX_DEFAULT_PRNG_IMPL=threefry2x32
