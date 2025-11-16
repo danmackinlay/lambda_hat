@@ -1,6 +1,6 @@
 Minimal rules for this repo. Deviations break CI.
 
-## Versions (hard pins)
+## Versions
 - **Python ≥ 3.11**
 - **JAX ≥ 0.7.2** (use `jax.tree.map`, `jax.lax.scan`, etc.)
 - **BlackJAX == 1.2.5** (don't import newer APIs)
@@ -23,9 +23,9 @@ uv sync --extra flowvi     # Add FlowJAX for flow-based VI (optional)
 
 ```bash
 # All commands via unified 'lambda-hat' CLI
-uv run lambda-hat build --config-yaml config.yaml --target-id tgt_abc123
-uv run lambda-hat sample --config-yaml config.yaml --target-id tgt_abc123
-uv run lambda-hat promote gallery --runs-root runs --samplers sgld,hmc
+uv run lambda-hat build --config-yaml config/experiments.yaml --target-id tgt_abc123
+uv run lambda-hat sample --config-yaml config/experiments.yaml --target-id tgt_abc123
+uv run lambda-hat promote gallery --runs-root artefacts/experiments/dev/runs --samplers sgld,hmc
 uv run lambda-hat artifacts gc      # garbage collect old artifacts
 uv run lambda-hat artifacts ls      # list experiments and runs
 uv run lambda-hat --help            # see all commands
@@ -33,7 +33,7 @@ uv run lambda-hat --help            # see all commands
 
 ## Workflow
 
-**Three-stage pipeline:** Stage A builds targets (neural networks + datasets), Stage B runs samplers (MCMC or variational), Stage C promotes results (gallery + aggregation). Parsl orchestrates N targets × M samplers in parallel with Python-native DAGs.
+**Three-stage pipeline:** Build targets (neural networks + datasets), run samplers (MCMC or variational), optionally promote results (gallery + aggregation). Parsl orchestrates N targets × M samplers in parallel using Python-native `@python_app` functions with content-addressed IDs for reproducibility.
 
 ```bash
 # Local execution (testing)
@@ -42,11 +42,11 @@ uv run lambda-hat workflow llc --local
 # SLURM cluster execution
 uv run lambda-hat workflow llc --parsl-card config/parsl/slurm/gpu-a100.yaml
 
-# With promotion (Stage C)
+# With promotion (opt-in via --promote flag)
 uv run lambda-hat workflow llc --local --promote
 
 # Optuna hyperparameter optimization
-uv run lambda-hat workflow optuna --config config/optuna.yaml --study-name my_study
+uv run lambda-hat workflow optuna --config config/optuna_demo.yaml --study-name my_study
 ```
 
 ## Testing & Lint
@@ -66,8 +66,16 @@ uv run ruff check --fix
 
 ## Config
 
-* Edit `config/experiments.yaml`; nested keys only (`cfg.data.n_data`, not `cfg.n_data`).
-* Artifacts live under `runs/targets/tgt_<hash>/`.
+* Edit `config/experiments.yaml` to define target/sampler configurations.
+* Use `overrides` dict for custom values (e.g., `overrides: { training: { steps: 10000 } }`).
+* See `docs/configuration.md` for complete schema.
+
+## Artifacts
+
+* Default artifact home: `artefacts/` (configurable via `LAMBDA_HAT_HOME`).
+* Store: `artefacts/store/` (content-addressed immutable objects).
+* Experiments: `artefacts/experiments/{experiment}/runs/`.
+* See `docs/output_management.md` for complete layout details.
 
 ## Don't
 
@@ -86,8 +94,7 @@ uv run ruff check --fix
   - Flow: Normalizing flows via manifold-plus-noise construction (requires `--extra flowvi`)
     - RealNVP coupling flow (default), MAF, or NSF architectures
     - Low-rank latent space with orthogonal noise
-    - **KNOWN ISSUE**: Currently broken with Parsl workflows due to PRNG key format incompatibility in vmap context
-    - Works in unit tests (non-vmapped); see docs/flow_prng_issue.md for diagnosis
+    - Vmap-compatible (PRNG key issues resolved Nov 2025)
     - NOTE: HVP control variate deferred to future work
   - Work metrics: `n_full_loss` (MC samples for lambda), `n_minibatch_grads` (optimization steps), `sampler_flavour`
   - FGE tracking: `cumulative_fge = batch_size / n_data` per step (minibatch accounting)

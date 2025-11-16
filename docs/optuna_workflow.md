@@ -385,5 +385,5 @@ Optuna studies are periodically saved to `results/studies/optuna_llc/<pid>:<meth
 
 - **Design**: `plans/optuna.md` - Full architectural design document
 - **Standard workflow**: `docs/vi_mfa.md` - MFA VI configuration and usage
-- **Parsl config**: `parsl_config_slurm.py`, `parsl_config_local.py` - Executor configs
+- **Parsl config**: `config/parsl/slurm/cpu.yaml`, `config/parsl/slurm/gpu-a100.yaml`, `config/parsl/local.yaml` - Executor configs
 - **Optuna docs**: https://optuna.readthedocs.io - Advanced features (pruning, multi-objective, etc.)

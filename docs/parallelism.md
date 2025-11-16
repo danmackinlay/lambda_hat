@@ -35,11 +35,11 @@ uv run lambda-hat workflow llc --local --promote
 
 ### Controlling Parallelism
 
-Edit `parsl_config_local.py` to control the number of parallel workers:
+Edit `config/parsl/local.yaml` to control the number of parallel workers:
 
-```python
+```yaml
 # Adjust max_workers
-max_workers = min(os.cpu_count() or 4, 8)  # Cap at 8 cores
+max_workers: 8  # Cap at 8 cores
 ```
 
 For very small tests, you can reduce this to 1 or 2 workers to simplify debugging.
@@ -184,9 +184,9 @@ cat logs/build_target/tgt_*.err
 
 **Problem**: "Too many open files" error
 
-**Solution**: Reduce max_workers in `parsl_config_local.py`:
-```python
-max_workers = 2  # Lower for resource-constrained systems
+**Solution**: Reduce max_workers in `config/parsl/local.yaml`:
+```yaml
+max_workers: 2  # Lower for resource-constrained systems
 ```
 
 ### SLURM Execution Issues

@@ -53,7 +53,7 @@ def build_parsl_config_from_card(card: DictConfig) -> Config:
     run_dir = card.get("run_dir", "parsl_runinfo")
 
     if typ == "local":
-        # Set JAX default behavior (mirrors parsl_config_local.py)
+        # Set JAX default behavior
         os.environ.setdefault(
             "JAX_DEFAULT_PRNG_IMPL", card.get("jax_default_prng_impl", "threefry2x32")
         )
