@@ -61,7 +61,7 @@ def main():
 
     print("=== LLC: Sample ===")
     print(f"Target ID: {args.target_id}")
-    print(f"Run Dir: {args.run_dir}")
+    print(f"Run Dir: {run_dir}")
     try:
         print(OmegaConf.to_yaml(cfg, resolve=True))
     except Exception:

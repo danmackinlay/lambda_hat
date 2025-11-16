@@ -68,7 +68,7 @@ def main():
 
     print("=== LLC: Build Target ===")
     print(f"Target ID: {args.target_id}")
-    print(f"Target Dir: {args.target_dir}")
+    print(f"Target Dir: {target_dir}")
     print(OmegaConf.to_yaml(cfg, resolve=True))
 
     # RNG
