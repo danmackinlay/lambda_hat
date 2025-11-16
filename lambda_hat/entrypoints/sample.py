@@ -13,7 +13,7 @@ from lambda_hat.analysis import (
     create_combined_convergence_plot,
     create_work_normalized_variance_plot,
 )
-from lambda_hat.artifacts import ArtifactStore, Paths, RunContext, safe_symlink
+from lambda_hat.artifacts import ArtifactStore, Paths, RunContext
 from lambda_hat.config import validate_teacher_cfg
 from lambda_hat.losses import as_dtype, make_loss_fns
 from lambda_hat.nn_eqx import build_mlp, count_params

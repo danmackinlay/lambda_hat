@@ -9,7 +9,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import optax
-from jax import jit, value_and_grad
+from jax import jit
 
 if TYPE_CHECKING:
     from .config import Config

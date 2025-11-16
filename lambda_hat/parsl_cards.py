@@ -109,9 +109,7 @@ export JAX_DEFAULT_PRNG_IMPL=threefry2x32
     raise ValueError(f"Unknown parsl card type: {typ}")
 
 
-def load_parsl_config_from_card(
-    card_path: Path, dot_overrides: list[str] | None = None
-) -> Config:
+def load_parsl_config_from_card(card_path: Path, dot_overrides: list[str] | None = None) -> Config:
     """Load Parsl config from a YAML card with optional CLI overrides.
 
     Args:

@@ -7,6 +7,7 @@ Three-layer model:
 - Experiments: Grouping, manifests, TensorBoard aggregation
 - Scratch: Ephemeral working space (safe to delete)
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -95,18 +96,14 @@ class Paths:
     @staticmethod
     def from_env() -> "Paths":
         """Create Paths from environment variables."""
-        home = Path(
-            os.environ.get("LAMBDA_HAT_HOME", Path.cwd() / ".lambda_hat")
-        ).resolve()
+        home = Path(os.environ.get("LAMBDA_HAT_HOME", Path.cwd() / ".lambda_hat")).resolve()
         return Paths(
             home=home,
             store=Path(os.environ.get("LAMBDA_HAT_STORE", home / "store")).resolve(),
             experiments=Path(
                 os.environ.get("LAMBDA_HAT_EXPERIMENTS", home / "experiments")
             ).resolve(),
-            scratch=Path(
-                os.environ.get("LAMBDA_HAT_SCRATCH", home / "scratch")
-            ).resolve(),
+            scratch=Path(os.environ.get("LAMBDA_HAT_SCRATCH", home / "scratch")).resolve(),
         )
 
     def ensure(self) -> None:
@@ -176,10 +173,7 @@ class ArtifactStore:
         """
         parts = urn.split(":")
         assert (
-            len(parts) >= 5
-            and parts[0] == "urn"
-            and parts[1] == "lh"
-            and parts[3] == "sha256"
+            len(parts) >= 5 and parts[0] == "urn" and parts[1] == "lh" and parts[3] == "sha256"
         ), f"Invalid URN format: {urn}"
         h = parts[4]
         return self._dest_for_hash(h)
@@ -219,9 +213,7 @@ class RunContext:
         tag: Optional[str] = None,
     ) -> "RunContext":
         """Create a new run context with computed paths."""
-        experiment = experiment or os.environ.get(
-            "LAMBDA_HAT_DEFAULT_EXPERIMENT", "dev"
-        )
+        experiment = experiment or os.environ.get("LAMBDA_HAT_DEFAULT_EXPERIMENT", "dev")
         ts = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
         rid = f"{ts}-{algo}{('-' + tag) if tag else ''}-{_short_id()}"
         base = paths.experiments / experiment / "runs" / rid

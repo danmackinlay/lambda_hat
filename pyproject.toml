@@ -62,6 +62,7 @@ dev = [
 lambda-hat-promote = "lambda_hat.entrypoints.promote:main"
 lambda-hat-build-target = "lambda_hat.entrypoints.build_target:main"
 lambda-hat-sample = "lambda_hat.entrypoints.sample:main"
+lh = "lambda_hat.entrypoints.lh:main"
 parsl-llc = "lambda_hat.entrypoints.parsl_llc:main"
 parsl-optuna = "lambda_hat.entrypoints.parsl_optuna:main"
 

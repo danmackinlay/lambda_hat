@@ -1,6 +1,6 @@
-#!/usr/bin/env python3
-# tools/lh.py
+# lambda_hat/entrypoints/lh.py
 """Lambda-Hat artifact management utility."""
+
 import argparse
 import json
 import os
