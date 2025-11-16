@@ -13,9 +13,19 @@ if TYPE_CHECKING:
 
 
 def as_dtype(x, dtype_str):  # 'float32' or 'float64'
-    """Convert array or PyTree to specified dtype (ensures JAX arrays)"""
+    """Convert array or PyTree to specified dtype (ensures JAX arrays).
+
+    For Equinox modules, only converts array leaves (not static components).
+    """
     target_dtype = jnp.float32 if dtype_str == "float32" else jnp.float64
-    return jax.tree.map(lambda arr: jnp.asarray(arr, dtype=target_dtype), x)
+
+    def convert_leaf(arr):
+        # Only convert if it's actually an array
+        if isinstance(arr, (jnp.ndarray, jax.Array)):
+            return jnp.asarray(arr, dtype=target_dtype)
+        return arr
+
+    return jax.tree.map(convert_leaf, x, is_leaf=lambda x: isinstance(x, (jnp.ndarray, jax.Array)))
 
 
 def make_loss_fns(

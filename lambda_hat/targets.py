@@ -145,8 +145,11 @@ def build_target(key, cfg: Config) -> tuple[TargetBundle, list[int], list[int] |
         L0 = float(metrics.get("final_loss", loss_full_f32(params_star_f32)))
         d = count_params(params_star_f32)
 
-        # Flatten params for VI
-        params_star_flat, unravel_fn = jax.flatten_util.ravel_pytree(params_star_f32)
+        # Flatten params for VI (extract arrays only from Equinox model)
+        import equinox as eqx
+
+        trainable_params, _ = eqx.partition(params_star_f32, eqx.is_array)
+        params_star_flat, unravel_fn = jax.flatten_util.ravel_pytree(trainable_params)
 
         return (
             TargetBundle(

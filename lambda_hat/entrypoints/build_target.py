@@ -7,10 +7,10 @@ import jax
 from omegaconf import OmegaConf
 
 from lambda_hat import omegaconf_support  # noqa: F401
+from lambda_hat.nn_eqx import count_params
 from lambda_hat.target_artifacts import (
     TargetMeta,
-    _flatten_params_dict,
-    _hash_arrays,
+    _hash_model,
     save_target_artifact_explicit,
 )
 from lambda_hat.targets import build_target
@@ -68,13 +68,12 @@ def main():
     if used_teacher_widths is not None:
         print(f"teacher.widths={used_teacher_widths}")
 
-    # Metadata & hashing
-    flat = _flatten_params_dict(theta)
-    theta_hash = _hash_arrays(flat)
+    # Metadata & hashing (Equinox)
+    theta_hash = _hash_model(theta)
     dims = {
         "n": int(X.shape[0]),
         "d": int(X.shape[1]),
-        "p": sum(v.size for v in flat.values()),
+        "p": count_params(theta),
     }
 
     # Create model_cfg with resolved widths injected

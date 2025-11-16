@@ -347,9 +347,8 @@ def run_workflow(
         unique_samplers = sorted({s["name"] for s in samplers_conf})
 
         # Load promotion config for output directory
-        from lambda_hat.conf import promote as promote_conf_module
-
-        prom_cfg = OmegaConf.create(promote_conf_module.__dict__)
+        conf_dir = Path(__file__).parent.parent / "conf"
+        prom_cfg = OmegaConf.load(conf_dir / "promote.yaml")
         outdir = Path(prom_cfg.get("outdir", "runs/promotion"))
 
         # Promote each plot type

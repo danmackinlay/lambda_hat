@@ -35,10 +35,10 @@ export JAX_DEFAULT_PRNG_IMPL=threefry2x32
                 init_blocks=0,  # Start with 0 blocks, scale up on demand
                 min_blocks=0,
                 max_blocks=50,  # Maximum number of concurrent SLURM jobs
-                walltime="04:00:00",  # 4 hours per job
+                walltime="01:59:00",  # 1 hour 59 minutes per job
                 # Adjust cores per node based on your cluster
-                cores_per_node=1,
-                mem_per_node=8,  # GB
+                cores_per_node=2,
+                mem_per_node=64,  # GB
             ),
         )
     ],
