@@ -1,17 +1,25 @@
 # lambda_hat/posterior.py
-"""Posterior construction utilities for tempered local posteriors"""
+"""Posterior construction utilities for tempered local posteriors.
+
+NEW DESIGN: All samplers work in FLAT parameter space only.
+Samplers never see model pytrees - they only see R^D vectors.
+"""
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Callable
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, Callable, Tuple
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jax import grad, jit
+
+from .equinox_adapter import VectorisedModel
 
 if TYPE_CHECKING:
-    # Update TYPE_CHECKING imports
     from .config import PosteriorConfig
+
+Array = jnp.ndarray
 
 
 def compute_beta_gamma(cfg: PosteriorConfig, d: int, n_data: int) -> tuple[float, float]:
@@ -25,50 +33,91 @@ def compute_beta_gamma(cfg: PosteriorConfig, d: int, n_data: int) -> tuple[float
     return float(beta), float(gamma)
 
 
-def make_logpost(loss_full: Callable, params0, n: int, beta: float, gamma: float) -> Callable:
-    """Create the log posterior function: log P(w) = -n*beta*L_n(w) - gamma/2*||w-w0||^2.
+@dataclass(frozen=True)
+class Posterior:
+    """Posterior in flat parameter space.
 
-    This is used by HMC and MCLMC.
+    All functions operate on flat R^D vectors, never on model pytrees.
+    This is the ONLY interface samplers should use.
     """
-    # Flatten params0 for prior computation (modernized with ravel_pytree)
-    # For Equinox models, extract only array leaves before raveling
-    import equinox as eqx
 
-    trainable_params0, _ = eqx.partition(params0, eqx.is_array)
-    theta0, _ = jax.flatten_util.ravel_pytree(trainable_params0)
+    vm: VectorisedModel
+    logpost_flat: Callable[[Array], Array]  # R^D -> scalar log posterior
+    grad_logpost_flat: Callable[[Array], Array]  # R^D -> R^D gradient
+    flat0: Array  # initial flat parameters
 
-    # Ensure scalars match theta dtype
-    beta = jnp.asarray(beta, dtype=theta0.dtype)
-    gamma = jnp.asarray(gamma, dtype=theta0.dtype)
-    n = jnp.asarray(n, dtype=theta0.dtype)
 
-    @jit
-    def logpost(params):
-        # Flatten params for prior computation (modernized with ravel_pytree)
-        # For Equinox models, extract only array leaves before raveling
-        trainable_params, _ = eqx.partition(params, eqx.is_array)
-        theta, _ = jax.flatten_util.ravel_pytree(trainable_params)
+def make_posterior(
+    vm: VectorisedModel,
+    flat0: Array,
+    loss_full: Callable[[Any], Array],  # model -> scalar loss
+    n_data: int,
+    beta: float,
+    gamma: float,
+) -> Posterior:
+    """Create posterior in flat space.
 
-        Ln = loss_full(params)
+    Args:
+        vm: VectorisedModel for converting flat <-> model
+        flat0: Initial flat parameters (for prior center)
+        loss_full: Full-data loss function (takes model, returns scalar)
+        n_data: Number of data points
+        beta: Temperature parameter
+        gamma: Prior strength parameter
+
+    Returns:
+        Posterior with flat-space log probability and gradient functions
+    """
+    # Convert scalars to arrays with correct dtype
+    beta_arr = jnp.asarray(beta, dtype=vm.dtype)
+    gamma_arr = jnp.asarray(gamma, dtype=vm.dtype)
+    n_arr = jnp.asarray(n_data, dtype=vm.dtype)
+    theta0 = flat0  # Prior center in flat space
+
+    def _logpost_from_flat(flat: Array) -> Array:
+        """Log posterior: log P(w) = -n*beta*L_n(w) - gamma/2*||w-w0||^2"""
+        model = vm.to_model(flat)
+        Ln = loss_full(model)
+
         # Prior term: -gamma/2 * ||w-w0||^2
-        lp = -0.5 * gamma * jnp.sum((theta - theta0) ** 2)
+        prior = -0.5 * gamma_arr * jnp.sum((flat - theta0) ** 2)
+
         # Likelihood term: -n * beta * L_n(w)
-        return lp - n * beta * Ln
+        return prior - n_arr * beta_arr * Ln
 
-    return logpost
+    # Compute gradient using eqx.filter_grad (handles static leaves correctly)
+    @jax.jit
+    def _grad(flat: Array) -> Array:
+        return eqx.filter_grad(_logpost_from_flat)(flat)
+
+    @jax.jit
+    def _lp(flat: Array) -> Array:
+        return _logpost_from_flat(flat)
+
+    return Posterior(vm=vm, logpost_flat=_lp, grad_logpost_flat=_grad, flat0=flat0)
 
 
-# New function for SGLD adaptation
-def make_grad_loss_minibatch(loss_minibatch: Callable) -> Callable:
-    """Create a function that computes the gradient of the minibatch loss.
-    This is used for SGLD preconditioning, which should only adapt to the loss landscape.
+def make_grad_loss_minibatch_flat(
+    vm: VectorisedModel, loss_minibatch: Callable[[Any, Array, Array], Array]
+) -> Callable[[Array, Tuple[Array, Array]], Array]:
+    """Create gradient of minibatch loss in flat space.
+
+    Args:
+        vm: VectorisedModel
+        loss_minibatch: Minibatch loss function (model, Xb, Yb) -> scalar
+
+    Returns:
+        Function (flat, (Xb, Yb)) -> flat_gradient
     """
 
-    @jit
-    def grad_loss_fn(params, minibatch):
+    @jax.jit
+    def _grad_fn(flat: Array, minibatch: Tuple[Array, Array]) -> Array:
         Xb, Yb = minibatch
-        # Compute gradient of loss w.r.t. params: ∇ L_b(w)
-        g_Lb = grad(lambda p: loss_minibatch(p, Xb, Yb))(params)
-        return g_Lb
 
-    return grad_loss_fn
+        def _loss_fn(f):
+            m = vm.to_model(f)
+            return loss_minibatch(m, Xb, Yb)
+
+        return eqx.filter_grad(_loss_fn)(flat)
+
+    return _grad_fn
