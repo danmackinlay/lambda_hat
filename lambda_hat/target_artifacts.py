@@ -302,3 +302,54 @@ def append_sample_manifest(
     _ensure_dir(tdir)
     with open(tdir / "_runs.jsonl", "a") as f:
         f.write(json.dumps(record, sort_keys=True) + "\n")
+
+
+def load_target_by_id(target_id: str, experiment: str, model_template, paths=None):
+    """Load target artifact from new artifact system using target_id.
+
+    This function replaces load_target_artifact() for the new artifact system.
+    It searches for targets in the experiment's targets directory (which contains
+    symlinks to the content-addressed store).
+
+    Args:
+        target_id: Target ID string (e.g., 'tgt_abc123')
+        experiment: Experiment name
+        model_template: Equinox model template for reconstruction (required)
+        paths: Paths object (default: from environment)
+
+    Returns:
+        Tuple of (X, Y, model, meta_dict, payload_path)
+
+    Raises:
+        FileNotFoundError: If target not found in experiment
+        ValueError: If model_template not provided or legacy format detected
+    """
+    if paths is None:
+        from lambda_hat.artifacts import Paths
+        paths = Paths.from_env()
+
+    # Find target in experiment targets directory
+    targets_dir = paths.experiments / experiment / "targets"
+    if not targets_dir.exists():
+        raise FileNotFoundError(
+            f"No targets directory found for experiment '{experiment}' at {targets_dir}"
+        )
+
+    # Search for matching target_id in symlinked targets
+    for target_link in targets_dir.glob("*"):
+        if target_link.is_symlink() or target_link.is_dir():
+            meta_path = target_link / "meta.json"
+            if meta_path.exists():
+                try:
+                    with open(meta_path) as f:
+                        meta = json.load(f)
+                        if meta.get("target_id") == target_id:
+                            # Found it! Load using existing function
+                            return load_target_artifact_from_dir(target_link, model_template)
+                except (json.JSONDecodeError, KeyError):
+                    continue
+
+    raise FileNotFoundError(
+        f"Target '{target_id}' not found in experiment '{experiment}'. "
+        f"Available targets in {targets_dir}: {list(targets_dir.glob('*'))}"
+    )

@@ -62,7 +62,6 @@ def main():
     # Fail-fast validation
     assert "target" in cfg and "seed" in cfg.target, "cfg.target.seed missing"
     assert "jax" in cfg and "enable_x64" in cfg.jax, "cfg.jax.enable_x64 missing"
-    assert "store" in cfg and "root" in cfg.store, "cfg.store.root missing"
 
     jax.config.update("jax_enable_x64", bool(cfg.jax.enable_x64))
 

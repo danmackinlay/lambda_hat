@@ -156,9 +156,10 @@ def run_workflow(
 
     # Load experiment configuration (Parsl config already loaded in main())
     exp = OmegaConf.load(experiments_yaml)
-    store_root = exp.get("store_root", "runs")  # Legacy store root for targets (content-addressed)
     experiment = experiment or exp.get("experiment") or "dev"
     jax_x64 = bool(exp.get("jax_enable_x64", True))
+    # Legacy store_root for promote functionality (backward compatibility)
+    store_root = exp.get("store_root", "runs")
     jax_x64_flag = 1 if jax_x64 else 0
 
     targets_conf = list(exp["targets"])
@@ -192,7 +193,7 @@ def run_workflow(
 
     for t in targets_conf:
         # Compose build config and compute target ID
-        build_cfg = compose_build_cfg(t, store_root=store_root, jax_enable_x64=jax_x64)
+        build_cfg = compose_build_cfg(t, jax_enable_x64=jax_x64)
         tid = target_id_for(build_cfg)
         target_ids.append(tid)
 
@@ -227,7 +228,7 @@ def run_workflow(
     for tid in target_ids:
         for s in samplers_conf:
             # Compose sample config and compute run ID
-            sample_cfg = compose_sample_cfg(tid, s, store_root=store_root, jax_enable_x64=jax_x64)
+            sample_cfg = compose_sample_cfg(tid, s, jax_enable_x64=jax_x64)
             rid = run_id_for(sample_cfg)
 
             # Write temp config YAML

@@ -18,7 +18,7 @@ from lambda_hat.config import validate_teacher_cfg
 from lambda_hat.losses import as_dtype, make_loss_fns
 from lambda_hat.nn_eqx import build_mlp, count_params
 from lambda_hat.sampling_runner import run_sampler
-from lambda_hat.target_artifacts import append_sample_manifest, load_target_artifact
+# No longer need legacy target_artifacts imports (using load_target_artifact_from_dir inline)
 from lambda_hat.targets import TargetBundle
 
 
@@ -68,28 +68,44 @@ def main():
         # Fallback to non-resolved view to keep the run alive
         print(OmegaConf.to_yaml(cfg, resolve=False))
 
-    # Recreate model template from metadata (needed for Equinox deserialization)
-    # We need to build the model BEFORE loading to get the correct structure
-    mcfg = OmegaConf.load(args.config_yaml).get("model", {})
-    meta_path = Path(cfg.store.root) / "targets" / args.target_id / "meta.json"
-    with open(meta_path) as f:
-        meta = json.load(f)
+    # Resolve target from experiment (new artifact system)
+    # Find target in experiment's targets directory (symlinks to content-addressed store)
+    targets_dir = paths.experiments / experiment / "targets"
+    target_payload = None
+    target_meta = None
+
+    # Search for matching target_id
+    for target_link in targets_dir.glob("*"):
+        meta_path = target_link / "meta.json"
+        if meta_path.exists():
+            with open(meta_path) as f:
+                meta = json.load(f)
+                if meta.get("target_id") == args.target_id:
+                    target_payload = target_link
+                    target_meta = meta
+                    break
+
+    if target_payload is None:
+        raise FileNotFoundError(
+            f"Target {args.target_id} not found in experiment {experiment}. "
+            f"Available targets: {list(targets_dir.glob('*'))}"
+        )
 
     # Guardrails
-    if bool(cfg.jax.enable_x64) != bool(meta["jax_enable_x64"]):
+    if bool(cfg.jax.enable_x64) != bool(target_meta["jax_enable_x64"]):
         raise RuntimeError(
             f"Precision mismatch: sampler x64={cfg.jax.enable_x64}, "
-            f"target x64={meta['jax_enable_x64']}"
+            f"target x64={target_meta['jax_enable_x64']}"
         )
 
     # Build model template from metadata
-    model_cfg = meta["model_cfg"]
+    model_cfg = target_meta["model_cfg"]
     widths = model_cfg.get("widths")
     assert widths is not None, "Artifact missing resolved model widths"
 
     # Validate teacher config if present
-    if meta.get("teacher_cfg"):
-        validate_teacher_cfg(meta["teacher_cfg"])
+    if target_meta.get("teacher_cfg"):
+        validate_teacher_cfg(target_meta["teacher_cfg"])
 
     # Create model template for loading (dummy key for structure only)
     model_template = build_mlp(
@@ -103,8 +119,10 @@ def main():
     )
 
     # Load target artifact with model template
-    X, Y, model, meta, tdir = load_target_artifact(
-        cfg.store.root, args.target_id, model_template=model_template
+    from lambda_hat.target_artifacts import load_target_artifact_from_dir
+
+    X, Y, model, meta, tdir = load_target_artifact_from_dir(
+        target_payload, model_template=model_template
     )
     params = model  # For Equinox, model IS the params
 
@@ -277,25 +295,8 @@ def main():
     create_combined_convergence_plot({sampler_name: idata}, run_dir)
     create_work_normalized_variance_plot({sampler_name: idata}, run_dir)
 
-    # Legacy manifest entry (keep for now, may remove later)
+    # Write run manifest (replaces legacy append_sample_manifest)
     sp = OmegaConf.to_container(cfg.sampler, resolve=True)
-    append_sample_manifest(
-        cfg.store.root,
-        args.target_id,
-        {
-            "target_id": args.target_id,
-            "sampler": sampler_name,
-            "hyperparams": sp,
-            "dtype64": bool(cfg.jax.enable_x64),
-            "walltime_sec": dt,
-            "artifact_path": str(run_dir),
-            "metrics": metrics,
-            "code_sha": cfg.runtime.code_sha,
-            "created_at": time.time(),
-        },
-    )
-
-    # Write run manifest
     ctx.write_run_manifest(
         {
             "phase": "sample",

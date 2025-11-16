@@ -52,13 +52,12 @@ def run_id_for(cfg):
     return hashlib.sha1(blob.encode()).hexdigest()[:8]
 
 
-def compose_build_cfg(t, conf_dir=None, store_root="runs", jax_enable_x64=True):
+def compose_build_cfg(t, conf_dir=None, jax_enable_x64=True):
     """Compose full build config from target specification.
 
     Args:
         t: Target spec dict with keys {model, data, teacher?, seed, overrides?}
         conf_dir: Path to lambda_hat/conf directory (default: auto-detect)
-        store_root: Root directory for artifacts (default: "runs")
         jax_enable_x64: Enable 64-bit precision (default: True)
 
     Returns:
@@ -78,7 +77,6 @@ def compose_build_cfg(t, conf_dir=None, store_root="runs", jax_enable_x64=True):
         {
             "target": {"seed": t["seed"]},
             "jax": {"enable_x64": jax_enable_x64},
-            "store": {"root": store_root},
         },
     )
     if "overrides" in t:
@@ -86,14 +84,13 @@ def compose_build_cfg(t, conf_dir=None, store_root="runs", jax_enable_x64=True):
     return cfg
 
 
-def compose_sample_cfg(tid, s, conf_dir=None, store_root="runs", jax_enable_x64=True):
+def compose_sample_cfg(tid, s, conf_dir=None, jax_enable_x64=True):
     """Compose full sampling config from target ID and sampler specification.
 
     Args:
         tid: Target ID string (e.g., 'tgt_abc123')
         s: Sampler spec dict with keys {name, seed?, overrides?}
         conf_dir: Path to lambda_hat/conf directory (default: auto-detect)
-        store_root: Root directory for artifacts (default: "runs")
         jax_enable_x64: Enable 64-bit precision (default: True)
 
     Returns:
@@ -112,7 +109,6 @@ def compose_sample_cfg(tid, s, conf_dir=None, store_root="runs", jax_enable_x64=
         {
             "target_id": tid,
             "jax": {"enable_x64": jax_enable_x64},
-            "store": {"root": store_root},
             "runtime": {"seed": s.get("seed", 12345)},
         },
     )
