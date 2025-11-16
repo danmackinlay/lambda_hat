@@ -27,11 +27,6 @@ def main():
     ap.add_argument("--config-yaml", required=True, help="Path to composed YAML config")
     ap.add_argument("--target-id", required=True, help="Target ID string")
     ap.add_argument(
-        "--run-dir",
-        required=False,
-        help="Directory where to write run outputs (optional override)",
-    )
-    ap.add_argument(
         "--experiment",
         required=False,
         help="Experiment name (defaults from config then env)",
@@ -44,26 +39,19 @@ def main():
     experiment = args.experiment or cfg.get("experiment", None)
     sampler_name = cfg.sampler.name
 
-    # Initialize artifact paths
+    # Initialize artifact system
     paths = Paths.from_env()
     paths.ensure()
     store = ArtifactStore(paths.store)
 
-    # Determine run directory
-    use_new_system = args.run_dir is None
-    if use_new_system:
-        # Use new artifact system: create RunContext
-        ctx = RunContext.create(
-            experiment=experiment,
-            algo=sampler_name,
-            paths=paths,
-            tag=args.target_id[:8],  # Use short target ID as tag
-        )
-        run_dir = ctx.run_dir
-    else:
-        # Legacy mode: use provided --run-dir
-        run_dir = Path(args.run_dir)
-        ctx = None
+    # Create RunContext for this sampling run
+    ctx = RunContext.create(
+        experiment=experiment,
+        algo=sampler_name,
+        paths=paths,
+        tag=args.target_id[:8],  # Use short target ID as tag
+    )
+    run_dir = ctx.run_dir
 
     # Fail-fast validation
     assert "sampler" in cfg and "name" in cfg.sampler, "cfg.sampler.name missing"
@@ -216,12 +204,7 @@ def main():
     ):
         from tensorboardX import SummaryWriter
 
-        # Use ctx.tb_dir if available, otherwise legacy path
-        if use_new_system and ctx is not None:
-            tb_dir = ctx.tb_dir
-        else:
-            tb_dir = run_dir / "diagnostics" / "tb"
-            tb_dir.mkdir(parents=True, exist_ok=True)
+        tb_dir = ctx.tb_dir
         writer = SummaryWriter(str(tb_dir))
 
         # Log scalar traces over optimization steps
@@ -294,7 +277,7 @@ def main():
     create_combined_convergence_plot({sampler_name: idata}, run_dir)
     create_work_normalized_variance_plot({sampler_name: idata}, run_dir)
 
-    # Manifest entry (legacy system)
+    # Legacy manifest entry (keep for now, may remove later)
     sp = OmegaConf.to_container(cfg.sampler, resolve=True)
     append_sample_manifest(
         cfg.store.root,
@@ -312,28 +295,22 @@ def main():
         },
     )
 
-    # New artifact system: commit results and write manifest
-    if use_new_system and ctx is not None:
-        # Note: We don't commit trace.nc/analysis.json to store since they're already
-        # written to ctx.run_dir. The new system keeps results in the run directory
-        # rather than content-addressing them (results are unique per run, not reusable)
-
-        # Write run manifest with metadata
-        ctx.write_run_manifest(
-            {
-                "phase": "sample",
-                "inputs": [],  # Could add target URN reference if needed
-                "target_id": args.target_id,
-                "sampler": sampler_name,
-                "hyperparams": sp,
-                "dtype64": bool(cfg.jax.enable_x64),
-                "walltime_sec": dt,
-                "metrics": metrics,
-            }
-        )
-        print(f"[sample] experiment: {ctx.experiment}, run: {ctx.run_id}")
+    # Write run manifest
+    ctx.write_run_manifest(
+        {
+            "phase": "sample",
+            "inputs": [],  # Could add target URN reference if needed
+            "target_id": args.target_id,
+            "sampler": sampler_name,
+            "hyperparams": sp,
+            "dtype64": bool(cfg.jax.enable_x64),
+            "walltime_sec": dt,
+            "metrics": metrics,
+        }
+    )
 
     print(f"[sample] wrote trace.nc & analysis.json in {dt:.2f}s → {run_dir}")
+    print(f"[sample] experiment: {ctx.experiment}, run: {ctx.run_id}")
 
 
 if __name__ == "__main__":
