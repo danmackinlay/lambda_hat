@@ -31,7 +31,11 @@ def make_logpost(loss_full: Callable, params0, n: int, beta: float, gamma: float
     This is used by HMC and MCLMC.
     """
     # Flatten params0 for prior computation (modernized with ravel_pytree)
-    theta0, _ = jax.flatten_util.ravel_pytree(params0)
+    # For Equinox models, extract only array leaves before raveling
+    import equinox as eqx
+
+    trainable_params0, _ = eqx.partition(params0, eqx.is_array)
+    theta0, _ = jax.flatten_util.ravel_pytree(trainable_params0)
 
     # Ensure scalars match theta dtype
     beta = jnp.asarray(beta, dtype=theta0.dtype)
@@ -41,7 +45,9 @@ def make_logpost(loss_full: Callable, params0, n: int, beta: float, gamma: float
     @jit
     def logpost(params):
         # Flatten params for prior computation (modernized with ravel_pytree)
-        theta, _ = jax.flatten_util.ravel_pytree(params)
+        # For Equinox models, extract only array leaves before raveling
+        trainable_params, _ = eqx.partition(params, eqx.is_array)
+        theta, _ = jax.flatten_util.ravel_pytree(trainable_params)
 
         Ln = loss_full(params)
         # Prior term: -gamma/2 * ||w-w0||^2

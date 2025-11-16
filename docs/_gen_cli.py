@@ -2,7 +2,9 @@
 """Generate CLI reference documentation from Click app."""
 
 from pathlib import Path
+
 from click.testing import CliRunner
+
 from lambda_hat.cli import cli
 
 
@@ -29,14 +31,16 @@ def generate_cli_doc():
     for cmd_name in ["build", "sample", "artifacts", "promote", "workflow"]:
         result = runner.invoke(cli, [cmd_name, "--help"])
         if result.exit_code == 0:
-            output.extend([
-                f"## `lambda-hat {cmd_name}`",
-                "",
-                "```text",
-                result.output,
-                "```",
-                "",
-            ])
+            output.extend(
+                [
+                    f"## `lambda-hat {cmd_name}`",
+                    "",
+                    "```text",
+                    result.output,
+                    "```",
+                    "",
+                ]
+            )
 
     # Write output
     doc_path = Path(__file__).parent / "cli.md"

@@ -26,13 +26,18 @@ def run_mclmc(
     L0: Optional[float] = None,
 ) -> SamplerRunResult:
     # -- flatten params once for MCLMC's state vector
-    leaves, treedef = jax.tree_util.tree_flatten(initial_params)
+    # For Equinox models, only flatten trainable arrays (not activation functions, etc.)
+    import equinox as eqx
+
+    trainable_params, static_params = eqx.partition(initial_params, eqx.is_array)
+    leaves, treedef = jax.tree_util.tree_flatten(trainable_params)
     sizes = [x.size for x in leaves]
     shapes = [x.shape for x in leaves]
     theta0 = jnp.concatenate([x.reshape(-1) for x in leaves])  # (d,)
 
     def flatten(params):
-        ls = jax.tree_util.tree_leaves(params)
+        trainable, _ = eqx.partition(params, eqx.is_array)
+        ls = jax.tree_util.tree_leaves(trainable)
         return jnp.concatenate([x.reshape(-1) for x in ls])
 
     def unflatten(theta):
@@ -41,7 +46,9 @@ def run_mclmc(
         for shp, sz in zip(shapes, sizes):
             out.append(theta[i : i + sz].reshape(shp))
             i += sz
-        return jax.tree_util.tree_unflatten(treedef, out)
+        trainable_reconstructed = jax.tree_util.tree_unflatten(treedef, out)
+        # Recombine with static parts
+        return eqx.combine(trainable_reconstructed, static_params)
 
     if loss_full_fn is None:
         raise ValueError("loss_full_fn must be provided for Ln recording in MCLMC.")

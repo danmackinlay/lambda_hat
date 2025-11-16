@@ -49,21 +49,31 @@ def run_hmc(
 
     # 1) diversify initial positions
     def jitter(key, params):
-        leaves, treedef = jax.tree_util.tree_flatten(params)
+        # For Equinox models, only jitter array leaves (not activation functions, etc.)
+        import equinox as eqx
+
+        trainable, static = eqx.partition(params, eqx.is_array)
+        leaves, treedef = jax.tree_util.tree_flatten(trainable)
         keys = jax.random.split(key, len(leaves))
         keytree = jax.tree_util.tree_unflatten(treedef, keys)
-        return jax.tree.map(
+        jittered = jax.tree.map(
             lambda p, k: p + 0.01 * jax.random.normal(k, p.shape, p.dtype),
-            params,
+            trainable,
             keytree,
         )
+        # Recombine with static parts
+        return eqx.combine(jittered, static)
 
     # Map over keys (chains), broadcast params
     init_positions = jax.vmap(jitter, in_axes=(0, None))(init_keys, initial_params)
 
-    # Flatten parameters for dimensionality calculation
-    D = sum(p.size for p in jax.tree_util.tree_leaves(initial_params))
-    ref_dtype = jax.tree_util.tree_leaves(initial_params)[0].dtype
+    # Flatten parameters for dimensionality calculation (only trainable arrays)
+    import equinox as eqx
+
+    trainable_only, _ = eqx.partition(initial_params, eqx.is_array)
+    trainable_leaves = jax.tree_util.tree_leaves(trainable_only)
+    D = sum(p.size for p in trainable_leaves)
+    ref_dtype = trainable_leaves[0].dtype
 
     # 2) warmup on one chain (Adaptation)
     adaptation_start_time = time.time()

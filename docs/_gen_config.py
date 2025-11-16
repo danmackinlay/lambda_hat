@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """Generate configuration reference documentation from YAML files."""
 
-import yaml
-from pathlib import Path
 from collections import defaultdict
+from pathlib import Path
 
 
 def generate_config_doc():

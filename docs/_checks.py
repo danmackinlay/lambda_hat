@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Documentation drift checks - fails CI if docs are out of sync."""
 
+import re
 import sys
 import tomllib
 from pathlib import Path
-import re
 
 
 def check_blackjax_pin():

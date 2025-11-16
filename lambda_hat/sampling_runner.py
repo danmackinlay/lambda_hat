@@ -44,6 +44,10 @@ def run_sampler(
     beta, gamma = compute_beta_gamma(cfg.posterior, target.d, n_data)
     log.info(f"Using beta={beta:.6f}, gamma={gamma:.6f} (n={n_data})")
 
+    # Equinox models are directly callable: model(X) instead of model.apply(params, X)
+    def predict_fn(m, x):
+        return m(x)
+
     if sampler_name == "hmc":
         # Setup HMC - cast to f64 for precision
         X_f64, Y_f64 = as_dtype(target.X, "float64"), as_dtype(target.Y, "float64")
@@ -51,7 +55,7 @@ def run_sampler(
 
         # Create f64 loss function
         loss_full, _ = make_loss_fns(
-            target.model.apply,
+            predict_fn,
             X_f64,
             Y_f64,
             loss_type=cfg.posterior.loss,
@@ -89,7 +93,7 @@ def run_sampler(
 
         # Create f32 loss function (minibatch version)
         _, loss_mini = make_loss_fns(
-            target.model.apply,
+            predict_fn,
             target.X,
             target.Y,
             loss_type=cfg.posterior.loss,
@@ -125,7 +129,7 @@ def run_sampler(
 
         # Create f64 loss function
         loss_full, _ = make_loss_fns(
-            target.model.apply,
+            predict_fn,
             X_f64,
             Y_f64,
             loss_type=cfg.posterior.loss,
@@ -161,7 +165,7 @@ def run_sampler(
 
         # Create loss functions at correct precision
         loss_full, loss_mini = make_loss_fns(
-            target.model.apply,
+            predict_fn,
             X_typed,
             Y_typed,
             loss_type=cfg.posterior.loss,

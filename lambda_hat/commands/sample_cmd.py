@@ -61,7 +61,11 @@ def sample_entry(config_yaml: str, target_id: str, experiment: Optional[str] = N
     assert "sampler" in cfg and "name" in cfg.sampler, "cfg.sampler.name missing"
     assert "jax" in cfg and "enable_x64" in cfg.jax, "cfg.jax.enable_x64 missing"
 
-    jax.config.update("jax_enable_x64", bool(cfg.jax.enable_x64))
+    # Temporarily disable x64 for model template creation and target loading
+    # (targets are always saved as float32, so template must be float32)
+    # Save current x64 state to restore later
+    current_x64 = jax.config.jax_enable_x64
+    jax.config.update("jax_enable_x64", False)
 
     print("=== LLC: Sample ===")
     print(f"Target ID: {target_id}")
@@ -95,13 +99,6 @@ def sample_entry(config_yaml: str, target_id: str, experiment: Optional[str] = N
             f"Available targets: {list(targets_dir.glob('*'))}"
         )
 
-    # Guardrails
-    if bool(cfg.jax.enable_x64) != bool(target_meta["jax_enable_x64"]):
-        raise RuntimeError(
-            f"Precision mismatch: sampler x64={cfg.jax.enable_x64}, "
-            f"target x64={target_meta['jax_enable_x64']}"
-        )
-
     # Build model template from metadata
     model_cfg = target_meta["model_cfg"]
     widths = model_cfg.get("widths")
@@ -122,10 +119,24 @@ def sample_entry(config_yaml: str, target_id: str, experiment: Optional[str] = N
         key=jax.random.PRNGKey(0),  # Dummy key, will be overwritten
     )
 
-    # Load target artifact with model template
+    # Load target artifact with model template (template and saved model both float32)
     X, Y, model, meta, tdir = load_target_artifact_from_dir(
         target_payload, model_template=model_template
     )
+
+    # NOW enable x64 if requested (after deserialization succeeded)
+    jax.config.update("jax_enable_x64", bool(cfg.jax.enable_x64))
+
+    # Cast loaded model to sampler's required dtype
+    # Determine dtype from sampler config (default: float64 if x64, else float32)
+    sampler_dtype = OmegaConf.select(cfg, f"sampler.{cfg.sampler.name}.dtype")
+    if sampler_dtype is None:
+        sampler_dtype = "float64" if cfg.jax.enable_x64 else "float32"
+
+    model = as_dtype(model, sampler_dtype)
+    X = as_dtype(X, sampler_dtype)
+    Y = as_dtype(Y, sampler_dtype)
+
     params = model  # For Equinox, model IS the params
 
     # Get L0 from metadata
@@ -138,11 +149,6 @@ def sample_entry(config_yaml: str, target_id: str, experiment: Optional[str] = N
         )
     L0 = float(L0)
 
-    # Store params and data in f32 for memory efficiency (precision determined dynamically)
-    params_f32 = as_dtype(params, "float32")
-    X_f32 = as_dtype(X, "float32")
-    Y_f32 = as_dtype(Y, "float32")
-
     # Determine loss type from Stage B config (if specified) or from metadata
     loss_type = OmegaConf.select(cfg, "posterior.loss") or "mse"
 
@@ -151,32 +157,36 @@ def sample_entry(config_yaml: str, target_id: str, experiment: Optional[str] = N
     noise_scale = data_cfg.get("noise_scale", 0.1)
     student_df = data_cfg.get("student_df", 4.0)
 
-    # Loss fns (float32)
+    # Loss fns (use sampler's dtype)
     # Equinox models are called directly: model(x), not model.apply(params, None, x)
     def predict_fn(m, x):
         return m(x)
 
-    loss_full_f32, loss_minibatch_f32 = make_loss_fns(
+    loss_full, loss_minibatch = make_loss_fns(
         predict_fn,
-        X_f32,
-        Y_f32,
+        X,
+        Y,
         loss_type=loss_type,
         noise_scale=noise_scale,
         student_df=student_df,
     )
 
     # Flatten params for VI (required by TargetBundle even if HMC/SGLD don't use it)
-    params0_flat, unravel_fn = jax.flatten_util.ravel_pytree(params_f32)
+    # For Equinox models, extract only array leaves (not activation functions, etc.)
+    import equinox as eqx
+
+    trainable_params, _ = eqx.partition(params, eqx.is_array)
+    params0_flat, unravel_fn = jax.flatten_util.ravel_pytree(trainable_params)
 
     # Build TargetBundle with required fields
-    d = count_params(params_f32)
+    d = count_params(params)
     target_bundle = TargetBundle(
         d=d,
-        params0=params_f32,
-        loss_full=loss_full_f32,
-        loss_minibatch=loss_minibatch_f32,
-        X=X_f32,
-        Y=Y_f32,
+        params0=params,
+        loss_full=loss_full,
+        loss_minibatch=loss_minibatch,
+        X=X,
+        Y=Y,
         L0=L0,
         model=model,
         params0_flat=params0_flat,
