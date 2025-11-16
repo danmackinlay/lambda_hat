@@ -1,235 +1,517 @@
-# Output Layout
+# Artifact System
 
-This project uses **Parsl** for orchestration, creating a structured, content-addressed artifact layout. Unlike timestamp-based directories, artifacts are organized by deterministic IDs for reproducibility.
+This project uses a **three-layer content-addressed artifact system** for reproducible ML experiments. Artifacts are organized by experiments with immutable content-addressed storage and automatic deduplication.
+
+**Note on spelling:** The codebase uses `artefacts/` (British spelling) as the default directory name, but this documentation uses "artifacts" (American spelling) for clarity.
+
+## Overview
+
+The artifact system has three layers:
+
+1. **Store** (`artefacts/store/`): Content-addressed immutable objects
+2. **Experiments** (`artefacts/experiments/`): Experiment runs with symlinks to store
+3. **Scratch** (`artefacts/scratch/`): Ephemeral cache (safe to delete)
+
+This design ensures:
+- **Deduplication**: Identical artifacts stored once
+- **Reproducibility**: Content addressing guarantees deterministic IDs
+- **Isolation**: Experiments don't interfere with each other
+- **Efficiency**: Parsl reuses existing artifacts automatically
+
+---
 
 ## Directory Structure
 
-The `runs/` directory contains all experimental artifacts:
-
 ```
-runs/
-└── targets/
-    ├── _catalog.jsonl               # Registry of all targets
-    └── tgt_abc123456789/            # One target artifact
-        ├── meta.json                # Metadata (config, dims, precision, L0)
-        ├── data.npz                 # Training data (X, Y)
-        ├── params.npz               # Trained parameters (θ*)
-        ├── _runs.jsonl              # Manifest of Stage-B runs
-        ├── run_hmc_xy789abc/        # One sampler run
-        │   ├── trace.nc             # ArviZ trace (preferred format)
-        │   ├── analysis.json        # LLC estimates and metrics
-        │   └── diagnostics/
-        │       ├── trace.png        # Trace plots
-        │       ├── rank.png         # Rank plots
-        │       └── running_llc.png  # Running LLC estimates
-        ├── run_sgld_mn456def/       # Another sampler run
-        │   ├── trace.nc
-        │   ├── analysis.json
-        │   └── diagnostics/
-        └── run_mclmc_gh901234/      # Yet another sampler run
-            └── ...
-```
-
-## Content-Addressed IDs
-
-### Target IDs
-
-**Target IDs** are deterministic SHA256 hashes of the Stage A configuration:
-
-- `tgt_abc123456789` = hash(model + data + training + seed)
-- **Same config → same ID → identical artifacts**
-- Target building is expensive, so targets are cached and reused
-
-### Run IDs
-
-**Run IDs** are SHA1 hashes of the Stage B configuration:
-
-- `xy789abc` = hash(sampler + hyperparameters + runtime_seed)
-- **Same sampler config → same ID → reproducible runs**
-- Multiple samplers can run on the same target
-
-## Manifest Files
-
-### `_catalog.jsonl`
-
-Registry of all targets in the store:
-
-```jsonl
-{"target_id": "tgt_abc123456789", "created_at": 1672531200.0, "model": "base", "data": "small", "seed": 42}
-{"target_id": "tgt_def987654321", "created_at": 1672531800.0, "model": "wide", "data": "large", "seed": 43}
+artefacts/  (or $LAMBDA_HAT_HOME, defaults to current dir)
+│
+├── store/
+│   └── objects/
+│       └── sha256/
+│           └── <2>/<2>/<remaining 60 hex digits>/
+│               ├── payload/         # Actual artifact content
+│               │   ├── data.npz
+│               │   ├── params.eqx
+│               │   └── ...
+│               └── meta.json        # Type, schema, provenance
+│
+├── experiments/
+│   └── <experiment_name>/           # e.g., "dev", "production"
+│       ├── manifest.jsonl           # Index of all runs in this experiment
+│       ├── targets/                 # Symlinks to store objects
+│       │   └── <target_id> -> ../../../store/objects/sha256/.../
+│       ├── runs/
+│       │   └── <run_id>/           # Format: YYYYmmddTHHMMSSZ-<algo>[-<tag>]-<rand6>
+│       │       ├── manifest.json    # Run metadata with URN references
+│       │       ├── inputs/
+│       │       │   └── target -> ../../targets/<target_id>
+│       │       ├── artifacts/       # Symlinks to store outputs
+│       │       │   └── <name> -> ../../../../store/objects/sha256/.../
+│       │       ├── tb/              # TensorBoard logs
+│       │       ├── logs/            # stdout/stderr
+│       │       │   ├── stdout.log
+│       │       │   └── stderr.log
+│       │       ├── parsl/           # Parsl run_dir (if using Parsl)
+│       │       └── scratch/         # Temp working directory
+│       └── tb/                      # Aggregated TensorBoard symlinks
+│           └── <run_id> -> ../runs/<run_id>/tb/
+│
+└── scratch/                         # Ephemeral cache
+    └── <temp files>                 # Safe to delete anytime
 ```
 
-### `_runs.jsonl`
+---
 
-Per-target manifest of sampling runs:
+## Content-Addressed Storage
 
-```jsonl
-{"target_id": "tgt_abc123456789", "sampler": "hmc", "hyperparams": {...}, "walltime_sec": 120.5, "artifact_path": "runs/targets/tgt_abc123456789/run_hmc_xy789abc", "created_at": 1672531300.0}
-{"target_id": "tgt_abc123456789", "sampler": "sgld", "hyperparams": {...}, "walltime_sec": 450.2, "artifact_path": "runs/targets/tgt_abc123456789/run_sgld_mn456def", "created_at": 1672531400.0}
+### URN Format
+
+Artifacts are referenced using URNs (Uniform Resource Names):
+
+```
+urn:lh:<type>:sha256:<hash>
 ```
 
-## Key Files
+**Components:**
+- `lh`: Lambda-Hat namespace
+- `<type>`: Artifact type (`target`, `fit`, etc.)
+- `sha256`: Hash algorithm
+- `<hash>`: 64-character hex digest
 
-### `meta.json` (Target Metadata)
+**Example:**
+```
+urn:lh:target:sha256:0bde3f9072cd8af1afbb0f485b5e2ad3d12ddad3273b8a37967eee50acce9cea
+```
 
-Contains everything needed to reproduce and validate a target:
+### Store Layout
 
+Objects are stored at paths derived from their SHA256 hash:
+
+```
+store/objects/sha256/<2>/<2>/<remaining 60>/
+```
+
+**Example:**
+Hash `0bde3f9072...` maps to:
+```
+store/objects/sha256/0b/de/3f9072cd8af1afbb0f485b5e2ad3d12ddad3273b8a37967eee50acce9cea/
+```
+
+### Object Structure
+
+Each object contains:
+
+```
+<hash>/
+├── payload/         # Actual content
+│   └── ...
+└── meta.json        # Metadata
+```
+
+**meta.json format:**
 ```json
 {
-  "target_id": "tgt_abc123456789",
-  "created_at": 1672531200.0,
-  "code_sha": "a1b2c3d4e5f6",
-  "jax_enable_x64": true,
-  "pkg_versions": {"jax": "0.7.1", "blackjax": "1.2.5", ...},
-  "seed": 42,
-  "model_cfg": {"depth": 3, "widths": [300, 200, 100], "activation": "relu", ...},
-  "data_cfg": {"n_data": 20000, "noise_scale": 0.1, ...},
-  "training_cfg": {"optimizer": "adam", "steps": 5000, ...},
-  "dims": {"n": 20000, "d": 32, "p": 93501},
-  "metrics": {"L0": 0.045123}
+  "type": "target",
+  "schema": "1",
+  "hash_algorithm": "sha256",
+  "hash_value": "0bde3f90...",
+  "created_at": "2025-11-16T03:49:48Z",
+  "provenance": {
+    "host": "crumpitt",
+    "user": "dan",
+    "config_yaml": "...",
+    "code_version": "fec84f2"
+  }
 }
 ```
 
-### `analysis.json` (Run Results)
+---
 
-Contains LLC estimates and diagnostics for one sampling run:
+## Experiments and Runs
+
+### Experiment Organization
+
+Experiments group related runs under a common name (e.g., `dev`, `production`, `paper_v1`).
+
+**Set experiment:**
+```bash
+export LAMBDA_HAT_EXPERIMENT=my_experiment
+# Or use --experiment flag:
+uv run lambda-hat build --experiment my_experiment ...
+```
+
+### Run Directory Format
+
+Run IDs follow the pattern:
+```
+YYYYmmddTHHMMSSZ-<algo>[-<tag>]-<rand6>
+```
+
+**Examples:**
+- `20251116T034945Z-build_target-tgt_6f6eef-ebd938`
+- `20251116T091234Z-hmc-chain0-a3f2d1`
+- `20251116T103021Z-vi-mfa-7c4e89`
+
+**Components:**
+- Timestamp (UTC): `20251116T034945Z`
+- Algorithm: `build_target`, `hmc`, `vi`, etc.
+- Optional tag: Target ID, chain number, etc.
+- Random suffix: 6-char hex for uniqueness
+
+### Run Manifest
+
+Each run has a `manifest.json` describing inputs, outputs, and metadata:
 
 ```json
 {
-  "llc_mean": 12.34,
-  "llc_std": 0.56,
-  "ess": 1234.5,
-  "rhat": 1.01,
-  "total_fges": 10000,
-  "walltime_sec": 120.5,
-  "sampler_config": {"draws": 1000, "warmup": 200, ...}
+  "schema": "1",
+  "run_id": "20251116T034945Z-build_target-tgt_6f6eef9cbf7e-ebd938",
+  "experiment": "dev",
+  "algo": "build_target",
+  "host": "crumpitt",
+  "created": "2025-11-16T03:49:48Z",
+  "phase": "build_target",
+  "inputs": [
+    {
+      "role": "config",
+      "path": "config/experiments.yaml"
+    }
+  ],
+  "outputs": [
+    {
+      "role": "target",
+      "urn": "urn:lh:target:sha256:0bde3f9072cd8af1afbb0f485b5e2ad3d12ddad3273b8a37967eee50acce9cea"
+    }
+  ]
 }
 ```
 
-## Aggregating Results
+### Experiment Manifest
 
-Use Python to aggregate results across multiple runs:
+The experiment-level `manifest.jsonl` indexes all runs:
 
-```python
-import json
-import pandas as pd
-from pathlib import Path
-
-def aggregate_results(runs_root="runs"):
-    runs_path = Path(runs_root)
-    results = []
-
-    for target_dir in (runs_path / "targets").iterdir():
-        if not target_dir.is_dir() or not target_dir.name.startswith("tgt_"):
-            continue
-
-        # Load target metadata
-        meta_file = target_dir / "meta.json"
-        if not meta_file.exists():
-            continue
-
-        with open(meta_file) as f:
-            meta = json.load(f)
-
-        # Find all sampling runs
-        for run_dir in target_dir.iterdir():
-            if not run_dir.is_dir() or not run_dir.name.startswith("run_"):
-                continue
-
-            analysis_file = run_dir / "analysis.json"
-            if not analysis_file.exists():
-                continue
-
-            with open(analysis_file) as f:
-                analysis = json.load(f)
-
-            # Combine target and run information
-            record = {
-                "target_id": meta["target_id"],
-                "model": meta["model_cfg"].get("depth", "unknown"),
-                "n_data": meta["data_cfg"]["n_data"],
-                "target_params": meta["dims"]["p"],
-                "L0": meta["metrics"]["L0"],
-                "seed": meta["seed"],
-                "sampler": run_dir.name.split("_")[1],  # Extract from run_hmc_xyz
-                "llc_mean": analysis["llc_mean"],
-                "llc_std": analysis["llc_std"],
-                "ess": analysis["ess"],
-                "rhat": analysis["rhat"],
-                "walltime_sec": analysis["walltime_sec"],
-            }
-            results.append(record)
-
-    return pd.DataFrame(results)
-
-# Usage
-df = aggregate_results()
-print(df.groupby(["sampler", "n_data"])["llc_mean"].describe())
+```jsonl
+{"run_id": "20251116T034945Z-build_target-tgt_6f6eef9cbf7e-ebd938", "algo": "build_target", "created": "2025-11-16T03:49:48Z"}
+{"run_id": "20251116T091234Z-hmc-chain0-a3f2d1", "algo": "hmc", "created": "2025-11-16T09:12:34Z"}
 ```
+
+---
+
+## TensorBoard Integration
+
+### Per-Run Logs
+
+Each run can write TensorBoard logs to its `tb/` directory:
+
+```
+artefacts/experiments/dev/runs/<run_id>/tb/
+└── events.out.tfevents...
+```
+
+### Aggregated View
+
+The experiment-level `tb/` directory contains symlinks for multi-run viewing:
+
+```
+artefacts/experiments/dev/tb/
+├── run1 -> ../runs/20251116T091234Z-hmc-chain0-a3f2d1/tb/
+├── run2 -> ../runs/20251116T091245Z-hmc-chain1-b4e3f2/tb/
+└── run3 -> ../runs/20251116T091256Z-hmc-chain2-c5f4a3/tb/
+```
+
+### Viewing TensorBoard
+
+```bash
+# Get path to experiment TensorBoard directory
+uv run lambda-hat artifacts tb my_experiment
+
+# Launch TensorBoard
+tensorboard --logdir $(uv run lambda-hat artifacts tb my_experiment)
+```
+
+---
+
+## Garbage Collection
+
+The GC system uses reachability analysis to safely remove unreachable objects.
+
+### How It Works
+
+1. Start from experiment manifests (roots)
+2. Follow URN references to find reachable objects
+3. Mark unreachable objects older than TTL
+4. Remove unreachable objects from store
+
+### Usage
+
+```bash
+# Preview what would be deleted
+uv run lambda-hat artifacts gc --dry-run
+
+# Delete artifacts older than 30 days
+uv run lambda-hat artifacts gc --ttl-days 30
+
+# Aggressive cleanup (7 day TTL)
+uv run lambda-hat artifacts gc --ttl-days 7
+```
+
+**Safety:**
+- Only removes objects not referenced by any experiment
+- Respects TTL (time-to-live) to protect recent unreferenced artifacts
+- Dry-run mode for safe testing
+
+---
+
+## Environment Variables
+
+### LAMBDA_HAT_HOME
+
+Root directory for all artifacts (default: `artefacts/` in current directory).
+
+```bash
+export LAMBDA_HAT_HOME=/mnt/scratch/lambda_hat_artifacts
+```
+
+### LAMBDA_HAT_STORE
+
+Override store location (default: `$LAMBDA_HAT_HOME/store`).
+
+```bash
+export LAMBDA_HAT_STORE=/mnt/shared/lambda_hat_store
+```
+
+### LAMBDA_HAT_EXPERIMENTS
+
+Override experiments location (default: `$LAMBDA_HAT_HOME/experiments`).
+
+```bash
+export LAMBDA_HAT_EXPERIMENTS=$HOME/experiments
+```
+
+### LAMBDA_HAT_EXPERIMENT
+
+Set default experiment name (overridden by `--experiment` flag).
+
+```bash
+export LAMBDA_HAT_EXPERIMENT=production
+```
+
+### LAMBDA_HAT_SCRATCH
+
+Override scratch location (default: `$LAMBDA_HAT_HOME/scratch`).
+
+```bash
+export LAMBDA_HAT_SCRATCH=/tmp/lambda_hat_scratch
+```
+
+---
 
 ## Reproducibility
 
-### Exact Reproduction
+### Content Addressing Ensures Determinism
 
-Same `config/experiments.yaml` → same target and run IDs → identical results:
+Same configuration → same URN → reused artifacts:
 
 ```bash
-# Run full workflow
-uv run lambda-hat workflow llc --local
+# First run: builds target
+uv run lambda-hat build --config-yaml config/experiments.yaml --target-id tgt_abc123
 
-# Same config will produce same IDs and skip existing artifacts
-# (Parsl jobs complete quickly if outputs already exist)
+# Second run: reuses existing target (instant)
+uv run lambda-hat build --config-yaml config/experiments.yaml --target-id tgt_abc123
 ```
 
-**Content-addressed IDs ensure determinism:**
-- Same model + data + seed → same `tgt_*` ID
-- Same sampler config + target → same `run_*` ID
-- Artifacts are never overwritten (new config → new ID)
+**Why it works:**
+- Target ID is a SHA256 hash of the configuration
+- Same config → same hash → same URN
+- System checks store before building
+- If URN exists, symlink to existing object
 
-### Selective Execution
+### Parsl Integration
 
-To run only specific combinations, edit `config/experiments.yaml`:
+Parsl workflows automatically skip existing artifacts:
 
-```yaml
-# Run only a subset of targets
-targets:
-  - { model: base, data: base, seed: 42 }  # Only this target
+```python
+# In Parsl workflow
+@python_app
+def build_target_app(cfg_yaml, target_id, experiment):
+    from lambda_hat.commands.build_cmd import build_entry
+    return build_entry(cfg_yaml, target_id, experiment)
 
-# Run only specific samplers
-samplers:
-  - { name: hmc }  # Only HMC, not SGLD or others
+# Parsl checks if output exists
+# If URN found in store, task completes instantly
+target_future = build_target_app(config, target_id, experiment)
 ```
 
-Then execute: `uv run lambda-hat workflow llc --local`
+---
 
-### Reruns and Updates
+## Working with Artifacts (Python API)
 
-**To force rebuild a target:**
-1. Delete the target directory: `rm -rf runs/targets/tgt_abc123456789/`
-2. Rerun workflow: `uv run lambda-hat workflow llc --local`
-3. Parsl will rebuild the missing target and all dependent samplers
+### Initialize Artifact System
 
-**To rerun specific samplers:**
-1. Delete run directories: `rm -rf runs/targets/*/run_hmc_*/`
-2. Rerun workflow: `uv run lambda-hat workflow llc --local`
-3. Parsl will rerun sampling for all affected combinations
+```python
+from lambda_hat.artifacts import Paths, ArtifactStore, RunContext
 
-**Note**: Parsl reruns all jobs in the config. For partial reruns, create a subset config file.
+# Get paths from environment
+paths = Paths.from_env()
+
+# Initialize store
+store = ArtifactStore(paths.store)
+
+# Create run context
+with RunContext(
+    experiment="my_experiment",
+    algo="my_algorithm",
+    paths=paths
+) as run:
+    print(f"Run ID: {run.run_id}")
+    print(f"Run directory: {run.run_dir}")
+    print(f"Scratch directory: {run.scratch}")
+```
+
+### Store an Artifact
+
+```python
+import numpy as np
+from pathlib import Path
+
+# Create artifact content
+artifact_dir = run.scratch / "my_artifact"
+artifact_dir.mkdir(parents=True)
+(artifact_dir / "data.npz").write_bytes(
+    np.savez_compressed(...).tobytes()
+)
+
+# Store in content-addressed store
+urn = store.put(
+    payload_dir=artifact_dir,
+    artifact_type="my_type",
+    metadata={"key": "value"}
+)
+
+print(f"Stored as: {urn}")
+# Output: urn:lh:my_type:sha256:a1b2c3...
+```
+
+### Retrieve an Artifact
+
+```python
+# Get artifact by URN
+payload_path = store.get(urn)
+print(f"Artifact content at: {payload_path}")
+
+# Read artifact
+data = np.load(payload_path / "data.npz")
+```
+
+### List Artifacts
+
+```python
+# List all runs in an experiment
+experiment_dir = paths.experiments / "my_experiment"
+manifest_path = experiment_dir / "manifest.jsonl"
+
+with manifest_path.open() as f:
+    for line in f:
+        if line.strip():
+            record = json.loads(line)
+            print(f"{record['run_id']}: {record['algo']}")
+```
+
+---
+
+## CLI Reference
+
+### List Artifacts
+
+```bash
+# List all experiments
+uv run lambda-hat artifacts ls
+
+# List runs in an experiment
+uv run lambda-hat artifacts ls my_experiment
+```
+
+### TensorBoard
+
+```bash
+# Get TensorBoard directory for experiment
+uv run lambda-hat artifacts tb my_experiment
+
+# Launch TensorBoard
+tensorboard --logdir $(uv run lambda-hat artifacts tb my_experiment)
+```
+
+### Garbage Collection
+
+```bash
+# Preview what would be deleted
+uv run lambda-hat artifacts gc --dry-run
+
+# Delete unreachable artifacts older than 30 days
+uv run lambda-hat artifacts gc --ttl-days 30
+```
+
+---
 
 ## Storage Considerations
 
-- **Targets are expensive**: Neural network training, large datasets
-- **Runs are cheaper**: MCMC on pre-trained targets
-- **Traces can be large**: Consider `--profile` with storage limits on HPC
-- **Promotion**: Use `lambda-hat-promote` to copy key plots to stable locations
+### Deduplication
 
-Example storage usage:
+Content addressing ensures identical artifacts are stored once:
+
+```bash
+# Train same target 5 times
+for i in {1..5}; do
+    uv run lambda-hat build --config-yaml config/experiments.yaml --target-id tgt_abc123
+done
+
+# Result: Only 1 copy in store (all runs symlink to same object)
+# Disk usage: ~10 MB (not 50 MB)
 ```
-runs/targets/tgt_abc123456789/
-├── meta.json           # ~10 KB
-├── data.npz           # ~10 MB (for n_data=20k)
-├── params.npz         # ~1 MB (for 100k params)
-└── run_hmc_xy789abc/
-    ├── trace.nc       # ~50 MB (1000 draws × 100k params)
-    └── analysis.json  # ~5 KB
+
+### Disk Usage
+
+Typical storage for one experiment:
+
 ```
+artefacts/store/objects/sha256/.../
+├── <target_hash>/payload/
+│   ├── data.npz           # ~10 MB (shared across all runs)
+│   └── params.eqx         # ~1 MB (shared across all runs)
+├── <hmc_trace_hash>/payload/
+│   └── trace.nc           # ~50 MB (one per sampler run)
+└── <vi_trace_hash>/payload/
+    └── trace.nc           # ~5 MB (VI typically smaller)
+
+artefacts/experiments/my_experiment/
+├── runs/                  # Symlinks only (~1 KB each)
+└── tb/                    # Symlinks only (~1 KB each)
+```
+
+**Total for N targets × M samplers:**
+- Targets: `N × ~11 MB` (deduplicated)
+- Traces: `N × M × ~50 MB` (not deduplicated, content varies)
+- Overhead: `~1 KB × (N + N×M)` (symlinks and manifests)
+
+### Cleanup Strategy
+
+1. **Keep active experiments:**
+   - Runs referenced in experiment manifests are protected
+   - Use GC with high TTL (30+ days)
+
+2. **Clean old experiments:**
+   - Remove experiment directory: `rm -rf artefacts/experiments/old_experiment`
+   - Run GC to remove unreferenced objects: `uv run lambda-hat artifacts gc --ttl-days 7`
+
+3. **Emergency cleanup:**
+   - Scratch is always safe to delete: `rm -rf artefacts/scratch/*`
+   - Store should only be cleaned via GC (protects referenced objects)
+
+---
+
+## See Also
+
+- [Configuration Guide](./configuration.md) - Config system and experiments.yaml
+- [Parameter Sweeps](./sweeps.md) - N×M experiment matrices
+- [Parallel Execution](./parallelism.md) - Parsl workflows
+- [CLI Reference](../CLAUDE.md) - Command-line interface
