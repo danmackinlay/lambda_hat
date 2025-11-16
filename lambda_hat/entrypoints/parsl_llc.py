@@ -27,7 +27,6 @@ from parsl import python_app
 
 from lambda_hat.artifacts import Paths, RunContext
 from lambda_hat.parsl_cards import build_parsl_config_from_card, load_parsl_config_from_card
-from lambda_hat.promote.core import promote_gallery
 from lambda_hat.workflow_utils import (
     compose_build_cfg,
     compose_sample_cfg,
@@ -96,7 +95,7 @@ def run_sampler_app(cfg_yaml, target_id, experiment, jax_x64, inputs=None):
 
 @python_app
 def promote_app(store_root, samplers, outdir, plot_name, inputs=None):
-    """Promote results: create gallery with newest run per sampler.
+    """Promote results: create gallery with newest run per sampler via direct command call.
 
     Args:
         store_root: Root directory for runs
@@ -106,29 +105,24 @@ def promote_app(store_root, samplers, outdir, plot_name, inputs=None):
         inputs: List of futures this task depends on (all sampling runs)
 
     Returns:
-        Path to generated markdown snippet
-
-    TODO: Refactor to use lambda_hat.commands.promote_cmd.promote_gallery_entry
-    instead of calling promote.core.promote_gallery directly. This will maintain
-    consistency with the new CLI architecture and command module pattern.
+        str: Path to generated markdown snippet
     """
     from pathlib import Path
 
-    store_root = Path(store_root)
+    from lambda_hat.commands.promote_cmd import promote_gallery_entry
+
     outdir = Path(outdir)
     outdir.mkdir(parents=True, exist_ok=True)
 
-    md_snippet_out = outdir / f"gallery_{plot_name.replace('.png', '')}.md"
+    snippet_out = outdir / f"gallery_{plot_name.replace('.png', '')}.md"
 
-    promote_gallery(
-        store_root,
-        samplers,
-        outdir,
+    return promote_gallery_entry(
+        runs_root=store_root,
+        samplers=samplers,
+        outdir=str(outdir),
         plot_name=plot_name,
-        md_snippet_out=md_snippet_out,
+        snippet_out=str(snippet_out),
     )
-
-    return str(md_snippet_out)
 
 
 # ============================================================================

@@ -30,15 +30,18 @@ def promote_gallery_entry(
     outdir: str = "runs/promotion",
     plot_name: str = "trace.png",
     snippet_out: Optional[str] = None,
-) -> None:
+) -> Optional[str]:
     """Generate gallery HTML of all targets.
 
     Args:
         runs_root: Root directory containing run subdirectories
-        samplers: List of sampler names to include
+        samplers: List[str] of sampler names to include
         outdir: Output directory for gallery (default: runs/promotion)
         plot_name: Name of plot file to copy (default: trace.png)
         snippet_out: Optional path to write HTML snippet
+
+    Returns:
+        Optional[str]: Path to generated HTML snippet if snippet_out provided, else None
     """
     runs_root = Path(runs_root)
     outdir = Path(outdir)
@@ -48,3 +51,5 @@ def promote_gallery_entry(
     print(f"[promote] gallery → {outdir}")
     if snippet_path:
         print(f"[promote] HTML snippet → {snippet_path}")
+        return str(snippet_path)
+    return None
