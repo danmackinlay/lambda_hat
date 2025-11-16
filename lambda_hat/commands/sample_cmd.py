@@ -7,6 +7,7 @@ from typing import Dict, Optional
 
 import jax
 from omegaconf import OmegaConf
+import jax.numpy as jnp
 
 from lambda_hat.analysis import (
     analyze_traces,
