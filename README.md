@@ -34,7 +34,7 @@ This repo provides benchmark estimators of LLC on small but non-trivial neural n
 * [Haiku](https://github.com/haiku/haiku) for neural network definitions
 
 **Supported samplers**: HMC, MCLMC, SGLD, VI (variational inference with MFA or Flow algorithms).
-**Note**: Flow VI requires `uv sync --extra flowvi`. See [docs/vi_normalizing_flow.md](./docs/vi_normalizing_flow.md) for JAX/vmap PRNG guidance and current status.
+**Note**: Flow VI requires `uv sync --extra flowvi`. See [Flow VI documentation](./docs/vi_flow.md) for JAX/vmap PRNG guidance and current status.
 
 We target networks with dimension up to about $10^5$ which means we can ground-truth against classic samplers like HMC (which we expect to become non-viable in higher dimension or dataset size).
 In this regime we can rely upon classic MCMC to tell us the "true" LLC rather than relying on analytic results for approximate networks such as Deep Linear Networks.
@@ -267,7 +267,7 @@ Artifacts are written to `runs/...` (default for `lambda-hat workflow llc`) or `
 - [Configuration Reference](./docs/config.md) — YAML schema and defaults (auto-generated)
 - [Experiments Guide](./docs/experiments.md) — How to compose experiments with overrides
 - [Samplers](./docs/samplers.md) — HMC, MCLMC, SGLD, VI usage
-- [Variational Inference](./docs/vi.md) — VI algorithms (MFA, Flow) and tuning
+- [Variational Inference](./docs/vi.md) — VI overview and shared concepts
 - [Workflows](./docs/workflows.md) — Parsl orchestration, sweeps, artifact management
 - [Compatibility](./docs/compatibility.md) — Version pins and API notes
 - [Hyperparameter Optimization](./docs/optuna_workflow.md) — Optuna workflow guide

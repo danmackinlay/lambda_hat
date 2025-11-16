@@ -46,7 +46,7 @@ uv run lambda-hat workflow llc --parsl-card config/parsl/slurm/gpu-a100.yaml
 uv run lambda-hat workflow llc --local --promote
 
 # Optuna hyperparameter optimization
-uv run lambda-hat workflow optuna --config config/optuna_demo.yaml --study-name my_study
+uv run lambda-hat workflow optuna --config config/optuna_demo.yaml --local
 ```
 
 ## Testing & Lint

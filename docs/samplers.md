@@ -102,8 +102,8 @@ See [Configuration Reference](./config.md) for all SGLD options under `sample/sa
 **Precision**: `float32` (configurable)
 
 **Algorithms**:
-- **MFA** (default): Mixture of factor analyzers with STL + Rao-Blackwellized gradients
-- **Flow**: Normalizing flows (requires `--extra flowvi`)
+- [MFA](./vi_mfa.md) — Mixture of factor analyzers (default)
+- [Flow](./vi_flow.md) — Normalizing flows (requires `--extra flowvi`)
 
 **Key features**:
 - Much faster than MCMC for initial exploration
@@ -115,7 +115,7 @@ See [Configuration Reference](./config.md) for all SGLD options under `sample/sa
 lambda-hat workflow llc --local
 ```
 
-See [VI documentation](./vi.md) for detailed configuration and usage.
+See [VI overview](./vi.md) for general concepts and shared configuration.
 
 ---
 

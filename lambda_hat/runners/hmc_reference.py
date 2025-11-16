@@ -56,7 +56,7 @@ def run_hmc_reference(problem_spec, out_ref_json, budget_sec=36000, seed=42):
     print(f"  Target ID: {tid}")
 
     # Build target: model + dataset
-    # Reuse logic from entrypoints/build_target.py
+    # Reuse logic from commands/build_cmd.py
     from lambda_hat.targets import build_target
 
     # Build target (returns TargetBundle and widths)

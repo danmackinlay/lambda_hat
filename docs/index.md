@@ -12,7 +12,9 @@ Lambda-Hat uses a streamlined documentation structure with **auto-generated refe
 | [Configuration Reference](./config.md) | Auto-generated | YAML schema and defaults |
 | [Experiments Guide](./experiments.md) | Guide | Composing experiments with overrides |
 | [Samplers](./samplers.md) | Guide | HMC, MCLMC, SGLD, VI usage |
-| [Variational Inference](./vi.md) | Guide | VI algorithms and tuning |
+| [Variational Inference](./vi.md) | Guide | VI overview, shared config, usage |
+| [MFA VI](./vi_mfa.md) | Guide | Mixture of factor analyzers details |
+| [Flow VI](./vi_flow.md) | Technical | Normalizing flows, JAX/vmap notes |
 | [Workflows](./workflows.md) | Guide | Parsl, sweeps, artifacts |
 | [Compatibility](./compatibility.md) | Reference | Version pins and API notes |
 | [CONTRIBUTING](./CONTRIBUTING.md) | Meta | Documentation maintenance |
@@ -42,7 +44,8 @@ uv run python docs/_build.py
 These files are **manually written**:
 
 * `samplers.md` — Sampler usage guide
-* `vi.md` — VI guide
+* `vi.md` — VI overview and shared concepts
+* `vi_mfa.md` — MFA VI algorithm details
 * `workflows.md` — Workflow orchestration
 * `compatibility.md` — Version compatibility notes
 * `experiments.md` — Experiments and config composition guide
@@ -88,15 +91,15 @@ docs/
 ├── config.md              # [Auto] Config reference
 │
 ├── samplers.md            # [Manual] Sampler guide
-├── vi.md                  # [Manual] VI guide
+├── vi.md                  # [Manual] VI overview
+├── vi_mfa.md              # [Manual] MFA algorithm details
+├── vi_flow.md             # [Technical] Flow algorithm details
 ├── workflows.md           # [Manual] Workflow guide
 ├── compatibility.md       # [Manual] Compatibility notes
 ├── experiments.md         # [Manual] Experiments guide
 ├── methodology.md         # [Manual] Conceptual background
 ├── optuna_workflow.md     # [Manual] Optuna guide
 ├── output_management.md   # [Manual] Artifact system
-│
-├── vi_normalizing_flow.md # [Technical] Deep flow theory
 │
 ├── CONTRIBUTING.md        # [Meta] Maintenance guide
 └── index.md               # [Meta] This file

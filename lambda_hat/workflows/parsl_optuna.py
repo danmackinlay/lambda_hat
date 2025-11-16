@@ -9,10 +9,10 @@ Bayesian optimization workflow that:
 
 Usage:
   # Local testing
-  parsl-optuna --config config/optuna_demo.yaml --local
+  lambda-hat workflow optuna --config config/optuna_demo.yaml --local
 
   # SLURM cluster
-  parsl-optuna --config config/optuna_demo.yaml \\
+  lambda-hat workflow optuna --config config/optuna_demo.yaml \\
       --parsl-card config/parsl/slurm/cpu.yaml
 
 See plans/optuna.md for design details.

@@ -167,13 +167,13 @@ methods:
   - mclmc
 ```
 
-**Hyperparameter search spaces** (defined in `lambda_hat/entrypoints/parsl_optuna.py::suggest_method_params`):
+**Hyperparameter search spaces** (defined in `lambda_hat/workflows/parsl_optuna.py::suggest_method_params`):
 
 - **SGLD**: `eta0` (log-uniform), `gamma`, `batch`, `precond_type`, `steps`
 - **VI (MFA)**: `lr` (log-uniform), `M`, `r`, `whitening_mode`, `steps`, `batch_size`
 - **MCLMC**: `step_size` (log-uniform), `target_accept`, `L`, `steps`
 
-To customize search spaces, edit `suggest_method_params()` in `lambda_hat/entrypoints/parsl_optuna.py`.
+To customize search spaces, edit `suggest_method_params()` in `lambda_hat/workflows/parsl_optuna.py`.
 
 ### Optuna Settings
 
@@ -222,7 +222,7 @@ This ensures **idempotent runs**: re-running with the same config reuses existin
 
 ### Custom Objective Function
 
-To use Huber loss instead of absolute error, edit `lambda_hat/entrypoints/parsl_optuna.py`:
+To use Huber loss instead of absolute error, edit `lambda_hat/workflows/parsl_optuna.py`:
 
 ```python
 # In objective_from_metrics():

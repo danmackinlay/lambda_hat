@@ -1,98 +1,150 @@
-# Variational Inference
+# Variational Inference (VI)
 
-Variational Inference (VI) provides a fast, scalable alternative to MCMC for estimating the Local Learning Coefficient.
+Variational Inference provides a fast, scalable alternative to MCMC for estimating the Local Learning Coefficient.
+
+---
+
+## Overview
+
+**What is VI?**
+VI approximates the tempered local posterior using a parameterized variational family q(w), optimized to maximize the Evidence Lower Bound (ELBO).
+
+**Why use VI for LLC?**
+- **Speed**: 10-100× faster than MCMC samplers
+- **Scalability**: Efficient minibatch gradients
+- **Exploration**: Fast hyperparameter sweeps and model selection
+- **Initial estimates**: Validate experimental setup before running expensive MCMC
+
+**When to use VI**:
+- Model selection and architecture search
+- Hyperparameter tuning (find optimal γ, β, sampler settings)
+- Initial LLC estimates before MCMC validation
+- Resource-constrained settings
+
+**When to use MCMC instead**:
+- Gold-standard LLC estimates for publication
+- Highly multimodal posteriors (though Flow VI may help)
+- Need for rigorous convergence diagnostics
+
+---
+
+## Available VI Algorithms
+
+Lambda-Hat provides two VI implementations:
+
+### [MFA VI (Mixture of Factor Analyzers)](./vi_mfa.md)
+
+**Default and recommended.**
+
+- Mixture of low-rank Gaussians centered at w*
+- M components, each with rank-r covariance
+- STL + Rao-Blackwellized gradients
+- HVP control variate for variance reduction
+- Robust, well-tested, fast
+
+**When to use**: Default choice for most problems.
+
+### [Flow VI (Normalizing Flows)](./vi_flow.md)
+
+**Experimental, more expressive.**
+
+- Normalizing flows with manifold-plus-noise construction
+- RealNVP, MAF, or NSF architectures
+- Vmap-compatible (PRNG issues resolved Nov 2025)
+- Requires `uv sync --extra flowvi`
+
+**When to use**: When MFA capacity is insufficient or posteriors are complex/multimodal.
 
 ---
 
 ## Quick Start
 
-**At a glance**:
-- Fast LLC estimates for model selection and hyperparameter sweeps
-- Two algorithms: **MFA** (default) or **Flow** (requires `--extra flowvi`)
-- STL gradients + Rao-Blackwellized control variates for variance reduction
-- Float32 stability with optional TensorBoard monitoring
-
-**Run VI**:
+**Basic usage** (uses MFA by default):
 ```bash
-# Simple usage (uses defaults from config)
 uv run lambda-hat workflow llc --local
-
-# With custom VI settings in config/experiments.yaml
-samplers:
-  - name: vi
-    overrides:
-      M: 8
-      r: 2
-      steps: 5000
-      whitening_mode: "adam"
 ```
 
----
-
-## Algorithms
-
-### MFA (Mixture of Factor Analyzers)
-
-**Default VI algorithm.** Approximates the tempered local posterior using a mixture of low-rank Gaussians centered at w* (ERM optimum).
-
-**Variational family**: M components, each with rank-r covariance.
-
-**Features**:
-- STL (sticking-the-landing) gradients
-- Rao-Blackwellized gradients for reduced variance
-- Diagonal geometry whitening (RMSProp/Adam modes)
-- HVP control variate for LLC variance reduction (evaluation-time only)
-
-**When to use**: Default choice for VI; robust and well-tested.
-
----
-
-### Flow (Normalizing Flows)
-
-**Experimental.** Uses normalizing flows via manifold-plus-noise construction.
-
-**Requirements**: `uv sync --extra flowvi`
-
-**Architectures**:
-- RealNVP coupling flow (default)
-- MAF (Masked Autoregressive Flow)
-- NSF (Neural Spline Flow)
-
-**Features**:
-- Low-rank latent space with orthogonal noise
-- Vmap-compatible (PRNG key issues resolved Nov 2025)
-- More expressive than MFA for complex posteriors
-
-**Current limitations**:
-- HVP control variate deferred to future work
-- More experimental than MFA
-
-**When to use**: When MFA capacity is insufficient or you suspect multimodal posteriors.
-
-**Configuration**:
+**Custom VI settings** in `config/experiments.yaml`:
 ```yaml
 samplers:
   - name: vi
     overrides:
-      sampler_flavour: "flow"  # Enable flow VI
-      M: 8                     # Number of flow components
-      r: 2                     # Latent rank
+      M: 8                      # Number of components (MFA) or latent dim (Flow)
+      r: 2                      # Rank per component (MFA) or latent rank (Flow)
+      steps: 5000               # Optimization steps
+      whitening_mode: "adam"    # Geometry preconditioning
+      tensorboard: true         # Enable real-time diagnostics
 ```
 
-See `docs/vi_normalizing_flow.md` for detailed flow theory and implementation notes.
+**Enable Flow VI**:
+```yaml
+samplers:
+  - name: vi
+    overrides:
+      sampler_flavour: "flow"  # Use Flow instead of MFA
+      M: 8
+      r: 2
+```
+
+---
+
+## Core Concepts
+
+### Evidence Lower Bound (ELBO)
+
+VI maximizes the ELBO:
+```
+ELBO(q) = 𝔼_q[log p(w)] - 𝔼_q[log q(w)]
+        = 𝔼_q[log p(w)] + H(q)
+```
+
+where:
+- `p(w)` = tempered local posterior ∝ exp(-β L(w) - γ ||w - w*||²)
+- `q(w)` = variational approximation
+- `H(q)` = entropy of q
+
+**Key property**: ELBO ≤ log Z (true log partition function)
+
+### Localization
+
+All VI methods localize around w* (ERM optimum) via:
+```
+log p(w) = -β L(w) - γ ||w - w*||² + const
+```
+
+where:
+- β = inverse temperature (controls sampling temperature)
+- γ = localizer strength (Gaussian tether around w*)
+- L(w) = loss function (MSE, Gaussian likelihood, etc.)
+
+**Tuning γ**:
+- Try `{1e-4, 1e-3, 1e-2}`
+- Smaller γ = wider posterior (more exploration)
+- Larger γ = tighter posterior (stronger localization)
+- Must be set via `posterior.gamma`, **not** `sampler.vi.gamma`
+
+### Temperature β
+
+Controls the sampling temperature:
+- β = 1 / log(n) (default, `beta_mode: "1_over_log_n"`)
+- β = 1 (full posterior, `beta_mode: "manual"`, `beta0: 1.0`)
+- Larger β = sharper posterior (colder)
+- Smaller β = smoother posterior (hotter)
 
 ---
 
 ## Configuration
 
-VI parameters live under `sampler.vi` in `config/experiments.yaml`. The localizer γ (gamma) comes from `posterior.gamma`, **not** from VI config.
+### Shared VI Parameters
 
-### Core Parameters
+Common to all VI algorithms (configure under `sampler.vi`):
+
+#### Core Parameters
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `M` | 8 | Number of mixture components |
-| `r` | 2 | Rank budget per component |
+| `M` | 8 | Number of mixture components (MFA) or latent dim (Flow) |
+| `r` | 2 | Rank per component (MFA) or latent rank (Flow) |
 | `steps` | 5000 | Optimization steps |
 | `batch_size` | 256 | Minibatch size |
 | `lr` | 0.01 | Learning rate (Adam optimizer) |
@@ -100,29 +152,30 @@ VI parameters live under `sampler.vi` in `config/experiments.yaml`. The localize
 | `eval_samples` | 64 | MC samples for final LLC estimate |
 | `dtype` | float32 | Precision (`float32` or `float64`) |
 
-### Whitening & Stability
+#### Whitening & Stability
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `whitening_mode` | `"none"` | Geometry whitening: `"none"` \| `"rmsprop"` \| `"adam"` |
 | `whitening_decay` | 0.99 | EMA decay for gradient moment accumulation |
 | `clip_global_norm` | 5.0 | Gradient clipping threshold (null to disable) |
-| `alpha_temperature` | 1.0 | Softmax temperature on mixture weights |
 
-### Advanced Options
+#### Optimization
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `r_per_component` | null | Heterogeneous rank budgets (list[int] of length M) |
-| `alpha_dirichlet_prior` | null | Dirichlet(α₀) prior on mixture weights |
 | `lr_schedule` | null | LR schedule: `"cosine"` \| `"linear_decay"` |
 | `lr_warmup_frac` | 0.05 | Fraction of steps for warmup |
-| `entropy_bonus` | 0.0 | Add λ * H(q) to ELBO for exploration |
+
+#### Diagnostics
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
 | `tensorboard` | false | Enable TensorBoard logging |
 
 ### Posterior Parameters
 
-Configure via `posterior` (not `sampler.vi`):
+Configure via `posterior` block (**not** `sampler.vi`):
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
@@ -133,55 +186,49 @@ Configure via `posterior` (not `sampler.vi`):
 
 ---
 
-## Hyperparameter Examples
+## Running VI
 
-### Example 1: Basic VI run
+### Single VI Run
 
-```yaml
-targets:
-  - { model: base, data: base, teacher: _null, seed: 43 }
+```bash
+# Build target first (if not already built)
+uv run lambda-hat build --config-yaml config/experiments.yaml --target-id tgt_abc123
 
-samplers:
-  - name: vi
-    overrides:
-      M: 8
-      r: 2
-      whitening_mode: "rmsprop"
-      lr_schedule: "cosine"
-
-posterior:
-  gamma: 0.001
+# Run VI sampler
+uv run lambda-hat sample --config-yaml config/experiments.yaml --target-id tgt_abc123
 ```
 
-### Example 2: VI hyperparameter sweep
+### Via Workflow (Recommended)
+
+```bash
+# Run full workflow (builds targets + runs samplers)
+uv run lambda-hat workflow llc --local
+
+# With promotion (generate galleries)
+uv run lambda-hat workflow llc --local --promote
+```
+
+### Example Configuration
 
 ```yaml
+# config/experiments.yaml
 targets:
   - { model: base, data: base, teacher: _null, seed: 43 }
 
 samplers:
-  # Baseline
-  - name: vi
-    overrides: { M: 4, r: 1, whitening_mode: "none", lr: 0.01 }
-    seed: 1001
-
-  # More expressive
-  - name: vi
-    overrides: { M: 8, r: 2, whitening_mode: "rmsprop", lr: 0.01 }
-    seed: 1002
-
-  # Aggressive geometry + entropy
   - name: vi
     overrides:
       M: 8
       r: 2
+      steps: 5000
       whitening_mode: "adam"
-      entropy_bonus: 0.1
       lr_schedule: "cosine"
-    seed: 1003
+      tensorboard: true
+    seed: 54321
 
 posterior:
   gamma: 0.001
+  beta_mode: "1_over_log_n"
 ```
 
 ---
@@ -195,8 +242,6 @@ samplers:
   - name: vi
     overrides:
       tensorboard: true
-      M: 8
-      r: 2
 ```
 
 **Launch TensorBoard**:
@@ -204,76 +249,162 @@ samplers:
 tensorboard --logdir runs/targets/<tgt>/run_vi_<rid>/diagnostics/tb
 ```
 
-**Key metrics**:
-- `vi/elbo`, `vi/elbo_like`, `vi/logq`: ELBO decomposition
-- `vi/radius2`: Localization radius (quantiles + mean)
-- `vi/pi_entropy`, `vi/pi_min`, `vi/pi_max`: Mixture weight health
-- `vi/grad_norm`: Gradient diagnostics
-- `vi/cumulative_fge`: Work-normalized progress
+### Key Metrics (Shared Across VI Methods)
 
-**Diagnosis**:
-- **Low `pi_entropy` / high `pi_max`**: Mixture collapse → add `entropy_bonus` or `alpha_dirichlet_prior`
-- **Spiking `grad_norm`**: Reduce `lr` or increase `clip_global_norm`
-- **Flat `elbo`**: Increase `M`, `r`, or switch to `lr_schedule: "cosine"`
+**ELBO decomposition**:
+- `vi/elbo` — Total ELBO (maximize this)
+- `vi/elbo_like` — Expected log likelihood term
+- `vi/logq` — Negative entropy term
+
+**Localization**:
+- `vi/radius2` — Localization radius (mean, quantiles)
+- Track to verify posterior stays near w*
+
+**Optimization**:
+- `vi/grad_norm` — Gradient magnitude (watch for spikes)
+- `vi/cumulative_fge` — Work-normalized progress
+
+**Convergence**:
+- ELBO should increase steadily then plateau
+- `grad_norm` should decrease and stabilize
+- `radius2` should stabilize at reasonable value
+
+### Diagnosis
+
+**Slow convergence** (flat ELBO):
+- Increase capacity (M or r)
+- Try learning rate schedule (`lr_schedule: "cosine"`)
+- Check if γ is too large (try smaller)
+
+**Training instability** (spiking grad_norm):
+- Reduce learning rate
+- Increase `clip_global_norm`
+- Use `whitening_mode: "adam"`
+
+**Poor LLC estimates**:
+- Insufficient capacity (increase M or r)
+- Try different VI algorithm (MFA ↔ Flow)
+- Compare with HMC ground truth
 
 ---
 
-## Tuning Guide
+## Work Tracking
 
-### Robust starting point
+VI reports work metrics for fair comparison with MCMC:
 
-```yaml
-whitening_mode: "adam"
-clip_global_norm: 5.0
-M: 8
-r: 2
-lr: 0.01
-lr_schedule: "linear_decay"
-lr_warmup_frac: 0.05
-posterior:
-  gamma: 0.001
+**Function-Gradient Evaluations (FGE)**:
+- 1 VI step = 1 FGE (one minibatch gradient)
+- Whitening pre-pass cost included in `total_fge`
+- Cumulative FGE: `batch_size / n_data` per step
+
+**Output metrics**:
+- `total_fge` — Total function-gradient evaluations
+- `n_full_loss` — MC samples for λ̂ estimation
+- `n_minibatch_grads` — Optimization steps
+- `sampler_flavour` — Algorithm used ("mfa" or "flow")
+
+**Comparison with MCMC**:
+- VI: ~5000 steps × (batch_size/n_data) FGE ≈ 1000 FGE for batch_size=256, n=1280
+- HMC: ~1000 draws × 1 full gradient per draw ≈ 1000 FGE
+- SGLD: ~20000 steps × (batch_size/n_data) FGE ≈ 4000 FGE for batch_size=256, n=1280
+
+---
+
+## Output Structure
+
+VI produces the same output format as MCMC samplers:
+
+```
+runs/targets/tgt_abc123/run_vi_rid123/
+├── trace.nc              # ArviZ-compatible NetCDF trace
+├── analysis.json         # Metrics (llc_mean, llc_std, ESS, etc.)
+└── diagnostics/
+    ├── trace.png         # Trace plots
+    ├── llc_convergence_combined.png
+    └── tb/               # TensorBoard logs (if enabled)
 ```
 
-### Capacity tuning
-
-1. **Underfitting** (poor radius matching, high KL): Increase `r` first (cheapest), then `M`
-2. **Mixture collapse** (low `pi_entropy`): Add `entropy_bonus: 0.1` or `alpha_dirichlet_prior: 2.0`
-3. **Noisy optimization**: Keep `whitening_mode: adam`, try `lr_schedule: "cosine"` with larger warmup
-
-### Gamma (γ) tuning
-
-- γ controls localization tightness around w*
-- Try `{1e-4, 1e-3, 1e-2}`; pick smallest value with stable ELBO and radius
-- **Must** be set via `posterior.gamma`, not `sampler.vi.gamma`
+**Key metrics in `analysis.json`**:
+- `lambda_hat` — LLC estimate (mean)
+- `lambda_hat_std` — LLC standard error
+- `ess` — Effective sample size
+- `total_fge` — Work metric (function-gradient evaluations)
 
 ---
 
 ## Implementation Notes
 
-### Work Tracking
-
-VI reports `total_fge` (function-gradient evaluations) for fair comparison with MCMC:
-- 1 VI step = 1 FGE (minibatch gradient)
-- Whitening pre-pass cost included in `total_fge`
-- Cumulative FGE: `batch_size / n_data` per step (minibatch accounting)
-
 ### Precision
 
-- VI operates in `float32` by default with numerical stability features
-- Can switch to `float64` via `dtype: float64` (slower, rarely needed)
+VI operates in `float32` by default:
+- Sufficient for LLC estimation
+- ~2× faster than float64
+- Numerical stability features (clipping, ridge regularization)
+- Can switch to `float64` via `dtype: float64` (rarely needed)
 
 ### HVP Usage
 
-- HVP-diagonal whitening is **not** implemented for the optimization loop (JIT stability)
-- HVP is used **only at evaluation time** for the control variate (variance reduction)
-- Optimization uses RMSProp/Adam diagonal whitening (`whitening_mode: rmsprop|adam`)
+**HVP (Hessian-Vector Product)** is used selectively:
+- **Not used** during optimization (JIT stability issues)
+- **Used only at evaluation time** for control variate
+- Reduces LLC estimate variance without biasing the estimate
+- Optimization uses RMSProp/Adam diagonal whitening instead
+
+### Return Structure
+
+VI returns standard sampling results compatible with other samplers:
+```python
+{
+    "lambda_hat": jnp.array(...),     # LLC estimate (scalar)
+    "traces": {                       # Per-iteration metrics
+        "elbo": jnp.array(...),
+        "grad_norm": jnp.array(...),
+        # ...
+    },
+    "extras": {                       # Final evaluation metrics
+        "Eq_Ln": jnp.array(...),
+        "Ln_wstar": jnp.array(...),
+        "cv_info": { ... },           # Control variate diagnostics
+    },
+    "timings": {                      # Wall-clock times
+        "adaptation": 0.0,            # VI has no adaptation phase
+        "sampling": float(...),       # Training + evaluation time
+        "total": float(...),
+    },
+    "work": {                         # FGE accounting
+        "n_full_loss": int(...),
+        "n_minibatch_grads": int(...),
+        # ...
+    },
+}
+```
+
+---
+
+## Algorithm Comparison
+
+| Feature | MFA VI | Flow VI |
+|---------|--------|---------|
+| **Status** | Default, robust | Experimental |
+| **Family** | Mixture of Gaussians | Normalizing flows |
+| **Expressiveness** | Medium | High |
+| **Speed** | Fast | Medium |
+| **Complexity** | Low | High |
+| **Multimodal** | Limited | Better |
+| **Requirements** | None | `--extra flowvi` |
+| **Vmap** | ✅ Compatible | ✅ Compatible (Nov 2025 fix) |
+
+**When to use MFA**: Default choice, fastest, works well for most problems
+
+**When to use Flow**: Complex posteriors, suspected multimodality, MFA capacity insufficient
 
 ---
 
 ## See Also
 
-- [Configuration Reference](./config.md) — Complete YAML schema and defaults
-- [Samplers](./samplers.md) — Comparison with MCMC samplers
+- [MFA VI](./vi_mfa.md) — Mixture of factor analyzers (default algorithm)
+- [Flow VI](./vi_flow.md) — Normalizing flows (experimental algorithm)
+- [Configuration Reference](./config.md) — Complete YAML schema
+- [Samplers](./samplers.md) — Comparison with MCMC methods
 - [Workflows](./workflows.md) — Running VI in sweeps with Parsl
-- `docs/vi_mfa.md` — Detailed MFA implementation notes
-- `docs/vi_normalizing_flow.md` — Detailed flow theory and JAX/vmap learnings
+- [Experiments Guide](./experiments.md) — Composing configs and overrides
