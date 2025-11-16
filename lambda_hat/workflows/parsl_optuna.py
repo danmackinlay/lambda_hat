@@ -106,29 +106,33 @@ def suggest_method_params(trial, method_name):
 
 def run_optuna_workflow(
     config_path,
-    parsl_config_path=None,  # Deprecated, kept for compatibility
+    parsl_card_path=None,
+    parsl_overrides=None,
+    local=False,
     max_trials_per_method=200,
     batch_size=32,
     hmc_budget_sec=36000,
     method_budget_sec=6000,
     artifacts_dir="artifacts",
     results_dir="results",
+    study_name=None,
+    storage_url=None,
 ):
     """Execute Optuna hyperparameter optimization workflow.
 
     Args:
-        config_path: Path to Optuna experiment config
-        parsl_config_path: [DEPRECATED] Ignored (Parsl config loaded via main())
-
-    Args:
         config_path: Path to Optuna config YAML (problem specs)
-        parsl_config_path: Path to Parsl executor config
+        parsl_card_path: Path to Parsl YAML card (e.g., config/parsl/slurm/cpu.yaml)
+        parsl_overrides: List of OmegaConf dotlist overrides for Parsl card
+        local: Use local ThreadPool executor instead of card (default: False)
         max_trials_per_method: Maximum trials per (problem, method) (default: 200)
         batch_size: Concurrent trials per (problem, method) (default: 32)
         hmc_budget_sec: HMC reference time budget (default: 36000 = 10h)
         method_budget_sec: Method trial time budget (default: 6000 = 100min)
         artifacts_dir: Directory for artifacts (default: "artifacts", relative to CWD)
         results_dir: Directory for results (default: "results", relative to CWD)
+        study_name: Optuna study name (optional, for future multi-study support)
+        storage_url: Optuna storage URL (optional, defaults to in-memory)
 
     Returns:
         Path to results parquet file
@@ -138,7 +142,27 @@ def run_optuna_workflow(
     results_dir = Path(results_dir)
     results_dir.mkdir(exist_ok=True, parents=True)
 
-    # Load experiment configuration (Parsl config already loaded in main())
+    # Load Parsl configuration
+    if local and not parsl_card_path:
+        print("Using Parsl mode: local (ThreadPool)")
+        parsl_cfg = build_parsl_config_from_card(OmegaConf.create({"type": "local"}))
+    elif parsl_card_path:
+        card_path = Path(parsl_card_path)
+        if not card_path.is_absolute():
+            card_path = Path.cwd() / card_path
+        if not card_path.exists():
+            raise FileNotFoundError(f"Parsl card not found: {card_path}")
+        print(f"Using Parsl card: {card_path}")
+        if parsl_overrides:
+            print(f"  Overrides: {parsl_overrides}")
+        parsl_cfg = load_parsl_config_from_card(card_path, parsl_overrides or [])
+    else:
+        raise ValueError("Must specify either local=True or parsl_card_path")
+
+    # Load Parsl
+    parsl.load(parsl_cfg)
+
+    # Load experiment configuration
     print(f"Loading experiment config from {config_path}...")
     exp = OmegaConf.load(config_path)
 
@@ -365,6 +389,9 @@ def run_optuna_workflow(
     print(f"  Wrote {len(df)} trials to {output_path}")
     print("\n✓ Optuna workflow complete!")
 
+    # Clean up Parsl
+    parsl.clear()
+
     return output_path
 
 
@@ -434,35 +461,15 @@ def main():
 
     args = parser.parse_args()
 
-    # Resolve Parsl config
-    if args.local and not args.parsl_card:
-        print("Using Parsl mode: local (ThreadPool)")
-        parsl_cfg = build_parsl_config_from_card(OmegaConf.create({"type": "local"}))
-    elif args.parsl_card:
-        card_path = Path(args.parsl_card)
-        if not card_path.is_absolute():
-            card_path = Path.cwd() / card_path
-        if not card_path.exists():
-            print(f"Error: Parsl card not found: {card_path}", file=sys.stderr)
-            sys.exit(1)
-        print(f"Using Parsl card: {card_path}")
-        if args.parsl_sets:
-            print(f"  Overrides: {args.parsl_sets}")
-        parsl_cfg = load_parsl_config_from_card(card_path, args.parsl_sets)
-    else:
-        print("Error: Must specify either --local or --parsl-card", file=sys.stderr)
-        sys.exit(1)
-
     # Run workflow
     print(f"Using Optuna config: {args.config}\n")
 
-    # Load Parsl config
-    parsl.load(parsl_cfg)
-
     try:
         output_path = run_optuna_workflow(
-            args.config,
-            None,  # No longer pass parsl_config_path
+            config_path=args.config,
+            parsl_card_path=args.parsl_card,
+            parsl_overrides=args.parsl_sets,
+            local=args.local,
             max_trials_per_method=args.max_trials,
             batch_size=args.batch_size,
             hmc_budget_sec=args.hmc_budget,
@@ -474,8 +481,6 @@ def main():
     except Exception as e:
         print(f"\n✗ Workflow failed: {e}", file=sys.stderr)
         raise
-    finally:
-        parsl.clear()
 
 
 if __name__ == "__main__":

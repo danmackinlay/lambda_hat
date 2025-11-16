@@ -268,8 +268,8 @@ def workflow_llc(config, experiment, parsl_card, parsl_sets, local, promote, pro
     from omegaconf import OmegaConf
 
     from lambda_hat.artifacts import Paths, RunContext
-    from lambda_hat.workflows.parsl_llc import run_workflow
     from lambda_hat.parsl_cards import build_parsl_config_from_card, load_parsl_config_from_card
+    from lambda_hat.workflows.parsl_llc import run_workflow
 
     # Initialize artifact system early to get RunContext for Parsl run_dir
     paths_early = Paths.from_env()
@@ -340,37 +340,103 @@ def workflow_llc(config, experiment, parsl_card, parsl_sets, local, promote, pro
     type=click.Path(exists=True),
     help="Path to Optuna experiments config",
 )
-@click.option("--study-name", required=True, help="Optuna study name")
+@click.option(
+    "--parsl-card",
+    type=click.Path(exists=True),
+    help="Path to Parsl YAML card (e.g., config/parsl/slurm/cpu.yaml)",
+)
+@click.option(
+    "--set",
+    "parsl_sets",
+    multiple=True,
+    help="Override Parsl card values (OmegaConf dotlist), e.g.: --set walltime=04:00:00",
+)
+@click.option(
+    "--local",
+    is_flag=True,
+    help="Use local ThreadPool executor (equivalent to --parsl-card config/parsl/local.yaml)",
+)
+@click.option(
+    "--max-trials",
+    type=int,
+    default=200,
+    help="Maximum trials per (problem, method) (default: 200)",
+)
+@click.option(
+    "--batch-size",
+    type=int,
+    default=32,
+    help="Concurrent trials per (problem, method) (default: 32)",
+)
+@click.option(
+    "--hmc-budget",
+    type=int,
+    default=36000,
+    help="HMC reference time budget in seconds (default: 36000 = 10h)",
+)
+@click.option(
+    "--method-budget",
+    type=int,
+    default=6000,
+    help="Method trial time budget in seconds (default: 6000 = 100min)",
+)
+@click.option(
+    "--artifacts-dir",
+    default="artifacts",
+    help="Directory for artifacts (default: artifacts, relative to CWD)",
+)
+@click.option(
+    "--results-dir",
+    default="results",
+    help="Directory for results (default: results, relative to CWD)",
+)
+@click.option(
+    "--study-name",
+    help="Optuna study name (optional, for future multi-study support)",
+)
 @click.option(
     "--storage",
-    default=None,
-    help="Optuna storage URL (default: in-memory)",
+    help="Optuna storage URL (optional, defaults to in-memory)",
 )
-def workflow_optuna(config, study_name, storage):
+def workflow_optuna(
+    config,
+    parsl_card,
+    parsl_sets,
+    local,
+    max_trials,
+    batch_size,
+    hmc_budget,
+    method_budget,
+    artifacts_dir,
+    results_dir,
+    study_name,
+    storage,
+):
     """Run Bayesian hyperparameter optimization.
 
     This uses Optuna + Parsl to optimize sampler hyperparameters.
     """
-    # Import and delegate to parsl_optuna entrypoint
-    from lambda_hat.workflows.parsl_optuna import main as parsl_optuna_main
-
-    # TODO: Refactor parsl_optuna.py to accept parameters instead of sys.argv
-    # For now, manipulate sys.argv to pass arguments
-    old_argv = sys.argv
-    sys.argv = [
-        "lambda-hat workflow optuna",
-        "--config",
-        config,
-        "--study-name",
-        study_name,
-    ]
-    if storage:
-        sys.argv.extend(["--storage", storage])
+    from lambda_hat.workflows.parsl_optuna import run_optuna_workflow
 
     try:
-        parsl_optuna_main()
-    finally:
-        sys.argv = old_argv
+        output_path = run_optuna_workflow(
+            config_path=config,
+            parsl_card_path=parsl_card,
+            parsl_overrides=list(parsl_sets),
+            local=local,
+            max_trials_per_method=max_trials,
+            batch_size=batch_size,
+            hmc_budget_sec=hmc_budget,
+            method_budget_sec=method_budget,
+            artifacts_dir=artifacts_dir,
+            results_dir=results_dir,
+            study_name=study_name,
+            storage_url=storage,
+        )
+        click.echo(f"\n✓ Results: {output_path}")
+    except Exception as e:
+        click.echo(f"\n✗ Workflow failed: {e}", err=True)
+        raise
 
 
 # =============================================================================
