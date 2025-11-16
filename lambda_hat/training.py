@@ -32,7 +32,10 @@ def train_erm(
     t_cfg = cfg.training
 
     # For Equinox: separate trainable params from static structure
-    trainable_params, static_model = eqx.partition(params_init, eqx.is_array)
+    # Use inexact dtype filter to exclude functions (custom_jvp) and integer arrays
+    trainable_params, static_model = eqx.partition(
+        params_init, lambda x: eqx.is_array(x) and jnp.issubdtype(x.dtype, jnp.inexact)
+    )
 
     # Setup optimizer
     if t_cfg.optimizer == "adam":

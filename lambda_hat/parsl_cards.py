@@ -114,21 +114,21 @@ def load_parsl_config_from_card(card_path: Path, dot_overrides: list[str] | None
 
     Args:
         card_path: Path to YAML card file
-        dot_overrides: OmegaConf dotlist overrides (e.g., ["walltime=04:00:00"])
+        dot_overrides: OmegaConf dotlist overrides (e.g., ["walltime=04:00:00", "run_dir=/path/to/rundir"])
 
     Returns:
         Parsl Config object
 
     Side effects:
-        Writes resolved card to parsl_runinfo/selected_parsl_card.yaml for traceability
+        Writes resolved card to {run_dir}/selected_parsl_card.yaml for traceability
     """
     cfg = OmegaConf.load(card_path)
     if dot_overrides:
         cfg = OmegaConf.merge(cfg, OmegaConf.from_dotlist(dot_overrides))
 
-    # Persist the resolved card for reproducibility
+    # Persist the resolved card for reproducibility (use configured run_dir)
     resolved = OmegaConf.to_yaml(cfg)
-    runinfo = Path("parsl_runinfo")
+    runinfo = Path(cfg.get("run_dir", "parsl_runinfo"))
     runinfo.mkdir(parents=True, exist_ok=True)
     (runinfo / "selected_parsl_card.yaml").write_text(resolved)
 

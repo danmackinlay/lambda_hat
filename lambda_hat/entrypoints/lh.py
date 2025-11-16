@@ -6,7 +6,6 @@ import json
 import os
 import shutil
 import time
-from pathlib import Path
 
 from lambda_hat.artifacts import ArtifactStore, Paths
 
@@ -59,7 +58,7 @@ def cmd_gc(args):
             meta = json.loads(meta_p.read_text())
         except Exception:
             continue
-        urn = f"urn:lh:{meta.get('type','unknown')}:sha256:{meta['hash']['hex']}"
+        urn = f"urn:lh:{meta.get('type', 'unknown')}:sha256:{meta['hash']['hex']}"
         if urn in reachable:
             continue
         # Age gate
@@ -82,9 +81,7 @@ def cmd_ls(args):
         with m.open() as f:
             for line in f:
                 rec = json.loads(line)
-                print(
-                    f"  {rec['run_id']}  {rec.get('algo','?')}  phase={rec.get('phase','?')}"
-                )
+                print(f"  {rec['run_id']}  {rec.get('algo', '?')}  phase={rec.get('phase', '?')}")
 
 
 def cmd_tb(args):

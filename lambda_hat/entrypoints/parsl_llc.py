@@ -25,6 +25,7 @@ import parsl
 from omegaconf import OmegaConf
 from parsl import bash_app, python_app
 
+from lambda_hat.artifacts import ArtifactStore, Paths, RunContext
 from lambda_hat.parsl_cards import build_parsl_config_from_card, load_parsl_config_from_card
 from lambda_hat.promote.core import promote_gallery
 from lambda_hat.workflow_utils import (
@@ -40,13 +41,13 @@ from lambda_hat.workflow_utils import (
 
 
 @bash_app
-def build_target_app(cfg_yaml, target_id, target_dir, jax_x64, stdout=None, stderr=None):
+def build_target_app(cfg_yaml, target_id, experiment, jax_x64, stdout=None, stderr=None):
     """Build a target (train neural network) via CLI entrypoint.
 
     Args:
         cfg_yaml: Path to composed build config YAML
         target_id: Target identifier (e.g., 'tgt_abc123')
-        target_dir: Output directory for target artifacts
+        experiment: Experiment name for artifact system
         jax_x64: JAX precision flag (0 or 1)
         stdout: Log file for stdout
         stderr: Log file for stderr
@@ -55,22 +56,23 @@ def build_target_app(cfg_yaml, target_id, target_dir, jax_x64, stdout=None, stde
         Shell command string
     """
     return f"""
-mkdir -p {target_dir}
 JAX_ENABLE_X64={jax_x64} uv run python -m lambda_hat.entrypoints.build_target \
   --config-yaml {cfg_yaml} \
   --target-id {target_id} \
-  --target-dir {target_dir}
+  --experiment {experiment}
     """.strip()
 
 
 @bash_app
-def run_sampler_app(cfg_yaml, target_id, run_dir, jax_x64, inputs=None, stdout=None, stderr=None):
+def run_sampler_app(
+    cfg_yaml, target_id, experiment, jax_x64, inputs=None, stdout=None, stderr=None
+):
     """Run a sampler (MCMC/VI) for a target via CLI entrypoint.
 
     Args:
         cfg_yaml: Path to composed sample config YAML
         target_id: Target identifier
-        run_dir: Output directory for run artifacts
+        experiment: Experiment name for artifact system
         jax_x64: JAX precision flag (0 or 1)
         inputs: List of futures this task depends on (target build)
         stdout: Log file for stdout
@@ -80,11 +82,10 @@ def run_sampler_app(cfg_yaml, target_id, run_dir, jax_x64, inputs=None, stdout=N
         Shell command string
     """
     return f"""
-mkdir -p {run_dir}
 JAX_ENABLE_X64={jax_x64} uv run python -m lambda_hat.entrypoints.sample \
   --config-yaml {cfg_yaml} \
   --target-id {target_id} \
-  --run-dir {run_dir}
+  --experiment {experiment}
     """.strip()
 
 
@@ -128,23 +129,19 @@ def promote_app(store_root, samplers, outdir, plot_name, inputs=None):
 
 def run_workflow(
     experiments_yaml,
+    experiment=None,
     parsl_config_path=None,  # Deprecated, kept for compatibility
     enable_promotion=False,
     promote_plots=None,
-    logs_dir="logs",
-    temp_cfg_dir="temp_parsl_cfg",
-    results_dir="results",
 ):
     """Execute the full Lambda-Hat workflow: build → sample → (optional) promote.
 
     Args:
         experiments_yaml: Path to experiments config (e.g., config/experiments.yaml)
+        experiment: Experiment name (default: from config or env LAMBDA_HAT_DEFAULT_EXPERIMENT)
         parsl_config_path: [DEPRECATED] Ignored (Parsl config loaded via main())
         enable_promotion: Whether to run promotion stage (default: False, opt-in)
-        promote_plots: List of plot names to promote (default: ['trace.png'])
-        logs_dir: Directory for log files (default: "logs")
-        temp_cfg_dir: Directory for temporary config files (default: "temp_parsl_cfg")
-        results_dir: Directory for aggregated results (default: "results")
+        promote_plots: List of plot names to promote (default: ['trace.png', 'llc_convergence_combined.png'])
 
     Returns:
         Path to aggregated results parquet file
@@ -152,25 +149,33 @@ def run_workflow(
     if promote_plots is None:
         promote_plots = ["trace.png", "llc_convergence_combined.png"]
 
-    # Convert paths to Path objects
-    logs_dir = Path(logs_dir)
-    temp_cfg_dir = Path(temp_cfg_dir)
-    results_dir = Path(results_dir)
+    # Initialize artifact system
+    paths = Paths.from_env()
+    paths.ensure()
+    store = ArtifactStore(paths.store)
 
     # Load experiment configuration (Parsl config already loaded in main())
     exp = OmegaConf.load(experiments_yaml)
-    store_root = exp.get("store_root", "runs")
+    store_root = exp.get("store_root", "runs")  # Legacy store root for targets (content-addressed)
+    experiment = experiment or exp.get("experiment") or "dev"
     jax_x64 = bool(exp.get("jax_enable_x64", True))
     jax_x64_flag = 1 if jax_x64 else 0
 
     targets_conf = list(exp["targets"])
     samplers_conf = list(exp["samplers"])
 
-    print(f"Loaded {len(targets_conf)} targets and {len(samplers_conf)} samplers")
-    print(f"Store root: {store_root}, JAX x64: {jax_x64}")
-    print(f"Logs: {logs_dir}, Temp configs: {temp_cfg_dir}, Results: {results_dir}")
+    # Create RunContext for this workflow orchestration
+    ctx = RunContext.create(experiment=experiment, algo="parsl_llc", paths=paths)
 
-    # Create temp config directory
+    print(f"Loaded {len(targets_conf)} targets and {len(samplers_conf)} samplers")
+    print(f"Experiment: {experiment}, JAX x64: {jax_x64}")
+    print(f"Run dir: {ctx.run_dir}")
+    print(f"Artifacts: {ctx.artifacts_dir}")
+    print(f"Logs: {ctx.logs_dir}")
+    print(f"Scratch: {ctx.scratch_dir}")
+
+    # Create config directory in scratch
+    temp_cfg_dir = ctx.scratch_dir / "configs"
     temp_cfg_dir.mkdir(exist_ok=True, parents=True)
 
     # ========================================================================
@@ -180,6 +185,10 @@ def run_workflow(
     print("\n=== Stage A: Building Targets ===")
     target_futures = {}
     target_ids = []
+
+    # Create log subdirectory for build tasks
+    build_log_dir = ctx.logs_dir / "build_target"
+    build_log_dir.mkdir(parents=True, exist_ok=True)
 
     for t in targets_conf:
         # Compose build config and compute target ID
@@ -191,23 +200,15 @@ def run_workflow(
         cfg_yaml_path = temp_cfg_dir / f"build_{tid}.yaml"
         cfg_yaml_path.write_text(OmegaConf.to_yaml(build_cfg))
 
-        # Prepare target directory
-        target_dir = Path(store_root) / "targets" / tid
-        target_dir.mkdir(parents=True, exist_ok=True)
-
-        # Create log directory
-        log_dir = logs_dir / "build_target"
-        log_dir.mkdir(parents=True, exist_ok=True)
-
-        # Submit build job
+        # Submit build job (no target_dir - entrypoint uses artifact system)
         print(f"  Submitting build for {tid} (model={t['model']}, data={t['data']})")
         future = build_target_app(
             cfg_yaml=str(cfg_yaml_path),
             target_id=tid,
-            target_dir=str(target_dir),
+            experiment=experiment,
             jax_x64=jax_x64_flag,
-            stdout=str(log_dir / f"{tid}.log"),
-            stderr=str(log_dir / f"{tid}.err"),
+            stdout=str(build_log_dir / f"{tid}.log"),
+            stderr=str(build_log_dir / f"{tid}.err"),
         )
         target_futures[tid] = future
 
@@ -219,6 +220,10 @@ def run_workflow(
     run_futures = []
     run_records = []
 
+    # Create log subdirectory for sampler tasks
+    sample_log_dir = ctx.logs_dir / "run_sampler"
+    sample_log_dir.mkdir(parents=True, exist_ok=True)
+
     for tid in target_ids:
         for s in samplers_conf:
             # Compose sample config and compute run ID
@@ -229,34 +234,25 @@ def run_workflow(
             cfg_yaml_path = temp_cfg_dir / f"sample_{tid}_{s['name']}_{rid}.yaml"
             cfg_yaml_path.write_text(OmegaConf.to_yaml(sample_cfg))
 
-            # Prepare run directory
-            run_dir = Path(store_root) / "targets" / tid / f"run_{s['name']}_{rid}"
-            run_dir.mkdir(parents=True, exist_ok=True)
-
-            # Create log directory
-            log_dir = logs_dir / "run_sampler"
-            log_dir.mkdir(parents=True, exist_ok=True)
-
-            # Submit sampling job with dependency on target build
+            # Submit sampling job (no run_dir - entrypoint uses artifact system)
             print(f"  Submitting {s['name']} for {tid} (run_id={rid})")
             future = run_sampler_app(
                 cfg_yaml=str(cfg_yaml_path),
                 target_id=tid,
-                run_dir=str(run_dir),
+                experiment=experiment,
                 jax_x64=jax_x64_flag,
                 inputs=[target_futures[tid]],  # Dependency: wait for target build
-                stdout=str(log_dir / f"{tid}_{s['name']}_{rid}.log"),
-                stderr=str(log_dir / f"{tid}_{s['name']}_{rid}.err"),
+                stdout=str(sample_log_dir / f"{tid}_{s['name']}_{rid}.log"),
+                stderr=str(sample_log_dir / f"{tid}_{s['name']}_{rid}.err"),
             )
             run_futures.append(future)
 
-            # Record metadata for aggregation
+            # Record metadata for aggregation (run_dir will be under artifact system)
             run_records.append(
                 {
                     "target_id": tid,
                     "sampler": s["name"],
                     "run_id": rid,
-                    "run_dir": str(run_dir),
                     "cfg_yaml": str(cfg_yaml_path),
                 }
             )
@@ -277,14 +273,10 @@ def run_workflow(
         except Exception as e:
             # Construct log paths from record metadata
             stderr_path = (
-                logs_dir
-                / "run_sampler"
-                / f"{record['target_id']}_{record['sampler']}_{record['run_id']}.err"
+                sample_log_dir / f"{record['target_id']}_{record['sampler']}_{record['run_id']}.err"
             )
             stdout_path = (
-                logs_dir
-                / "run_sampler"
-                / f"{record['target_id']}_{record['sampler']}_{record['run_id']}.log"
+                sample_log_dir / f"{record['target_id']}_{record['sampler']}_{record['run_id']}.log"
             )
 
             # Read last 15 lines of stderr if available
@@ -300,7 +292,6 @@ def run_workflow(
             print(
                 f"  [{i}/{len(run_futures)}] ✗ FAILED: {record['target_id']}/{record['sampler']}/{record['run_id']}"
             )
-            print(f"    Run dir: {record['run_dir']}")
             print(f"    Stderr:  {stderr_path}")
             print(f"    Stdout:  {stdout_path}")
 
@@ -327,10 +318,8 @@ def run_workflow(
         print("\n=== Stage C: Promotion ===")
         unique_samplers = sorted({s["name"] for s in samplers_conf})
 
-        # Load promotion config for output directory
-        conf_dir = Path(__file__).parent.parent / "conf"
-        prom_cfg = OmegaConf.load(conf_dir / "promote.yaml")
-        outdir = Path(prom_cfg.get("outdir", "runs/promotion"))
+        # Promotion outputs go to artifacts directory
+        outdir = ctx.artifacts_dir / "promotion"
 
         # Promote each plot type
         for plot_name in promote_plots:
@@ -356,20 +345,36 @@ def run_workflow(
 
     print("\n=== Aggregating Results ===")
     rows = []
-    for rec in run_records:
-        analysis_path = Path(rec["run_dir"]) / "analysis.json"
-        if analysis_path.exists():
-            try:
-                metrics = json.loads(analysis_path.read_text())
-                rows.append({**rec, **metrics})
-            except Exception as e:
-                print(f"  Warning: Failed to read {analysis_path}: {e}")
-        else:
-            print(f"  Warning: Missing analysis.json at {analysis_path}")
+
+    # Find all run directories under the experiment (sample entrypoint creates them)
+    # They're named like: 20251116T...-vi-tgt_abc123...-123abc/
+    experiment_runs_dir = paths.experiments / experiment / "runs"
+    if experiment_runs_dir.exists():
+        for run_dir in experiment_runs_dir.glob("*/"):
+            analysis_path = run_dir / "analysis.json"
+            manifest_path = run_dir / "manifest.json"
+
+            if analysis_path.exists() and manifest_path.exists():
+                try:
+                    metrics = json.loads(analysis_path.read_text())
+                    manifest = json.loads(manifest_path.read_text())
+
+                    # Combine manifest metadata with analysis metrics
+                    row = {
+                        "run_id": manifest.get("run_id"),
+                        "target_id": manifest.get("target_id"),
+                        "sampler": manifest.get("sampler"),
+                        "experiment": manifest.get("experiment"),
+                        **metrics,
+                    }
+                    rows.append(row)
+                except Exception as e:
+                    print(f"  Warning: Failed to read {analysis_path} or {manifest_path}: {e}")
+            elif not analysis_path.exists():
+                print(f"  Warning: Missing analysis.json at {analysis_path}")
 
     df = pd.DataFrame(rows)
-    results_dir.mkdir(exist_ok=True)
-    output_path = results_dir / "llc_runs.parquet"
+    output_path = ctx.artifacts_dir / "llc_runs.parquet"
 
     df.to_parquet(output_path, index=False)
     print(f"\nWrote {len(df)} rows to {output_path}")
@@ -393,6 +398,11 @@ def main():
         "--config",
         default="config/experiments.yaml",
         help="Path to experiments config (default: config/experiments.yaml)",
+    )
+    parser.add_argument(
+        "--experiment",
+        default=None,
+        help="Experiment name (default: from config or env LAMBDA_HAT_DEFAULT_EXPERIMENT)",
     )
     parser.add_argument(
         "--parsl-card",
@@ -421,31 +431,27 @@ def main():
         default="trace.png,llc_convergence_combined.png",
         help="Comma-separated plots to promote when --promote is used (default: trace,convergence)",
     )
-    parser.add_argument(
-        "--logs-dir",
-        default="logs",
-        help="Directory for log files (default: logs, relative to CWD)",
-    )
-    parser.add_argument(
-        "--temp-cfg-dir",
-        default="temp_parsl_cfg",
-        help="Directory for temporary config files (default: temp_parsl_cfg, relative to CWD)",
-    )
-    parser.add_argument(
-        "--results-dir",
-        default="results",
-        help="Directory for aggregated results (default: results, relative to CWD)",
-    )
 
     args = parser.parse_args()
 
+    # Initialize artifact system early to get RunContext for Parsl run_dir
+    from lambda_hat.artifacts import Paths, RunContext
+
+    paths_early = Paths.from_env()
+    paths_early.ensure()
+    exp_early = OmegaConf.load(args.config)
+    experiment_early = args.experiment or exp_early.get("experiment") or "dev"
+    ctx_early = RunContext.create(experiment=experiment_early, algo="parsl_llc", paths=paths_early)
+
     # Resolve Parsl config
     if args.local and not args.parsl_card:
-        # Local mode: build config directly from card spec
+        # Local mode: build config directly from card spec with RunContext run_dir
         print("Using Parsl mode: local (ThreadPool)")
-        parsl_cfg = build_parsl_config_from_card(OmegaConf.create({"type": "local"}))
+        parsl_cfg = build_parsl_config_from_card(
+            OmegaConf.create({"type": "local", "run_dir": str(ctx_early.parsl_dir)})
+        )
     elif args.parsl_card:
-        # Card-based config
+        # Card-based config with run_dir override
         card_path = Path(args.parsl_card)
         if not card_path.is_absolute():
             card_path = Path.cwd() / card_path
@@ -453,9 +459,11 @@ def main():
             print(f"Error: Parsl card not found: {card_path}", file=sys.stderr)
             sys.exit(1)
         print(f"Using Parsl card: {card_path}")
+        # Add run_dir override to parsl_sets
+        parsl_sets_with_rundir = (args.parsl_sets or []) + [f"run_dir={ctx_early.parsl_dir}"]
         if args.parsl_sets:
             print(f"  Overrides: {args.parsl_sets}")
-        parsl_cfg = load_parsl_config_from_card(card_path, args.parsl_sets)
+        parsl_cfg = load_parsl_config_from_card(card_path, parsl_sets_with_rundir)
     else:
         print("Error: Must specify either --local or --parsl-card", file=sys.stderr)
         sys.exit(1)
@@ -465,6 +473,8 @@ def main():
 
     # Run workflow
     print(f"Using experiments config: {args.config}")
+    if args.experiment:
+        print(f"Experiment: {args.experiment}")
     if args.promote:
         print(f"Promotion enabled: {promote_plots}")
     else:
@@ -476,12 +486,9 @@ def main():
     try:
         output_path = run_workflow(
             args.config,
-            None,  # No longer pass parsl_config_path
+            experiment=args.experiment,
             enable_promotion=args.promote,
             promote_plots=promote_plots,
-            logs_dir=args.logs_dir,
-            temp_cfg_dir=args.temp_cfg_dir,
-            results_dir=args.results_dir,
         )
         print(f"\n✓ Workflow complete! Results: {output_path}")
     except Exception as e:
