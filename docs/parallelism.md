@@ -35,7 +35,7 @@ uv run lambda-hat workflow llc --local --promote
 
 ### Controlling Parallelism
 
-Edit `config/parsl/local` to control the number of parallel workers:
+Edit `config/parsl/local.yaml` to control the number of parallel workers:
 
 ```yaml
 # Adjust max_workers
