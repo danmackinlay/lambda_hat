@@ -88,10 +88,10 @@ def test_artifact_system_integration(isolated_env):
     from lambda_hat.workflow_utils import target_id_for
     target_id = target_id_for(build_cfg)
 
-    # Run build_target entrypoint
+    # Run build_target via new CLI
     result = subprocess.run(
         [
-            "uv", "run", "python", "-m", "lambda_hat.entrypoints.build_target",
+            "uv", "run", "lambda-hat", "build",
             "--config-yaml", str(build_cfg_path),
             "--target-id", target_id,
             "--experiment", experiment_name,
@@ -196,10 +196,10 @@ def test_artifact_system_integration(isolated_env):
     with open(sample_cfg_path, "w") as f:
         f.write(OmegaConf.to_yaml(sample_cfg))
 
-    # Run sample entrypoint
+    # Run sample via new CLI
     result = subprocess.run(
         [
-            "uv", "run", "python", "-m", "lambda_hat.entrypoints.sample",
+            "uv", "run", "lambda-hat", "sample",
             "--config-yaml", str(sample_cfg_path),
             "--target-id", target_id,
             "--experiment", experiment_name,

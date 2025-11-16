@@ -758,6 +758,7 @@ source = { editable = "." }
 dependencies = [
     { name = "arviz" },
     { name = "blackjax" },
+    { name = "click" },
     { name = "cookiecutter" },
     { name = "equinox" },
     { name = "flax" },
@@ -797,6 +798,7 @@ dev = [
 requires-dist = [
     { name = "arviz", specifier = "~=0.22.0" },
     { name = "blackjax", specifier = "==1.2.5" },
+    { name = "click", specifier = ">=8.1.0" },
     { name = "cookiecutter", specifier = ">=2.6.0" },
     { name = "equinox", specifier = ">=0.13.1" },
     { name = "flax", specifier = ">=0.12.0" },

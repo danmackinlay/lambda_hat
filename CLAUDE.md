@@ -14,13 +14,16 @@ uv sync --extra cuda12     # CUDA 12 (Linux)
 uv sync --extra flowvi     # Add FlowJAX for flow-based VI (optional)
 ```
 
-## Run (always via uv)
+## Run (unified CLI)
 
 ```bash
-# Console scripts from pyproject.toml
-uv run lambda-hat-build-target --config-yaml config.yaml --target-id tgt_abc123
-uv run lambda-hat-sample       --config-yaml config.yaml --target-id tgt_abc123
-uv run lambda-hat-promote      --help
+# All commands via unified 'lambda-hat' CLI
+uv run lambda-hat build --config-yaml config.yaml --target-id tgt_abc123
+uv run lambda-hat sample --config-yaml config.yaml --target-id tgt_abc123
+uv run lambda-hat promote gallery --runs-root runs --samplers sgld,hmc
+uv run lambda-hat artifacts gc      # garbage collect old artifacts
+uv run lambda-hat artifacts ls      # list experiments and runs
+uv run lambda-hat --help            # see all commands
 ```
 
 ## Workflow (Parsl is canonical)
@@ -29,13 +32,16 @@ uv run lambda-hat-promote      --help
 
 ```bash
 # Local execution (testing)
-uv run parsl-llc --local
+uv run lambda-hat workflow llc --local
 
 # SLURM cluster execution
-uv run parsl-llc --parsl-config parsl_config_slurm.py
+uv run lambda-hat workflow llc --parsl-card config/parsl/slurm/gpu-a100.yaml
 
-# Custom config
-uv run parsl-llc --config config/experiments.yaml
+# With promotion (Stage C)
+uv run lambda-hat workflow llc --local --promote
+
+# Optuna hyperparameter optimization
+uv run lambda-hat workflow optuna --config config/optuna.yaml --study-name my_study
 ```
 
 ## Testing & Lint
