@@ -1,0 +1,50 @@
+name: Documentation
+
+on:
+  pull_request:
+    paths:
+      - 'docs/**'
+      - 'lambda_hat/conf/**'
+      - 'lambda_hat/cli.py'
+      - 'pyproject.toml'
+  push:
+    branches:
+      - main
+      - redoc
+    paths:
+      - 'docs/**'
+      - 'lambda_hat/conf/**'
+      - 'lambda_hat/cli.py'
+      - 'pyproject.toml'
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install uv
+        run: curl -LsSf https://astral.sh/uv/install.sh | sh
+
+      - name: Install dependencies
+        run: uv sync --extra cpu
+
+      - name: Generate documentation
+        run: uv run python docs/_build.py
+
+      - name: Check for uncommitted changes
+        run: |
+          if ! git diff --quiet docs/cli.md docs/config.md; then
+            echo "ERROR: Generated docs are out of sync!"
+            echo "Run: uv run python docs/_build.py"
+            git diff docs/cli.md docs/config.md
+            exit 1
+          fi
+
+      - name: Verify no stale references
+        run: uv run python docs/_checks.py

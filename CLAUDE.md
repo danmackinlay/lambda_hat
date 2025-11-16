@@ -68,7 +68,7 @@ uv run ruff check --fix
 
 * Edit `config/experiments.yaml` to define target/sampler configurations.
 * Use `overrides` dict for custom values (e.g., `overrides: { training: { steps: 10000 } }`).
-* See `docs/configuration.md` for complete schema.
+* See `docs/experiments.md` for experiments guide and `docs/config.md` for complete schema.
 
 ## Artifacts
 
