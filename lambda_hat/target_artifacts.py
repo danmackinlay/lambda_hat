@@ -326,6 +326,7 @@ def load_target_by_id(target_id: str, experiment: str, model_template, paths=Non
     """
     if paths is None:
         from lambda_hat.artifacts import Paths
+
         paths = Paths.from_env()
 
     # Find target in experiment targets directory

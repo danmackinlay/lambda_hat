@@ -2,7 +2,6 @@
 import argparse
 import json
 import time
-from pathlib import Path
 
 import jax
 from omegaconf import OmegaConf
@@ -18,6 +17,7 @@ from lambda_hat.config import validate_teacher_cfg
 from lambda_hat.losses import as_dtype, make_loss_fns
 from lambda_hat.nn_eqx import build_mlp, count_params
 from lambda_hat.sampling_runner import run_sampler
+
 # No longer need legacy target_artifacts imports (using load_target_artifact_from_dir inline)
 from lambda_hat.targets import TargetBundle
 

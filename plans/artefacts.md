@@ -50,7 +50,7 @@ $LAMBDA_HAT_EXPERIMENTS/
 **Layer C — Scratch/Cache (ephemeral, safe to wipe)**
 
 ```
-$LAMBDA_HAT_SCRATCH/      # defaults under .lambda_hat/scratch or $JOBSCRATCH if set
+$LAMBDA_HAT_SCRATCH/      # defaults under artefacts/scratch or $JOBSCRATCH if set
 ```
 
 This separation keeps “what to keep” (store), “how to view/query” (experiments), and “what can be deleted” (scratch) clean and explicit.
@@ -61,7 +61,7 @@ This separation keeps “what to keep” (store), “how to view/query” (exper
 
 ```bash
 # Root for all lambda_hat artefacts inside your repo by default.
-export LAMBDA_HAT_HOME="${LAMBDA_HAT_HOME:-$PWD/.lambda_hat}"
+export LAMBDA_HAT_HOME="${LAMBDA_HAT_HOME:-$PWD/artefacts}"
 
 # Core roots (can be redirected to fast/capacity filesystems independently).
 export LAMBDA_HAT_STORE="${LAMBDA_HAT_STORE:-$LAMBDA_HAT_HOME/store}"
@@ -82,7 +82,7 @@ export LAMBDA_HAT_TB_MAX_RUNS="${LAMBDA_HAT_TB_MAX_RUNS:-400}"  # guard TB overl
 Add to `.gitignore`:
 
 ```
-.lambda_hat/
+artefacts/
 ```
 
 ---
@@ -157,7 +157,7 @@ class Paths:
 
     @staticmethod
     def from_env() -> "Paths":
-        home = Path(os.environ.get("LAMBDA_HAT_HOME", Path.cwd() / ".lambda_hat")).resolve()
+        home = Path(os.environ.get("LAMBDA_HAT_HOME", Path.cwd() / "artefacts")).resolve()
         return Paths(
             home=home,
             store=Path(os.environ.get("LAMBDA_HAT_STORE", home / "store")).resolve(),
@@ -549,7 +549,7 @@ tensorboard --logdir "$(python tools/lh.py tb my_experiment | awk '{print $NF}')
 * `runs/` (top‑level) → folded into `experiments/<exp>/runs/`
 * `temp_parsl_config/` → unnecessary; Parsl uses `run_dir`, config is in code
 
-Nothing writes top‑level junk anymore; **one** home (`.lambda_hat/` by default) contains everything, split cleanly into `store/`, `experiments/`, and `scratch/`.
+Nothing writes top‑level junk anymore; **one** home (`artefacts/` by default) contains everything, split cleanly into `store/`, `experiments/`, and `scratch/`.
 
 ---
 

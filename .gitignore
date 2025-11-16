@@ -30,7 +30,7 @@ parsl_runinfo/
 logs/
 
 # New artifact storage
-.lambda_hat/
+artefacts/
 
 # Exception: tracked README example images
 !assets/readme/*.png
