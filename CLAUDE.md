@@ -9,7 +9,9 @@ Minimal rules for this repo. Deviations break CI.
 ## Priorities
 
 There are no downstream users. There are no other developers.
-The highest good is to reduce maintenance burden for me. You can break things to achieve that good.
+The highest good is to reduce maintenance burden for me.
+You can break things to achieve that good.
+No back compat shims. Don't deprecate when you can destroy.
 
 ## Install
 
