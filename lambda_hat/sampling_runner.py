@@ -16,7 +16,7 @@ from lambda_hat.posterior import (
     make_grad_loss_minibatch,
     make_logpost,
 )
-from lambda_hat.sampling import run_hmc, run_mclmc, run_sgld, run_vi
+from lambda_hat.samplers import run_hmc, run_mclmc, run_sgld, run_vi
 
 log = logging.getLogger(__name__)
 

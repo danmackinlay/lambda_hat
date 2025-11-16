@@ -11,7 +11,7 @@ import jax.numpy as jnp
 import pytest
 from omegaconf import OmegaConf
 
-from lambda_hat.sampling import run_vi
+from lambda_hat.samplers import run_vi
 
 # Suppress JAX warnings for cleaner test output
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -49,27 +49,29 @@ def tiny_problem():
 @pytest.fixture
 def mfa_config():
     """Minimal MFA configuration for testing."""
-    return OmegaConf.create({
-        "algo": "mfa",
-        "M": 2,
-        "r": 1,
-        "steps": 10,
-        "batch_size": 25,  # n_data/4 for testing FGE
-        "lr": 0.01,
-        "eval_samples": 4,
-        "clip_global_norm": 5.0,
-        "alpha_temperature": 1.0,
-        "entropy_bonus": 0.0,
-        "alpha_dirichlet_prior": None,
-        "r_per_component": None,
-        "lr_schedule": None,
-        "lr_warmup_frac": 0.05,
-        "whitening_mode": "none",
-        "whitening_decay": 0.9,
-        "dtype": "float32",
-        "eval_every": 10,
-        "whitening_steps": 50,
-    })
+    return OmegaConf.create(
+        {
+            "algo": "mfa",
+            "M": 2,
+            "r": 1,
+            "steps": 10,
+            "batch_size": 25,  # n_data/4 for testing FGE
+            "lr": 0.01,
+            "eval_samples": 4,
+            "clip_global_norm": 5.0,
+            "alpha_temperature": 1.0,
+            "entropy_bonus": 0.0,
+            "alpha_dirichlet_prior": None,
+            "r_per_component": None,
+            "lr_schedule": None,
+            "lr_warmup_frac": 0.05,
+            "whitening_mode": "none",
+            "whitening_decay": 0.9,
+            "dtype": "float32",
+            "eval_every": 10,
+            "whitening_steps": 50,
+        }
+    )
 
 
 def test_vi_algorithms_return_consistent_structure(tiny_problem, mfa_config):
@@ -97,7 +99,9 @@ def test_vi_algorithms_return_consistent_structure(tiny_problem, mfa_config):
     assert "cumulative_fge" in mfa_result.traces, "MFA should have cumulative_fge"
 
     # Check trace shapes
-    assert mfa_result.traces["llc"].shape == (1, 10), f"Expected (1, 10), got {mfa_result.traces['llc'].shape}"
+    assert mfa_result.traces["llc"].shape == (1, 10), (
+        f"Expected (1, 10), got {mfa_result.traces['llc'].shape}"
+    )
     assert mfa_result.traces["cumulative_fge"].shape == (1, 10), "cumulative_fge shape mismatch"
 
     # Check work dict keys
@@ -151,7 +155,9 @@ def test_whitener_integration_mfa(tiny_problem, mfa_config):
         gamma=0.001,
     )
 
-    assert jnp.isfinite(result_no_whitener.traces["llc"]).all(), "MFA without whitener produced non-finite values"
+    assert jnp.isfinite(result_no_whitener.traces["llc"]).all(), (
+        "MFA without whitener produced non-finite values"
+    )
 
     # Test 2: With whitener (adam)
     config_with_whitener = OmegaConf.create({**mfa_config, "whitening_mode": "adam"})
@@ -167,12 +173,14 @@ def test_whitener_integration_mfa(tiny_problem, mfa_config):
         gamma=0.001,
     )
 
-    assert jnp.isfinite(result_with_whitener.traces["llc"]).all(), "MFA with whitener produced non-finite values"
+    assert jnp.isfinite(result_with_whitener.traces["llc"]).all(), (
+        "MFA with whitener produced non-finite values"
+    )
 
     # Results should differ (whitener affects optimization)
     llc_diff = abs(
-        float(result_no_whitener.traces["llc"][0, -1]) -
-        float(result_with_whitener.traces["llc"][0, -1])
+        float(result_no_whitener.traces["llc"][0, -1])
+        - float(result_with_whitener.traces["llc"][0, -1])
     )
     # Note: We can't assert they're different because with such a simple problem
     # and random initialization, they might converge to similar values
@@ -202,4 +210,6 @@ def test_work_metrics_structure(tiny_problem, mfa_config):
 
     # Check values make sense
     assert work["n_minibatch_grads"] == mfa_config.steps, "n_minibatch_grads should equal steps"
-    assert work["n_full_loss"] == mfa_config.eval_samples, "n_full_loss should equal eval_samples (for VI)"
+    assert work["n_full_loss"] == mfa_config.eval_samples, (
+        "n_full_loss should equal eval_samples (for VI)"
+    )
