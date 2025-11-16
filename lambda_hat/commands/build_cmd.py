@@ -60,9 +60,7 @@ def build_entry(config_yaml: str, target_id: str, experiment: Optional[str] = No
     store = ArtifactStore(paths.store)
 
     # Create RunContext for this build
-    ctx = RunContext.create(
-        experiment=experiment, algo="build_target", paths=paths, tag=target_id
-    )
+    ctx = RunContext.create(experiment=experiment, algo="build_target", paths=paths, tag=target_id)
     target_dir = ctx.scratch_dir / "target_payload"
     target_dir.mkdir(parents=True, exist_ok=True)
 

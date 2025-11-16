@@ -5,17 +5,14 @@ Uses minimal config (1 target × 1 sampler) for fast execution.
 """
 
 import shutil
-import sys
 from pathlib import Path
 
 import pandas as pd
 import pytest
 
-# Add flows to path for import
-ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT))
+from lambda_hat.entrypoints.parsl_llc import run_workflow
 
-from flows.parsl_llc import run_workflow  # noqa: E402
+ROOT = Path(__file__).resolve().parent.parent
 
 
 @pytest.fixture
@@ -69,27 +66,37 @@ def test_parsl_workflow_integration(test_config, parsl_config, cleanup_test_runs
     - Result aggregation works (parquet file created)
     - Aggregated data contains expected metrics
     """
-    # Run workflow without promotion (faster)
-    output_path = run_workflow(
-        str(test_config), str(parsl_config), enable_promotion=False, promote_plots=None
-    )
+    import parsl
+    from omegaconf import OmegaConf
 
-    # Verify aggregated results file exists
-    assert Path(output_path).exists(), f"Aggregated results not found: {output_path}"
+    from lambda_hat.parsl_cards import load_parsl_config_from_card
 
-    # Load and verify parquet contents
-    df = pd.read_parquet(output_path)
-    assert len(df) == 1, f"Expected 1 row in results, got {len(df)}"
+    # Load Parsl config
+    parsl_cfg = load_parsl_config_from_card(parsl_config, overrides=[])
+    parsl.load(parsl_cfg)
 
-    # Verify required columns exist
-    required_cols = ["target_id", "sampler", "run_id", "run_dir"]
-    for col in required_cols:
-        assert col in df.columns, f"Missing column: {col}"
+    try:
+        # Run workflow without promotion (faster)
+        output_path = run_workflow(str(test_config), enable_promotion=False, promote_plots=None)
 
-    # Verify metrics exist (from analysis.json)
-    metrics_cols = ["llc_mean", "llc_std", "walltime_sec"]
-    for col in metrics_cols:
-        assert col in df.columns, f"Missing metric column: {col}"
+        # Verify aggregated results file exists
+        assert Path(output_path).exists(), f"Aggregated results not found: {output_path}"
+
+        # Load and verify parquet contents
+        df = pd.read_parquet(output_path)
+        assert len(df) == 1, f"Expected 1 row in results, got {len(df)}"
+
+        # Verify required columns exist
+        required_cols = ["target_id", "sampler", "run_id", "run_dir"]
+        for col in required_cols:
+            assert col in df.columns, f"Missing column: {col}"
+
+        # Verify metrics exist (from analysis.json)
+        metrics_cols = ["llc_mean", "llc_std", "walltime_sec"]
+        for col in metrics_cols:
+            assert col in df.columns, f"Missing metric column: {col}"
+    finally:
+        parsl.clear()
 
     # Verify target artifacts exist
     row = df.iloc[0]

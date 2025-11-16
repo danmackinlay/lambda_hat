@@ -90,7 +90,9 @@ def artifacts_gc(ttl_days):
     from lambda_hat.commands.artifacts_cmd import gc_entry
 
     result = gc_entry(ttl_days)
-    click.echo(f"✓ Removed {result['removed']} unreachable objects (older than {result['ttl_days']}d)")
+    click.echo(
+        f"✓ Removed {result['removed']} unreachable objects (older than {result['ttl_days']}d)"
+    )
 
 
 @artifacts.command("ls")

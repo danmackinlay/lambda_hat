@@ -7,7 +7,7 @@ import shutil
 import time
 from typing import Dict, Optional
 
-from lambda_hat.artifacts import ArtifactStore, Paths
+from lambda_hat.artifacts import Paths
 
 
 def _collect_reachable(paths: Paths) -> set:
@@ -49,7 +49,6 @@ def gc_entry(ttl_days: Optional[int] = None) -> Dict:
     """
     paths = Paths.from_env()
     paths.ensure()
-    store = ArtifactStore(paths.store)
 
     # Get TTL from env or argument
     if ttl_days is None:

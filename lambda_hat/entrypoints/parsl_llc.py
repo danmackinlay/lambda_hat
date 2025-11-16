@@ -23,9 +23,9 @@ from pathlib import Path
 import pandas as pd
 import parsl
 from omegaconf import OmegaConf
-from parsl import bash_app, python_app
+from parsl import python_app
 
-from lambda_hat.artifacts import ArtifactStore, Paths, RunContext
+from lambda_hat.artifacts import Paths, RunContext
 from lambda_hat.parsl_cards import build_parsl_config_from_card, load_parsl_config_from_card
 from lambda_hat.promote.core import promote_gallery
 from lambda_hat.workflow_utils import (
@@ -40,34 +40,36 @@ from lambda_hat.workflow_utils import (
 # ============================================================================
 
 
-@bash_app
-def build_target_app(cfg_yaml, target_id, experiment, jax_x64, stdout=None, stderr=None):
-    """Build a target (train neural network) via CLI entrypoint.
+@python_app
+def build_target_app(cfg_yaml, target_id, experiment, jax_x64):
+    """Build a target (train neural network) via direct command call.
 
     Args:
         cfg_yaml: Path to composed build config YAML
         target_id: Target identifier (e.g., 'tgt_abc123')
         experiment: Experiment name for artifact system
         jax_x64: JAX precision flag (0 or 1)
-        stdout: Log file for stdout
-        stderr: Log file for stderr
 
     Returns:
-        Shell command string
+        dict: Build result from build_entry with keys:
+            - urn: Artifact URN
+            - target_id: Target ID
+            - run_id: Run ID
+            - L0: Initial loss
+            - experiment: Experiment name
     """
-    return f"""
-JAX_ENABLE_X64={jax_x64} uv run python -m lambda_hat.entrypoints.build_target \
-  --config-yaml {cfg_yaml} \
-  --target-id {target_id} \
-  --experiment {experiment}
-    """.strip()
+    import jax
+
+    jax.config.update("jax_enable_x64", bool(jax_x64))
+
+    from lambda_hat.commands.build_cmd import build_entry
+
+    return build_entry(cfg_yaml, target_id, experiment)
 
 
-@bash_app
-def run_sampler_app(
-    cfg_yaml, target_id, experiment, jax_x64, inputs=None, stdout=None, stderr=None
-):
-    """Run a sampler (MCMC/VI) for a target via CLI entrypoint.
+@python_app
+def run_sampler_app(cfg_yaml, target_id, experiment, jax_x64, inputs=None):
+    """Run a sampler (MCMC/VI) for a target via direct command call.
 
     Args:
         cfg_yaml: Path to composed sample config YAML
@@ -75,18 +77,21 @@ def run_sampler_app(
         experiment: Experiment name for artifact system
         jax_x64: JAX precision flag (0 or 1)
         inputs: List of futures this task depends on (target build)
-        stdout: Log file for stdout
-        stderr: Log file for stderr
 
     Returns:
-        Shell command string
+        dict: Sample result from sample_entry with keys:
+            - run_id: Run ID
+            - run_dir: Path to run directory
+            - metrics: Analysis metrics
+            - experiment: Experiment name
     """
-    return f"""
-JAX_ENABLE_X64={jax_x64} uv run python -m lambda_hat.entrypoints.sample \
-  --config-yaml {cfg_yaml} \
-  --target-id {target_id} \
-  --experiment {experiment}
-    """.strip()
+    import jax
+
+    jax.config.update("jax_enable_x64", bool(jax_x64))
+
+    from lambda_hat.commands.sample_cmd import sample_entry
+
+    return sample_entry(cfg_yaml, target_id, experiment)
 
 
 @python_app
@@ -102,6 +107,10 @@ def promote_app(store_root, samplers, outdir, plot_name, inputs=None):
 
     Returns:
         Path to generated markdown snippet
+
+    TODO: Refactor to use lambda_hat.commands.promote_cmd.promote_gallery_entry
+    instead of calling promote.core.promote_gallery directly. This will maintain
+    consistency with the new CLI architecture and command module pattern.
     """
     from pathlib import Path
 
@@ -141,7 +150,8 @@ def run_workflow(
         experiment: Experiment name (default: from config or env LAMBDA_HAT_DEFAULT_EXPERIMENT)
         parsl_config_path: [DEPRECATED] Ignored (Parsl config loaded via main())
         enable_promotion: Whether to run promotion stage (default: False, opt-in)
-        promote_plots: List of plot names to promote (default: ['trace.png', 'llc_convergence_combined.png'])
+        promote_plots: List of plot names to promote
+            (default: ['trace.png', 'llc_convergence_combined.png'])
 
     Returns:
         Path to aggregated results parquet file
@@ -152,7 +162,6 @@ def run_workflow(
     # Initialize artifact system
     paths = Paths.from_env()
     paths.ensure()
-    store = ArtifactStore(paths.store)
 
     # Load experiment configuration (Parsl config already loaded in main())
     exp = OmegaConf.load(experiments_yaml)
@@ -201,15 +210,13 @@ def run_workflow(
         cfg_yaml_path = temp_cfg_dir / f"build_{tid}.yaml"
         cfg_yaml_path.write_text(OmegaConf.to_yaml(build_cfg))
 
-        # Submit build job (no target_dir - entrypoint uses artifact system)
+        # Submit build job (uses artifact system via command modules)
         print(f"  Submitting build for {tid} (model={t['model']}, data={t['data']})")
         future = build_target_app(
             cfg_yaml=str(cfg_yaml_path),
             target_id=tid,
             experiment=experiment,
             jax_x64=jax_x64_flag,
-            stdout=str(build_log_dir / f"{tid}.log"),
-            stderr=str(build_log_dir / f"{tid}.err"),
         )
         target_futures[tid] = future
 
@@ -235,7 +242,7 @@ def run_workflow(
             cfg_yaml_path = temp_cfg_dir / f"sample_{tid}_{s['name']}_{rid}.yaml"
             cfg_yaml_path.write_text(OmegaConf.to_yaml(sample_cfg))
 
-            # Submit sampling job (no run_dir - entrypoint uses artifact system)
+            # Submit sampling job (uses artifact system via command modules)
             print(f"  Submitting {s['name']} for {tid} (run_id={rid})")
             future = run_sampler_app(
                 cfg_yaml=str(cfg_yaml_path),
@@ -243,8 +250,6 @@ def run_workflow(
                 experiment=experiment,
                 jax_x64=jax_x64_flag,
                 inputs=[target_futures[tid]],  # Dependency: wait for target build
-                stdout=str(sample_log_dir / f"{tid}_{s['name']}_{rid}.log"),
-                stderr=str(sample_log_dir / f"{tid}_{s['name']}_{rid}.err"),
             )
             run_futures.append(future)
 
@@ -268,9 +273,10 @@ def run_workflow(
     for i, (future, record) in enumerate(zip(run_futures, run_records), 1):
         try:
             future.result()
-            print(
-                f"  [{i}/{len(run_futures)}] ✓ {record['target_id']}/{record['sampler']}/{record['run_id']}"
-            )
+            target_id = record["target_id"]
+            sampler = record["sampler"]
+            run_id = record["run_id"]
+            print(f"  [{i}/{len(run_futures)}] ✓ {target_id}/{sampler}/{run_id}")
         except Exception as e:
             # Construct log paths from record metadata
             stderr_path = (
@@ -290,9 +296,10 @@ def run_workflow(
                 except Exception:
                     pass
 
-            print(
-                f"  [{i}/{len(run_futures)}] ✗ FAILED: {record['target_id']}/{record['sampler']}/{record['run_id']}"
-            )
+            target_id = record["target_id"]
+            sampler = record["sampler"]
+            run_id = record["run_id"]
+            print(f"  [{i}/{len(run_futures)}] ✗ FAILED: {target_id}/{sampler}/{run_id}")
             print(f"    Stderr:  {stderr_path}")
             print(f"    Stdout:  {stdout_path}")
 
@@ -415,7 +422,10 @@ def main():
         dest="parsl_sets",
         action="append",
         default=[],
-        help="Override Parsl card values (OmegaConf dotlist), e.g.: --set walltime=04:00:00 --set gpus_per_node=1",
+        help=(
+            "Override Parsl card values (OmegaConf dotlist), "
+            "e.g.: --set walltime=04:00:00 --set gpus_per_node=1"
+        ),
     )
     parser.add_argument(
         "--local",

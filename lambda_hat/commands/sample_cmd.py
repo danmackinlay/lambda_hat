@@ -14,7 +14,7 @@ from lambda_hat.analysis import (
     create_combined_convergence_plot,
     create_work_normalized_variance_plot,
 )
-from lambda_hat.artifacts import ArtifactStore, Paths, RunContext
+from lambda_hat.artifacts import Paths, RunContext
 from lambda_hat.config import validate_teacher_cfg
 from lambda_hat.losses import as_dtype, make_loss_fns
 from lambda_hat.nn_eqx import build_mlp, count_params
@@ -47,7 +47,6 @@ def sample_entry(config_yaml: str, target_id: str, experiment: Optional[str] = N
     # Initialize artifact system
     paths = Paths.from_env()
     paths.ensure()
-    store = ArtifactStore(paths.store)
 
     # Create RunContext for this sampling run
     ctx = RunContext.create(
@@ -154,7 +153,9 @@ def sample_entry(config_yaml: str, target_id: str, experiment: Optional[str] = N
 
     # Loss fns (float32)
     # Equinox models are called directly: model(x), not model.apply(params, None, x)
-    predict_fn = lambda m, x: m(x)
+    def predict_fn(m, x):
+        return m(x)
+
     loss_full_f32, loss_minibatch_f32 = make_loss_fns(
         predict_fn,
         X_f32,
@@ -278,9 +279,7 @@ def _write_tensorboard_logs(ctx, traces, metrics, work):
         writer.add_scalar("vi/elbo_like", float(traces["elbo_like"][:, step].mean()), step)
         writer.add_scalar("vi/logq", float(traces["logq"][:, step].mean()), step)
         writer.add_scalar("vi/radius2", float(traces["radius2"][:, step].mean()), step)
-        writer.add_scalar(
-            "vi/resp_entropy", float(traces["resp_entropy"][:, step].mean()), step
-        )
+        writer.add_scalar("vi/resp_entropy", float(traces["resp_entropy"][:, step].mean()), step)
         writer.add_scalar(
             "vi/cumulative_fge", float(traces["cumulative_fge"][:, step].mean()), step
         )
@@ -301,19 +300,11 @@ def _write_tensorboard_logs(ctx, traces, metrics, work):
         if "pi_min" in traces:
             writer.add_scalar("vi/pi_min", float(traces["pi_min"][:, step].mean()), step)
             writer.add_scalar("vi/pi_max", float(traces["pi_max"][:, step].mean()), step)
-            writer.add_scalar(
-                "vi/pi_entropy", float(traces["pi_entropy"][:, step].mean()), step
-            )
+            writer.add_scalar("vi/pi_entropy", float(traces["pi_entropy"][:, step].mean()), step)
         if "D_sqrt_min" in traces:
-            writer.add_scalar(
-                "vi/D_sqrt_min", float(traces["D_sqrt_min"][:, step].mean()), step
-            )
-            writer.add_scalar(
-                "vi/D_sqrt_max", float(traces["D_sqrt_max"][:, step].mean()), step
-            )
-            writer.add_scalar(
-                "vi/D_sqrt_med", float(traces["D_sqrt_med"][:, step].mean()), step
-            )
+            writer.add_scalar("vi/D_sqrt_min", float(traces["D_sqrt_min"][:, step].mean()), step)
+            writer.add_scalar("vi/D_sqrt_max", float(traces["D_sqrt_max"][:, step].mean()), step)
+            writer.add_scalar("vi/D_sqrt_med", float(traces["D_sqrt_med"][:, step].mean()), step)
         if "grad_norm" in traces:
             writer.add_scalar("vi/grad_norm", float(traces["grad_norm"][:, step].mean()), step)
         if "A_col_norm_max" in traces:
