@@ -15,7 +15,7 @@ wheels/
 # Virtual environments
 .venv
 
-# run outputs
+# run outputs (legacy)
 runs/*
 !runs/.keep
 *.png
@@ -28,6 +28,9 @@ temp_*
 test_*
 parsl_runinfo/
 logs/
+
+# New artifact storage
+.lambda_hat/
 
 # Exception: tracked README example images
 !assets/readme/*.png

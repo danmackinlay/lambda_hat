@@ -13,6 +13,7 @@ from lambda_hat.analysis import (
     create_combined_convergence_plot,
     create_work_normalized_variance_plot,
 )
+from lambda_hat.artifacts import ArtifactStore, Paths, RunContext, safe_symlink
 from lambda_hat.config import validate_teacher_cfg
 from lambda_hat.losses import as_dtype, make_loss_fns
 from lambda_hat.nn_eqx import build_mlp, count_params
@@ -25,10 +26,44 @@ def main():
     ap = argparse.ArgumentParser("lambda-hat-sample")
     ap.add_argument("--config-yaml", required=True, help="Path to composed YAML config")
     ap.add_argument("--target-id", required=True, help="Target ID string")
-    ap.add_argument("--run-dir", required=True, help="Directory where to write run outputs")
+    ap.add_argument(
+        "--run-dir",
+        required=False,
+        help="Directory where to write run outputs (optional override)",
+    )
+    ap.add_argument(
+        "--experiment",
+        required=False,
+        help="Experiment name (defaults from config then env)",
+    )
     args = ap.parse_args()
 
     cfg = OmegaConf.load(args.config_yaml)
+
+    # Determine experiment name and sampler name early
+    experiment = args.experiment or cfg.get("experiment", None)
+    sampler_name = cfg.sampler.name
+
+    # Initialize artifact paths
+    paths = Paths.from_env()
+    paths.ensure()
+    store = ArtifactStore(paths.store)
+
+    # Determine run directory
+    use_new_system = args.run_dir is None
+    if use_new_system:
+        # Use new artifact system: create RunContext
+        ctx = RunContext.create(
+            experiment=experiment,
+            algo=sampler_name,
+            paths=paths,
+            tag=args.target_id[:8],  # Use short target ID as tag
+        )
+        run_dir = ctx.run_dir
+    else:
+        # Legacy mode: use provided --run-dir
+        run_dir = Path(args.run_dir)
+        ctx = None
 
     # Fail-fast validation
     assert "sampler" in cfg and "name" in cfg.sampler, "cfg.sampler.name missing"
@@ -169,7 +204,6 @@ def main():
     )
 
     # Write artifacts
-    run_dir = Path(args.run_dir)
     run_dir.mkdir(parents=True, exist_ok=True)
     idata.to_netcdf(run_dir / "trace.nc")
     (run_dir / "analysis.json").write_text(json.dumps(metrics, indent=2, sort_keys=True))
@@ -182,8 +216,12 @@ def main():
     ):
         from tensorboardX import SummaryWriter
 
-        tb_dir = run_dir / "diagnostics" / "tb"
-        tb_dir.mkdir(parents=True, exist_ok=True)
+        # Use ctx.tb_dir if available, otherwise legacy path
+        if use_new_system and ctx is not None:
+            tb_dir = ctx.tb_dir
+        else:
+            tb_dir = run_dir / "diagnostics" / "tb"
+            tb_dir.mkdir(parents=True, exist_ok=True)
         writer = SummaryWriter(str(tb_dir))
 
         # Log scalar traces over optimization steps
@@ -256,7 +294,7 @@ def main():
     create_combined_convergence_plot({sampler_name: idata}, run_dir)
     create_work_normalized_variance_plot({sampler_name: idata}, run_dir)
 
-    # Manifest entry
+    # Manifest entry (legacy system)
     sp = OmegaConf.to_container(cfg.sampler, resolve=True)
     append_sample_manifest(
         cfg.store.root,
@@ -273,6 +311,27 @@ def main():
             "created_at": time.time(),
         },
     )
+
+    # New artifact system: commit results and write manifest
+    if use_new_system and ctx is not None:
+        # Note: We don't commit trace.nc/analysis.json to store since they're already
+        # written to ctx.run_dir. The new system keeps results in the run directory
+        # rather than content-addressing them (results are unique per run, not reusable)
+
+        # Write run manifest with metadata
+        ctx.write_run_manifest(
+            {
+                "phase": "sample",
+                "inputs": [],  # Could add target URN reference if needed
+                "target_id": args.target_id,
+                "sampler": sampler_name,
+                "hyperparams": sp,
+                "dtype64": bool(cfg.jax.enable_x64),
+                "walltime_sec": dt,
+                "metrics": metrics,
+            }
+        )
+        print(f"[sample] experiment: {ctx.experiment}, run: {ctx.run_id}")
 
     print(f"[sample] wrote trace.nc & analysis.json in {dt:.2f}s → {run_dir}")
 

@@ -13,7 +13,8 @@
 # See docs/configuration.md for detailed parameter documentation.
 # See docs/sweeps.md for sweep design patterns and examples.
 
-store_root: "runs"        # Output directory for all artifacts
+experiment: "dev"         # Experiment name (can be overridden by CLI --experiment)
+store_root: "runs"        # Output directory for all artifacts (legacy, prefer new artifact system)
 jax_enable_x64: true      # Use float64 (recommended for HMC/MCLMC)
 
 targets:

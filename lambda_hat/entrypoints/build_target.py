@@ -1,12 +1,14 @@
 # lambda_hat/entrypoints/build_target.py
 import argparse
 import time
+from pathlib import Path
 from typing import Dict
 
 import jax
 from omegaconf import OmegaConf
 
 from lambda_hat import omegaconf_support  # noqa: F401
+from lambda_hat.artifacts import ArtifactStore, Paths, RunContext, safe_symlink
 from lambda_hat.nn_eqx import count_params
 from lambda_hat.target_artifacts import (
     TargetMeta,
@@ -34,10 +36,41 @@ def main():
     ap = argparse.ArgumentParser("lambda-hat-build-target")
     ap.add_argument("--config-yaml", required=True, help="Path to composed YAML config")
     ap.add_argument("--target-id", required=True, help="Target ID string")
-    ap.add_argument("--target-dir", required=True, help="Directory where to write artifacts")
+    ap.add_argument(
+        "--target-dir",
+        required=False,
+        help="Directory where to write artifacts (optional override)",
+    )
+    ap.add_argument(
+        "--experiment",
+        required=False,
+        help="Experiment name (defaults from config then env)",
+    )
     args = ap.parse_args()
 
     cfg = OmegaConf.load(args.config_yaml)
+
+    # Determine experiment name (CLI > config > env)
+    experiment = args.experiment or cfg.get("experiment", None)
+
+    # Initialize artifact paths (may or may not use them depending on --target-dir)
+    paths = Paths.from_env()
+    paths.ensure()
+    store = ArtifactStore(paths.store)
+
+    # Determine target directory
+    use_new_system = args.target_dir is None
+    if use_new_system:
+        # Use new artifact system: create RunContext
+        ctx = RunContext.create(
+            experiment=experiment, algo="build_target", paths=paths, tag=args.target_id
+        )
+        target_dir = ctx.scratch_dir / "target_payload"
+        target_dir.mkdir(parents=True, exist_ok=True)
+    else:
+        # Legacy mode: use provided --target-dir
+        target_dir = Path(args.target_dir)
+        ctx = None
 
     # Fail-fast validation
     assert "target" in cfg and "seed" in cfg.target, "cfg.target.seed missing"
@@ -115,9 +148,44 @@ def main():
         hostname=cfg.runtime.hostname,
     )
 
-    save_target_artifact_explicit(args.target_dir, X, Y, theta, meta)
-    print(f"[build-target] wrote {args.target_dir}")
+    save_target_artifact_explicit(target_dir, X, Y, theta, meta)
+    print(f"[build-target] wrote {target_dir}")
     print(f"[build-target] L0 = {L0:.6f}")
+
+    # Commit to artifact store if using new system
+    if use_new_system and ctx is not None:
+        urn = store.put_dir(
+            target_dir,
+            a_type="target",
+            meta={
+                "target_id": args.target_id,
+                "seed": int(cfg.target.seed),
+                "model_cfg": model_cfg,
+                "data_cfg": OmegaConf.to_container(cfg.data, resolve=True),
+                "training_cfg": OmegaConf.to_container(cfg.training, resolve=True),
+                "teacher_cfg": teacher_cfg,
+            },
+        )
+        # Create symlinks in experiment
+        target_short_id = urn.split(":")[-1][:12]
+        safe_symlink(
+            store.path_for(urn) / "payload",
+            paths.experiments / ctx.experiment / "targets" / target_short_id,
+        )
+        safe_symlink(
+            paths.experiments / ctx.experiment / "targets" / target_short_id,
+            ctx.inputs_dir / "target",
+        )
+        # Write run manifest
+        ctx.write_run_manifest(
+            {
+                "phase": "build_target",
+                "outputs": [{"urn": urn, "role": "target"}],
+                "target_id": args.target_id,
+            }
+        )
+        print(f"[build-target] committed to store: {urn}")
+        print(f"[build-target] experiment: {ctx.experiment}, run: {ctx.run_id}")
 
 
 if __name__ == "__main__":
