@@ -16,6 +16,7 @@ This separation provides:
 * **Isolation**: Target configuration and sampler hyper-parameters are decoupled
 * **Cost control**: Resource-intensive target building and cheaper sampling jobs can be optimized independently
 
+In [Singular Learning Theory (SLT)](https://singularlearningtheory.com), the **Local Learning Coefficient (LLC)** quantifies the effective local dimensionality of a model around a trained optimum.
 Estimating it can be tricky. That is what we explore here.
 
 ![](assets/readme/llc_convergence_combined.png)

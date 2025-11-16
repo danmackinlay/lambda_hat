@@ -298,5 +298,3 @@ This division keeps experiments reproducible and auditable, while still giving y
 ### Why this fits your repo
 
 * You already compose configs with `compose_build_cfg`/`compose_sample_cfg`, write composed YAMLs, and compute content‑addressed IDs using those merged configs. Adding a small `--set` layer fits directly into that flow without introducing a second configuration system.
-
-If you want, I can drop in the small `--set` patch to the entrypoints and sampler CLI, and show one end‑to‑end example using your `parsl_llc.py` workflow.
