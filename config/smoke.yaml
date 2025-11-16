@@ -1,0 +1,52 @@
+# Fast smoke test config for manual workflow testing
+# Expected runtime: ~8-12 seconds for 1 target × 4 samplers
+#
+# Usage:
+#   uv run lambda-hat workflow llc --config config/smoke.yaml --local
+#
+# Purpose: Quick manual validation that all samplers work end-to-end
+# (Same config as tests/test_smoke_workflow_config.yaml for consistency)
+
+experiment: "smoke"
+jax_enable_x64: true  # Required for HMC/MCLMC float64 precision
+
+targets:
+  - model: small
+    data: small
+    teacher: _null
+    seed: 42
+    overrides:
+      training:
+        steps: 100  # Reduced from default 5000 (50x faster)
+
+samplers:
+  # HMC: 10 draws × 5 integration steps = 50 FGE (~1-2 sec)
+  - name: hmc
+    seed: 1
+    overrides:
+      draws: 10              # Reduced from 1000
+      warmup: 5              # Reduced from 200
+      num_integration_steps: 5  # Reduced from 10
+
+  # MCLMC: 10 draws (~1-2 sec)
+  - name: mclmc
+    seed: 2
+    overrides:
+      draws: 10   # Reduced from default
+
+  # SGLD: 50 steps (~2-3 sec)
+  - name: sgld
+    seed: 3
+    overrides:
+      steps: 50       # Reduced from 781250 (!)
+      warmup: 10      # Reduced from 50000
+      eval_every: 10  # More frequent eval for faster testing
+
+  # VI: 20 steps with minimal mixture components (~2-3 sec)
+  - name: vi
+    seed: 4
+    overrides:
+      steps: 20       # Reduced from 5000
+      M: 2            # Reduced from 8 (fewer mixture components)
+      r: 1            # Reduced from 2 (lower rank)
+      eval_every: 10  # More frequent eval
