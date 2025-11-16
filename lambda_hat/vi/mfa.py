@@ -11,12 +11,15 @@ Implements a mixture of factor analyzers with:
 - Optional geometry whitening via diagonal preconditioner
 """
 
-from typing import Any, Callable, Dict, NamedTuple, Optional, Tuple
 import time
+from typing import TYPE_CHECKING, Any, Callable, Dict, NamedTuple, Optional, Tuple
 
 import jax
 import jax.numpy as jnp
 import optax
+
+if TYPE_CHECKING:
+    from lambda_hat.vi.types import FlatObjective
 
 # === Whitening Infrastructure ===
 
@@ -397,10 +400,9 @@ class VIOptState(NamedTuple):
 
 
 def build_elbo_step(
-    loss_batch_fn: Callable,
+    objective: "FlatObjective",
     data: Tuple[jnp.ndarray, jnp.ndarray],
     wstar_flat: jnp.ndarray,
-    unravel_fn: Callable,
     n_data: int,
     beta: float,
     gamma: float,
@@ -413,13 +415,12 @@ def build_elbo_step(
     alpha_dirichlet_prior: Optional[float] = None,
     rank_mask: Optional[jnp.ndarray] = None,
 ) -> Callable:
-    """Build one ELBO optimization step with STL and RB gradients.
+    """Build one ELBO optimization step with STL and RB gradients - FLAT ONLY.
 
     Args:
-        loss_batch_fn: Function (params, minibatch) -> scalar loss
+        objective: FlatObjective providing loss/grad in flat space
         data: Full dataset (X, Y)
         wstar_flat: (d,) flattened center parameters (w*)
-        unravel_fn: Function to reconstruct PyTree from flat array
         n_data: Number of data points
         beta: Inverse temperature (typically 1/log(n))
         gamma: Localizer strength
@@ -437,20 +438,14 @@ def build_elbo_step(
     beta_tilde = jnp.asarray(beta * n_data, dtype=ref_dtype)
     gamma_val = jnp.asarray(gamma, dtype=ref_dtype)
 
-    # Flatten/unflatten utilities (closure over wstar structure)
-    def unflatten(flat: jnp.ndarray) -> Any:
-        """Unflatten to match wstar PyTree structure."""
-        return unravel_fn(flat)
-
     @jax.jit
     def step_fn(
         key: jax.random.PRNGKey, params: VIParams, state: VIOptState
     ) -> Tuple[Tuple[VIParams, VIOptState], Dict[str, jnp.ndarray]]:
         """One ELBO optimization step."""
 
-        # 1) Sample w ~ q (pathwise)
+        # 1) Sample w ~ q (pathwise) - work in flat space only
         w_flat, aux = sample_q(key, params, wstar_flat, whitener, rank_mask=rank_mask)
-        w = unflatten(w_flat)
         tilde_v = aux["tilde_v"]
         m = aux["m"]
         z = aux["z"]
@@ -463,7 +458,7 @@ def build_elbo_step(
 
         # 3) ELBO objective: ℓ(w) = -nβ L_batch(w) - ½γ ||tilde_v||^2
         # (STL: no explicit -log q term in gradients for continuous params)
-        Ln_batch = loss_batch_fn(w, Xb, Yb)  # Mean loss on batch
+        Ln_batch = objective.loss(w_flat, (Xb, Yb))  # FLAT: loss on flat params
         half = jnp.asarray(0.5, dtype=ref_dtype)
         localizer = half * gamma_val * jnp.dot(tilde_v, tilde_v)
         ell = jnp.asarray(-(beta_tilde * Ln_batch + localizer), dtype=ref_dtype)
@@ -491,9 +486,9 @@ def build_elbo_step(
                 A_m = A_m * rank_mask[m]
             K_m_z = (D_sqrt_new[:, None] * A_m) @ z
             tilde_v_new = K_m_z + D_sqrt_new * eps
-            w_new = unflatten(wstar_flat + whitener.from_tilde(tilde_v_new))
+            w_flat_new = wstar_flat + whitener.from_tilde(tilde_v_new)
 
-            Ln_b = loss_batch_fn(w_new, Xb, Yb)
+            Ln_b = objective.loss(w_flat_new, (Xb, Yb))  # FLAT: loss on flat params
             loc = half * gamma_val * jnp.dot(tilde_v_new, tilde_v_new)
             return -(beta_tilde * Ln_b + loc)  # Maximize ell => minimize -ell
 
@@ -661,10 +656,9 @@ def apply_control_variate(
 
 def fit_vi_and_estimate_lambda(
     rng_key: jax.random.PRNGKey,
-    loss_batch_fn: Callable,
-    loss_full_fn: Callable,
+    objective: "FlatObjective",
+    loss_full_flat: Callable[[jnp.ndarray], jnp.ndarray],
     wstar_flat: jnp.ndarray,
-    unravel_fn: Callable,
     data: Tuple[jnp.ndarray, jnp.ndarray],
     n_data: int,
     beta: float,
@@ -684,16 +678,15 @@ def fit_vi_and_estimate_lambda(
     lr_schedule: Optional[str] = None,
     lr_warmup_frac: float = 0.05,
 ) -> Tuple[float, Dict[str, jnp.ndarray], Dict[str, Any]]:
-    """Fit variational distribution and estimate Local Learning Coefficient.
+    """Fit variational distribution and estimate Local Learning Coefficient - FLAT ONLY.
 
     Runs ELBO optimization, then performs final MC estimation on full dataset.
 
     Args:
         rng_key: JRNG key
-        loss_batch_fn: Function (params, minibatch) -> scalar loss
-        loss_full_fn: Function (params) -> scalar loss on full dataset
+        objective: FlatObjective providing minibatch loss/grad in flat space
+        loss_full_flat: Full-data loss function (flat) -> scalar for MC estimation
         wstar_flat: (d,) flattened ERM parameters (center of local posterior)
-        unravel_fn: Function to reconstruct PyTree from flat array
         data: Tuple of (X, Y)
         n_data: Number of data points
         beta: Inverse temperature (typically 1/log(n))
@@ -762,12 +755,11 @@ def fit_vi_and_estimate_lambda(
         step=jnp.array(0, dtype=jnp.int32),
     )
 
-    # Build ELBO step function
+    # Build ELBO step function (flat-only interface)
     step_fn = build_elbo_step(
-        loss_batch_fn=loss_batch_fn,
+        objective=objective,
         data=data,
         wstar_flat=wstar_flat,
-        unravel_fn=unravel_fn,
         n_data=n_data,
         beta=beta,
         gamma=gamma,
@@ -802,45 +794,39 @@ def fit_vi_and_estimate_lambda(
     D_sqrt_final, _ = diag_from_rho(rho_final)
     pi_final = softmax_with_temperature(alpha_final, alpha_temperature)
 
-    # Flatten/unflatten utilities
-    def unflatten(flat: jnp.ndarray) -> Any:
-        """Unflatten to match wstar PyTree structure."""
-        return unravel_fn(flat)
-
     # Final MC estimation on FULL dataset with HVP control variate
     eval_keys = jax.random.split(key_eval, eval_samples)
 
-    # Sample perturbations and compute losses
+    # Sample perturbations and compute losses (FLAT ONLY)
     def sample_perturbation_and_loss(eval_key):
-        """Sample from trained q and evaluate full-dataset loss."""
+        """Sample from trained q and evaluate full-dataset loss in flat space."""
         w_flat, aux = sample_q(eval_key, final_params, wstar_flat, whitener, rank_mask=rank_mask)
-        # Get perturbation in model coordinates: v = w - w*
-        # Cast to match wstar_flat dtype
+        # Get perturbation: v = w - w*
         v = jnp.asarray(w_flat - wstar_flat, dtype=wstar_flat.dtype)
-        w = unflatten(w_flat)
-        loss = loss_full_fn(w)
+        loss = loss_full_flat(w_flat)  # FLAT: full loss on flat params
         return v, loss
 
     # Vectorize over eval_samples
     perturbations, Ln_samples = jax.vmap(sample_perturbation_and_loss)(eval_keys)
 
-    # Compute L_n(w*)
-    Ln_wstar = loss_full_fn(unflatten(wstar_flat))
+    # Compute L_n(w*) in flat space
+    Ln_wstar = loss_full_flat(wstar_flat)  # FLAT
 
     # Compute Hessian diagonal in learned subspace for control variate
-    # Create loss function that takes flat params
-    def loss_flat(w_flat):
-        return loss_full_fn(unflatten(w_flat))
-
+    # loss_full_flat already works on flat params
     hess_diag = compute_subspace_hessian_diag(
-        loss_fn=loss_flat, wstar=wstar_flat, params=final_params, pi=pi_final, whitener=whitener
+        loss_fn=loss_full_flat,
+        wstar=wstar_flat,
+        params=final_params,
+        pi=pi_final,
+        whitener=whitener,
     )
 
     # Apply control variate to get improved estimate
     Eq_Ln_cv, cv_info = apply_control_variate(
         loss_samples=Ln_samples,
         perturbations=perturbations,
-        loss_fn=loss_flat,
+        loss_fn=loss_full_flat,
         wstar=wstar_flat,
         hess_diag=hess_diag,
         pi=pi_final,
@@ -901,10 +887,9 @@ class _MFAAlgorithm:
     def run(
         self,
         rng_key: jax.random.PRNGKey,
-        loss_batch_fn: Callable,
-        loss_full_fn: Callable,
+        objective: "FlatObjective",
+        loss_full_flat: Callable[[jnp.ndarray], jnp.ndarray],
         wstar_flat: jnp.ndarray,
-        unravel_fn: Callable[[jnp.ndarray], Any],
         data: Tuple[jnp.ndarray, jnp.ndarray],
         n_data: int,
         beta: float,
@@ -912,14 +897,13 @@ class _MFAAlgorithm:
         vi_cfg: Any,
         whitener: Optional[Whitener] = None,
     ) -> Dict[str, Any]:
-        """Run MFA VI algorithm.
+        """Run MFA VI algorithm - FLAT INTERFACE ONLY.
 
         Args:
             rng_key: JAX random key
-            loss_batch_fn: (w_pytree, Xb, Yb) -> scalar
-            loss_full_fn: (w_pytree) -> scalar
+            objective: FlatObjective providing loss/grad in flat space
+            loss_full_flat: Full-data loss in flat space (for MC estimation)
             wstar_flat: (d,) flattened ERM solution
-            unravel_fn: flat array -> pytree converter
             data: (X, Y) dataset
             n_data: number of data points
             beta: inverse temperature
@@ -932,7 +916,7 @@ class _MFAAlgorithm:
                 - lambda_hat: scalar LLC estimate
                 - traces: dict of metric arrays (steps,)
                 - extras: dict of final diagnostics
-                - timings: dict of timing info (empty for now, compatibility)
+                - timings: dict of timing info
                 - work: dict of computational work metrics
         """
 
@@ -945,10 +929,9 @@ class _MFAAlgorithm:
         # Call the main MFA function
         lambda_hat, traces, extras = fit_vi_and_estimate_lambda(
             rng_key=rng_key,
-            loss_batch_fn=loss_batch_fn,
-            loss_full_fn=loss_full_fn,
+            objective=objective,
+            loss_full_flat=loss_full_flat,
             wstar_flat=wstar_flat,
-            unravel_fn=unravel_fn,
             data=data,
             n_data=n_data,
             beta=beta,

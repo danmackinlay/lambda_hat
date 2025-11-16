@@ -16,6 +16,8 @@ from lambda_hat.losses import make_loss_fns
 from lambda_hat.posterior import (
     compute_beta_gamma,
     make_grad_loss_minibatch_flat,
+    make_loss_full_flat,
+    make_loss_minibatch_flat,
     make_posterior,
 )
 from lambda_hat.samplers import run_hmc, run_mclmc, run_sgld, run_vi
@@ -130,7 +132,10 @@ def run_sampler(
         )
 
     elif sampler_name == "vi":
+        # Build flat-space loss functions (no model-space conversions in VI)
+        loss_minibatch_flat = make_loss_minibatch_flat(vm, loss_mini)
         grad_loss_minibatch_flat = make_grad_loss_minibatch_flat(vm, loss_mini)
+        loss_full_flat = make_loss_full_flat(vm, loss_full)
 
         run_result = run_vi(
             key=key,
@@ -138,8 +143,9 @@ def run_sampler(
             data=(X, Y),
             config=cfg.sampler.vi,
             num_chains=cfg.sampler.chains,
+            loss_minibatch_flat=loss_minibatch_flat,
             grad_loss_minibatch=grad_loss_minibatch_flat,
-            loss_full_fn=loss_full,
+            loss_full_flat=loss_full_flat,
             n_data=n_data,
             beta=beta,
             gamma=gamma,

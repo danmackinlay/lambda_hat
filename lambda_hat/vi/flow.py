@@ -25,11 +25,14 @@ Requires: equinox, flowjax (install via `uv sync --extra flowvi`)
 """
 
 import time
-from typing import Any, Callable, Dict, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Callable, Dict, Optional, Tuple
 
 import jax
 import jax.numpy as jnp
 import optax
+
+if TYPE_CHECKING:
+    from lambda_hat.vi.types import FlatObjective
 
 # Defer equinox/flowjax imports until actually used
 # This allows the module to be imported without requiring flowvi dependencies
@@ -217,10 +220,9 @@ def init_injective_lift(
 
 
 def build_flow_elbo_step(
-    loss_batch_fn: Callable,
+    objective: "FlatObjective",
     data: Tuple[jnp.ndarray, jnp.ndarray],
     wstar_flat: jnp.ndarray,
-    unravel_fn: Callable[[jnp.ndarray], Any],
     n_data: int,
     beta: float,
     gamma: float,
@@ -230,7 +232,7 @@ def build_flow_elbo_step(
     flow_static: Any,
     lift_consts: dict,
 ) -> Callable:
-    """Build one ELBO optimization step for flow VI.
+    """Build one ELBO optimization step for flow VI - FLAT INTERFACE ONLY.
 
     ELBO = E_q[log p(w) - log q(w)]
     where log p(w) = -nβ L_n(w) - γ/2 ||w - w*||²
@@ -238,10 +240,9 @@ def build_flow_elbo_step(
     Uses pathwise gradient estimator with K=1 sample per step.
 
     Args:
-        loss_batch_fn: (w_pytree, Xb, Yb) -> scalar loss
+        objective: FlatObjective providing loss/grad in flat space
         data: (X, Y) full dataset
         wstar_flat: (d,) flattened ERM solution
-        unravel_fn: flat array -> pytree converter
         n_data: total number of data points
         beta: inverse temperature
         gamma: localizer strength
@@ -301,10 +302,8 @@ def build_flow_elbo_step(
             logq = logq_z + logdet
             # ==== end inline ====
 
-            w = unravel_fn(w_flat)
-
-            # Compute log p(w) = -nβ L_batch - γ/2 ||w - w*||²
-            Ln_batch = loss_batch_fn(w, Xb, Yb)
+            # Compute log p(w) = -nβ L_batch - γ/2 ||w - w*||² (FLAT)
+            Ln_batch = objective.loss(w_flat, (Xb, Yb))
             localizer = 0.5 * gamma_val * jnp.sum((w_flat - wstar_flat) ** 2)
             logp = -(beta_tilde * Ln_batch + localizer)
 
@@ -347,21 +346,19 @@ def build_flow_elbo_step(
 def estimate_lambda_final(
     key: jax.random.PRNGKey,
     dist: InjectiveLift,
-    loss_full_fn: Callable,
+    loss_full_flat: Callable[[jnp.ndarray], jnp.ndarray],
     wstar_flat: jnp.ndarray,
-    unravel_fn: Callable,
     n_data: int,
     beta: float,
     eval_samples: int,
 ) -> Tuple[float, Dict[str, jnp.ndarray]]:
-    """Final Monte Carlo estimate of lambda_hat = nβ(E_q[L] - L_0).
+    """Final Monte Carlo estimate of lambda_hat = nβ(E_q[L] - L_0) - FLAT INTERFACE.
 
     Args:
         key: JAX random key
         dist: Trained InjectiveLift distribution
-        loss_full_fn: (w_pytree) -> scalar loss on full data
+        loss_full_flat: Full-data loss in flat space
         wstar_flat: (d,) flattened ERM solution
-        unravel_fn: flat array -> pytree
         n_data: total number of data points
         beta: inverse temperature
         eval_samples: number of MC samples
@@ -374,8 +371,7 @@ def estimate_lambda_final(
 
     def eval_one(k):
         w_flat, logq = dist.sample_and_log_prob(k)
-        w = unravel_fn(w_flat)
-        L = loss_full_fn(w)
+        L = loss_full_flat(w_flat)
         return {"L": L, "logq": logq}
 
     results = jax.vmap(eval_one)(keys)
@@ -386,8 +382,7 @@ def estimate_lambda_final(
     L_std = jnp.std(L_samples)
 
     # Compute L_0 = L_n(w*)
-    w0 = unravel_fn(wstar_flat)
-    L0 = loss_full_fn(w0)
+    L0 = loss_full_flat(wstar_flat)
 
     # lambda_hat = nβ(E_L - L_0)
     lambda_hat = n_data * beta * (E_L - L0)
@@ -418,10 +413,9 @@ class _FlowAlgorithm:
     def run(
         self,
         rng_key: jax.random.PRNGKey,
-        loss_batch_fn: Callable,
-        loss_full_fn: Callable,
+        objective: "FlatObjective",
+        loss_full_flat: Callable[[jnp.ndarray], jnp.ndarray],
         wstar_flat: jnp.ndarray,
-        unravel_fn: Callable[[jnp.ndarray], Any],
         data: Tuple[jnp.ndarray, jnp.ndarray],
         n_data: int,
         beta: float,
@@ -429,14 +423,13 @@ class _FlowAlgorithm:
         vi_cfg: Any,
         whitener: Any = None,
     ) -> Dict[str, Any]:
-        """Run flow VI algorithm.
+        """Run flow VI algorithm - FLAT INTERFACE ONLY.
 
         Args:
             rng_key: JAX random key
-            loss_batch_fn: (w_pytree, Xb, Yb) -> scalar
-            loss_full_fn: (w_pytree) -> scalar
+            objective: FlatObjective providing loss/grad in flat space
+            loss_full_flat: Full-data loss in flat space (for MC estimation)
             wstar_flat: (d,) flattened ERM solution
-            unravel_fn: flat array -> pytree converter
             data: (X, Y) dataset
             n_data: number of data points
             beta: inverse temperature
@@ -540,10 +533,9 @@ class _FlowAlgorithm:
 
         # Build ELBO step (now takes flow_static and lift_consts)
         step_fn = build_flow_elbo_step(
-            loss_batch_fn=loss_batch_fn,
+            objective=objective,
             data=(X, Y),
             wstar_flat=wstar_flat,
-            unravel_fn=unravel_fn,
             n_data=n_data,
             beta=beta,
             gamma=gamma,
@@ -581,9 +573,8 @@ class _FlowAlgorithm:
         lambda_hat, eval_extras = estimate_lambda_final(
             key=key_eval,
             dist=dist_final,
-            loss_full_fn=loss_full_fn,
+            loss_full_flat=loss_full_flat,
             wstar_flat=wstar_flat,
-            unravel_fn=unravel_fn,
             n_data=n_data,
             beta=beta,
             eval_samples=vi_cfg.eval_samples,

@@ -11,7 +11,7 @@ from lambda_hat import vi
 from lambda_hat.posterior import Posterior
 from lambda_hat.types import SamplerRunResult
 from lambda_hat.utils.rng import ensure_typed_key
-from lambda_hat.vi.types import Batch, FlatObjective
+from lambda_hat.vi.types import Batch
 
 if TYPE_CHECKING:
     from lambda_hat.config import VIConfig
@@ -169,10 +169,9 @@ def run_vi(
     def run_one_chain(chain_key):
         result = algo.run(
             rng_key=chain_key,
-            loss_batch_fn=loss_batch_fn_wrapped,
-            loss_full_fn=loss_full_fn_wrapped,
+            objective=objective,
+            loss_full_flat=loss_full_flat,
             wstar_flat=params_flat,
-            unravel_fn=unravel_fn,
             data=data,
             n_data=n_data,
             beta=beta,
@@ -190,10 +189,9 @@ def run_vi(
     # Run first chain separately to get timings and work dict
     first_result = algo.run(
         rng_key=chain_keys[0],
-        loss_batch_fn=loss_batch_fn_wrapped,
-        loss_full_fn=loss_full_fn_wrapped,
+        objective=objective,
+        loss_full_flat=loss_full_flat,
         wstar_flat=params_flat,
-        unravel_fn=unravel_fn,
         data=data,
         n_data=n_data,
         beta=beta,
