@@ -8,10 +8,10 @@ Stages:
 
 Usage:
   # Local testing (no promotion)
-  parsl-llc --config config/experiments.yaml --local
+  lambda-hat workflow llc --config config/experiments.yaml --local
 
   # SLURM cluster with promotion
-  parsl-llc --config config/experiments.yaml \\
+  lambda-hat workflow llc --config config/experiments.yaml \\
       --parsl-card config/parsl/slurm/gpu-a100.yaml --promote
 """
 

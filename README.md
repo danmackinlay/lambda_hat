@@ -16,7 +16,6 @@ This separation provides:
 * **Isolation**: Target configuration and sampler hyper-parameters are decoupled
 * **Cost control**: Resource-intensive target building and cheaper sampling jobs can be optimized independently
 
-In [Singular Learning Theory (SLT)](https://singularlearningtheory.com), the **Local Learning Coefficient (LLC)** quantifies the effective local dimensionality of a model around a trained optimum.
 Estimating it can be tricky. That is what we explore here.
 
 ![](assets/readme/llc_convergence_combined.png)
@@ -35,10 +34,10 @@ This repo provides benchmark estimators of LLC on small but non-trivial neural n
 * [Haiku](https://github.com/haiku/haiku) for neural network definitions
 
 **Supported samplers**: HMC, MCLMC, SGLD, VI (variational inference with MFA or Flow algorithms).
-**Note**: Flow VI requires `uv sync --extra flowvi` but is currently broken with Parsl workflows (see docs/flow_prng_issue.md).
+**Note**: Flow VI requires `uv sync --extra flowvi`. See [Flow VI documentation](./docs/vi_flow.md) for JAX/vmap PRNG guidance and current status.
 
 We target networks with dimension up to about $10^5$ which means we can ground-truth against classic samplers like HMC (which we expect to become non-viable in higher dimension or dataset size).
-In this regime we can relu upon classic MCMC to tell us the “true” LLC rather than relying on analytic results for approximate networks such as Deep Linear Networks.
+In this regime we can rely upon classic MCMC to tell us the "true" LLC rather than relying on analytic results for approximate networks such as Deep Linear Networks.
 
 ## Installation
 
@@ -262,9 +261,16 @@ Artifacts are written to `runs/...` (default for `lambda-hat workflow llc`) or `
 * **SGLD**: float32 for efficiency
 * **HMC/MCLMC**: float64 for accuracy
 
-## Further documentation
+## Documentation
 
-- [Configuration Details](./docs/configuration.md)
-- [Running on SLURM](./docs/parallelism.md)
-- [Hyperparameter Optimization with Optuna](./docs/optuna_workflow.md)
-- [BlackJAX Notes](./docs/blackjax.md)
+- [CLI Reference](./docs/cli.md) — All command-line options (auto-generated)
+- [Configuration Reference](./docs/config.md) — YAML schema and defaults (auto-generated)
+- [Experiments Guide](./docs/experiments.md) — How to compose experiments with overrides
+- [Samplers](./docs/samplers.md) — HMC, MCLMC, SGLD, VI usage
+- [Variational Inference](./docs/vi.md) — VI overview and shared concepts
+- [Workflows](./docs/workflows.md) — Parsl orchestration, sweeps, artifact management
+- [Compatibility](./docs/compatibility.md) — Version pins and API notes
+- [Hyperparameter Optimization](./docs/optuna_workflow.md) — Optuna workflow guide
+- [Methodology](./docs/methodology.md) — Conceptual background
+- [Output Management](./docs/output_management.md) — Detailed artifact system
+- [Contributing](./docs/CONTRIBUTING.md) — Documentation maintenance guide

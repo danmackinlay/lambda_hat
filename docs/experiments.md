@@ -1,4 +1,10 @@
-# Configuration Details
+# Experiments Guide
+
+How to compose configs using presets, `config/experiments.yaml`, overrides, and Optuna.
+
+For the complete list of YAML files and their defaults, see [Configuration Reference](./config.md).
+
+---
 
 This project uses **OmegaConf** to parse YAML configuration files, orchestrated by **Parsl**.
 Configs are composed automatically by `lambda_hat.workflow_utils`.

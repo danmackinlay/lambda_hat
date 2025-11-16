@@ -511,7 +511,7 @@ artefacts/experiments/my_experiment/
 
 ## See Also
 
-- [Configuration Guide](./configuration.md) - Config system and experiments.yaml
-- [Parameter Sweeps](./sweeps.md) - N×M experiment matrices
-- [Parallel Execution](./parallelism.md) - Parsl workflows
+- [Experiments Guide](./experiments.md) - Config system and experiments.yaml
+- [Workflows](./workflows.md) - Parsl orchestration, sweeps, and artifact management
+- [Configuration Reference](./config.md) - Complete YAML schema
 - [CLI Reference](../CLAUDE.md) - Command-line interface

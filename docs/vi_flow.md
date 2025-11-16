@@ -1,3 +1,11 @@
+# Flow VI (Normalizing Flows)
+
+Flow VI uses normalizing flows with manifold-plus-noise construction for flexible posterior approximation.
+
+For general VI concepts and usage, see [Variational Inference](./vi.md).
+For MFA VI, see [MFA VI](./vi_mfa.md).
+
+---
 
 ## 0) Core modeling idea (low‑dimensional flow + thin ambient noise)
 
