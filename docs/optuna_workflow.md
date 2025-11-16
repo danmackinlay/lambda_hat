@@ -44,21 +44,21 @@ optuna:
 
 **Note on budgets**: Default HMC budget (10 hours) is generous for production-quality references. For local testing or quick iteration, use shorter budgets via CLI:
 ```bash
-uv run parsl-optuna --config config/my_optuna_run.yaml --local \
+uv run lambda-hat workflow optuna --config config/my_optuna_run.yaml --local \
     --hmc-budget 1800 --method-budget 300  # 30min HMC, 5min trials
 ```
 
 ### 2. Run locally (testing)
 
 ```bash
-uv run parsl-optuna --config config/my_optuna_run.yaml --local
+uv run lambda-hat workflow optuna --config config/my_optuna_run.yaml --local
 ```
 
 ### 3. Run on SLURM cluster
 
 ```bash
-uv run parsl-optuna --config config/my_optuna_run.yaml \
-    --parsl-config parsl_config_slurm.py
+uv run lambda-hat workflow optuna --config config/my_optuna_run.yaml \
+    --parsl-card config/parsl/slurm/gpu-a100.yaml
 ```
 
 ### 4. Analyze results

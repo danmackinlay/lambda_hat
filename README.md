@@ -61,15 +61,15 @@ pip install .[cuda12]    # For CUDA 12 (Linux)
 
 Lambda-Hat provides three command-line tools that implement the two-stage workflow. Parsl orchestrates these automatically, but they can also be invoked directly for debugging or custom workflows.
 
-### `lambda-hat-build-target` (Stage A)
+### `lambda-hat build` (Stage A)
 
 Builds a neural network target artifact: trains a model, saves parameters, data, and metadata.
 
 ```bash
-uv run lambda-hat-build-target \
+uv run lambda-hat build \
   --config-yaml config/composed.yaml \
   --target-id tgt_abc123 \
-  --target-dir runs/targets/tgt_abc123
+  --experiment my_experiment
 ```
 
 **Outputs:**
@@ -82,15 +82,15 @@ uv run lambda-hat-build-target \
 - Precision mode (`jax_enable_x64`) recorded in metadata
 - Reference loss L0 computed and stored for LLC estimation
 
-### `lambda-hat-sample` (Stage B)
+### `lambda-hat sample` (Stage B)
 
 Runs a sampler (MCMC or variational) on a pre-built target artifact.
 
 ```bash
-uv run lambda-hat-sample \
+uv run lambda-hat sample \
   --config-yaml config/sampler.yaml \
   --target-id tgt_abc123 \
-  --run-dir runs/targets/tgt_abc123/run_hmc_ab12cd34
+  --experiment my_experiment
 ```
 
 **Outputs:**
@@ -103,21 +103,21 @@ uv run lambda-hat-sample \
 - Automatic minibatching for SGLD-family samplers
 - Parallel chain execution with JAX's vmap
 
-### `lambda-hat-promote`
+### `lambda-hat promote`
 
 Utility for copying plots from run directories into stable locations for documentation or galleries.
 It  searches under `runs/targets/**/run_{sampler}_*/diagnostics/`.
 
 ```bash
 # Create an asset gallery with newest run per sampler
-uv run lambda-hat-promote gallery \
+uv run lambda-hat promote gallery \
   --runs-root runs \
   --samplers sgld,hmc,mclmc \
   --outdir runs/promotion \
   --snippet-out runs/promotion/gallery.md
 
 # Copy specific plots
-uv run lambda-hat-promote single \
+uv run lambda-hat promote single \
   --runs-root runs \
   --samplers sgld \
   --outdir figures \
@@ -137,10 +137,10 @@ We use **Parsl** for the full pipeline. Parsl provides Python-native DAG executi
 
 ```bash
 # Run locally (uses ThreadPoolExecutor)
-uv run parsl-llc --local
+uv run lambda-hat workflow llc --local
 
 # Run locally with promotion (generates galleries)
-uv run parsl-llc --local --promote
+uv run lambda-hat workflow llc --local --promote
 ```
 
 ### Editing experiments
@@ -154,23 +154,24 @@ Promotion generates asset galleries from sampling runs. It's opt-in via the `--p
 
 ```bash
 # Run workflow with promotion
-uv run parsl-llc --local --promote
+uv run lambda-hat workflow llc --local --promote
 
 # Specify which plots to promote
-uv run parsl-llc --local --promote \
+uv run lambda-hat workflow llc --local --promote \
     --promote-plots trace.png,llc_convergence_combined.png
 ```
 
 ### HPC Execution
 
-For SLURM clusters, use the SLURM Parsl config:
+For SLURM clusters, use a Parsl card configuration:
 
 ```bash
-# Run on SLURM cluster (auto-scales 0-50 jobs)
-uv run parsl-llc --parsl-config parsl_config_slurm.py
+# Run on SLURM cluster (auto-scales based on card config)
+uv run lambda-hat workflow llc --parsl-card config/parsl/slurm/gpu-a100.yaml
 
-# Customize Parsl config
-# Edit parsl_config_slurm.py to adjust partition, walltime, resources
+# Customize with overrides
+uv run lambda-hat workflow llc --parsl-card config/parsl/slurm/cpu.yaml \
+    --set walltime=04:00:00 --set gpus_per_node=2
 ```
 
 ### Hyperparameter Optimization
@@ -179,10 +180,11 @@ uv run parsl-llc --parsl-config parsl_config_slurm.py
 
 ```bash
 # Optimize hyperparameters locally
-uv run parsl-optuna --config config/optuna_demo.yaml --local
+uv run lambda-hat workflow optuna --config config/optuna_demo.yaml --local
 
 # Optimize on SLURM cluster
-uv run parsl-optuna --config config/optuna_demo.yaml
+uv run lambda-hat workflow optuna --config config/optuna_demo.yaml \
+    --parsl-card config/parsl/slurm/cpu.yaml
 ```
 
 **How it works:**
@@ -202,7 +204,7 @@ See [`docs/optuna_workflow.md`](docs/optuna_workflow.md) for detailed configurat
 
 ## Artifact Layout
 
-**Standard workflow** (`parsl-llc`):
+**Standard workflow** (`lambda-hat workflow llc`):
 ```
 runs/
 └── targets/
@@ -222,7 +224,7 @@ runs/
         └── run_mclmc_gh901234/
 ```
 
-**Optuna workflow** (`parsl-optuna`):
+**Optuna workflow** (`lambda-hat workflow optuna`):
 ```
 artifacts/
 ├── problems/
@@ -243,7 +245,7 @@ results/
         └── p_abc123:vi.pkl          # Optuna study (for resume)
 ```
 
-Artifacts are written to `runs/...` (default for `parsl-llc`) or `artifacts/...` (default for `parsl-optuna`). These paths are configurable via CLI arguments (`--logs-dir`, `--temp-cfg-dir`, `--results-dir`, `--artifacts-dir`). The sampler name is included in folder names as a human-useful facet; all other hyperparameters live in `analysis.json` or `metrics.json`.
+Artifacts are written to `runs/...` (default for `lambda-hat workflow llc`) or `artifacts/...` (default for `lambda-hat workflow optuna`). These paths are configurable via CLI arguments. The sampler name is included in folder names as a human-useful facet; all other hyperparameters live in `analysis.json` or `metrics.json`.
 
 ---
 

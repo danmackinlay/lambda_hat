@@ -22,7 +22,7 @@ samplers:
 
 Then execute:
 ```bash
-uv run python workflows/parsl_llc.py --local
+uv run lambda-hat workflow llc --local
 ```
 
 ## Configuration Options

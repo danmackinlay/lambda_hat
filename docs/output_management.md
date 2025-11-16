@@ -175,7 +175,7 @@ Same `config/experiments.yaml` → same target and run IDs → identical results
 
 ```bash
 # Run full workflow
-uv run python workflows/parsl_llc.py --local
+uv run lambda-hat workflow llc --local
 
 # Same config will produce same IDs and skip existing artifacts
 # (Parsl jobs complete quickly if outputs already exist)
@@ -200,18 +200,18 @@ samplers:
   - { name: hmc }  # Only HMC, not SGLD or others
 ```
 
-Then execute: `uv run python workflows/parsl_llc.py --local`
+Then execute: `uv run lambda-hat workflow llc --local`
 
 ### Reruns and Updates
 
 **To force rebuild a target:**
 1. Delete the target directory: `rm -rf runs/targets/tgt_abc123456789/`
-2. Rerun workflow: `uv run python workflows/parsl_llc.py --local`
+2. Rerun workflow: `uv run lambda-hat workflow llc --local`
 3. Parsl will rebuild the missing target and all dependent samplers
 
 **To rerun specific samplers:**
 1. Delete run directories: `rm -rf runs/targets/*/run_hmc_*/`
-2. Rerun workflow: `uv run python workflows/parsl_llc.py --local`
+2. Rerun workflow: `uv run lambda-hat workflow llc --local`
 3. Parsl will rerun sampling for all affected combinations
 
 **Note**: Parsl reruns all jobs in the config. For partial reruns, create a subset config file.

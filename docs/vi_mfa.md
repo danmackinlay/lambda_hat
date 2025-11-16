@@ -108,7 +108,7 @@ posterior:
 
 **Commands**:
 ```bash
-uv run python workflows/parsl_llc.py --local
+uv run lambda-hat workflow llc --local
 ```
 
 **Results**: `runs/targets/<tgt>/run_vi_<rid>/analysis.json` contains `llc_mean`, `llc_std`, `ess`, `wnv`.
@@ -198,8 +198,8 @@ posterior:
 
 **Commands**:
 ```bash
-uv run python workflows/parsl_llc.py --local --config config/exp_gamma_small.yaml
-uv run python workflows/parsl_llc.py --local --config config/exp_gamma_large.yaml
+uv run lambda-hat workflow llc --local --config config/exp_gamma_small.yaml
+uv run lambda-hat workflow llc --local --config config/exp_gamma_large.yaml
 ```
 
 ---
