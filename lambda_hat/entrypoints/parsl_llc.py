@@ -12,11 +12,10 @@ Usage:
 
   # SLURM cluster with promotion
   parsl-llc --config config/experiments.yaml \\
-      --parsl-config parsl_config_slurm.py --promote
+      --parsl-card config/parsl/slurm/gpu-a100.yaml --promote
 """
 
 import argparse
-import importlib.util
 import json
 import sys
 from pathlib import Path
@@ -125,21 +124,6 @@ def promote_app(store_root, samplers, outdir, plot_name, inputs=None):
 # ============================================================================
 # Main Workflow
 # ============================================================================
-
-
-def load_parsl_config(config_path):
-    """Dynamically load a Parsl config module.
-
-    Args:
-        config_path: Path to Python file containing 'config' variable
-
-    Returns:
-        Parsl Config object
-    """
-    spec = importlib.util.spec_from_file_location("parsl_config", config_path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module.config
 
 
 def run_workflow(
@@ -413,7 +397,7 @@ def main():
     parser.add_argument(
         "--parsl-card",
         default=None,
-        help="Path to Parsl YAML card (e.g., config/parsl/slurm/cpu.yaml). Replaces --parsl-config.",
+        help="Path to Parsl YAML card (e.g., config/parsl/slurm/cpu.yaml)",
     )
     parser.add_argument(
         "--set",
@@ -421,11 +405,6 @@ def main():
         action="append",
         default=[],
         help="Override Parsl card values (OmegaConf dotlist), e.g.: --set walltime=04:00:00 --set gpus_per_node=1",
-    )
-    parser.add_argument(
-        "--parsl-config",
-        default="parsl_config_slurm.py",
-        help="[DEPRECATED] Path to Python Parsl config file. Use --parsl-card instead.",
     )
     parser.add_argument(
         "--local",
@@ -460,13 +439,13 @@ def main():
 
     args = parser.parse_args()
 
-    # Resolve Parsl config (cards preferred, fallback to legacy Python files)
+    # Resolve Parsl config
     if args.local and not args.parsl_card:
         # Local mode: build config directly from card spec
         print("Using Parsl mode: local (ThreadPool)")
         parsl_cfg = build_parsl_config_from_card(OmegaConf.create({"type": "local"}))
     elif args.parsl_card:
-        # Card-based config (modern approach)
+        # Card-based config
         card_path = Path(args.parsl_card)
         if not card_path.is_absolute():
             card_path = Path.cwd() / card_path
@@ -478,17 +457,8 @@ def main():
             print(f"  Overrides: {args.parsl_sets}")
         parsl_cfg = load_parsl_config_from_card(card_path, args.parsl_sets)
     else:
-        # Legacy Python config file (deprecated)
-        cwd = Path.cwd()
-        parsl_config_path = Path(args.parsl_config)
-        if not parsl_config_path.is_absolute():
-            parsl_config_path = cwd / parsl_config_path
-        if not parsl_config_path.exists():
-            print(f"Error: Parsl config not found: {parsl_config_path}", file=sys.stderr)
-            sys.exit(1)
-        print(f"[DEPRECATED] Using legacy Python Parsl config: {parsl_config_path}")
-        print("  Consider migrating to --parsl-card (YAML-based config)")
-        parsl_cfg = load_parsl_config(parsl_config_path)
+        print("Error: Must specify either --local or --parsl-card", file=sys.stderr)
+        sys.exit(1)
 
     # Parse promote plots
     promote_plots = [p.strip() for p in args.promote_plots.split(",") if p.strip()]

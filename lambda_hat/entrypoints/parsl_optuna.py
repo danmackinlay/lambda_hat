@@ -13,13 +13,12 @@ Usage:
 
   # SLURM cluster
   parsl-optuna --config config/optuna_demo.yaml \\
-      --parsl-config parsl_config_slurm.py
+      --parsl-card config/parsl/slurm/cpu.yaml
 
 See plans/optuna.md for design details.
 """
 
 import argparse
-import importlib.util
 import json
 import pickle
 import sys
@@ -34,21 +33,6 @@ from omegaconf import OmegaConf
 from lambda_hat.id_utils import problem_id, trial_id
 from lambda_hat.parsl_cards import build_parsl_config_from_card, load_parsl_config_from_card
 from lambda_hat.runners.parsl_apps import compute_hmc_reference, run_method_trial
-
-
-def load_parsl_config(config_path):
-    """Load Parsl config from Python file.
-
-    Args:
-        config_path: Path to parsl config module (e.g., parsl_config_slurm.py)
-
-    Returns:
-        Parsl Config object
-    """
-    spec = importlib.util.spec_from_file_location("parsl_config", config_path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module.config
 
 
 def huber_loss(x, delta=0.1):
@@ -399,7 +383,7 @@ def main():
     parser.add_argument(
         "--parsl-card",
         default=None,
-        help="Path to Parsl YAML card (e.g., config/parsl/slurm/cpu.yaml). Replaces --parsl-config.",
+        help="Path to Parsl YAML card (e.g., config/parsl/slurm/cpu.yaml)",
     )
     parser.add_argument(
         "--set",
@@ -407,11 +391,6 @@ def main():
         action="append",
         default=[],
         help="Override Parsl card values (OmegaConf dotlist), e.g.: --set walltime=04:00:00",
-    )
-    parser.add_argument(
-        "--parsl-config",
-        default="parsl_config_slurm.py",
-        help="[DEPRECATED] Path to Python Parsl config file. Use --parsl-card instead.",
     )
     parser.add_argument(
         "--local",
@@ -455,7 +434,7 @@ def main():
 
     args = parser.parse_args()
 
-    # Resolve Parsl config (cards preferred, fallback to legacy Python files)
+    # Resolve Parsl config
     if args.local and not args.parsl_card:
         print("Using Parsl mode: local (ThreadPool)")
         parsl_cfg = build_parsl_config_from_card(OmegaConf.create({"type": "local"}))
@@ -471,16 +450,8 @@ def main():
             print(f"  Overrides: {args.parsl_sets}")
         parsl_cfg = load_parsl_config_from_card(card_path, args.parsl_sets)
     else:
-        cwd = Path.cwd()
-        parsl_config_path = Path(args.parsl_config)
-        if not parsl_config_path.is_absolute():
-            parsl_config_path = cwd / parsl_config_path
-        if not parsl_config_path.exists():
-            print(f"Error: Parsl config not found: {parsl_config_path}", file=sys.stderr)
-            sys.exit(1)
-        print(f"[DEPRECATED] Using legacy Python Parsl config: {parsl_config_path}")
-        print("  Consider migrating to --parsl-card (YAML-based config)")
-        parsl_cfg = load_parsl_config(parsl_config_path)
+        print("Error: Must specify either --local or --parsl-card", file=sys.stderr)
+        sys.exit(1)
 
     # Run workflow
     print(f"Using Optuna config: {args.config}\n")
