@@ -2,9 +2,14 @@ Minimal rules for this repo. Deviations break CI.
 
 ## Versions (hard pins)
 - **Python ≥ 3.11**
-- **JAX ≥ 0.7.1** (use `jax.tree.map`, `jax.lax.scan`, etc.)
+- **JAX ≥ 0.7.2** (use `jax.tree.map`, `jax.lax.scan`, etc.)
 - **BlackJAX == 1.2.5** (don't import newer APIs)
-- Use **uv** for everything; use **Parsl** for workflows.
+- Use **uv** for dependencies and execution; use **Parsl** for workflows.
+
+## Priorities
+
+There are no downstream users. There are no other developers.
+The highest good is to reduce maintenance burden for me. You can break things to achieve that good.
 
 ## Install
 
@@ -23,7 +28,7 @@ uv run lambda-hat-sample       --config-yaml config.yaml --target-id tgt_abc123
 uv run lambda-hat-promote      --help
 ```
 
-## Workflow (Parsl is canonical)
+## Workflow
 
 **Three-stage pipeline:** Stage A builds targets (neural networks + datasets), Stage B runs samplers (MCMC or variational), Stage C promotes results (gallery + aggregation). Parsl orchestrates N targets × M samplers in parallel with Python-native DAGs.
 
@@ -63,7 +68,7 @@ uv run ruff check --fix
 * Don't run entry points directly; always use `uv run` and prefer Parsl for workflows.
 * Don't bump BlackJAX/JAX without updating code paths.
 * Don't add back-compat shims; fail fast.
-* Don't use legacy Hydra CLI (removed); Parsl + OmegaConf is the only supported workflow.
+* Backwards compatibility is anathema
 
 ## Samplers
 
@@ -112,7 +117,7 @@ uv run ruff check --fix
     (L, eps, sqrt_cov), _ = blackjax.mclmc_find_L_and_step_size(mclmc_kernel=kernel_factory, state=state0, rng_key=key, num_steps=..., ...)
     ```
 
-* **JAX 0.7.1+**
+* **JAX 0.7.2**
 
   * **Trees**: `jax.tree.map`, `jax.tree_util.tree_leaves`, `jax.flatten_util.ravel_pytree`.
   * **Random**: `jax.random.split(key, n)`, `jax.random.choice(key, n, shape=(k,), replace=False)`.
