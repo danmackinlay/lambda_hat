@@ -1,24 +1,27 @@
 # lambda_hat/samplers/vi.py
-"""Variational inference sampler"""
+"""Variational inference sampler - FLAT INTERFACE ONLY"""
 
 import time
-from typing import TYPE_CHECKING, Any, Callable, Dict, NamedTuple, Tuple
+from typing import TYPE_CHECKING, Any, Callable, NamedTuple, Optional, Tuple
 
 import jax
 import jax.numpy as jnp
 
 from lambda_hat import vi
+from lambda_hat.posterior import Posterior
 from lambda_hat.types import SamplerRunResult
 from lambda_hat.utils.rng import ensure_typed_key
 
 if TYPE_CHECKING:
     from lambda_hat.config import VIConfig
 
+Array = jnp.ndarray
+
 
 class VIState(NamedTuple):
     """Variational inference state"""
 
-    params: Any  # VI parameters (mixture of factor analyzers)
+    params: Array  # VI parameters (flat vectors for mixture of factor analyzers)
     opt_state: Any  # Optax optimizer state
     step: jnp.ndarray  # Current optimization step
 
@@ -32,29 +35,31 @@ class VIInfo(NamedTuple):
 
 
 def run_vi(
-    rng_key: jax.random.PRNGKey,
-    loss_batch_fn: Callable,  # mean loss on minibatch
-    loss_full_fn: Callable,  # mean loss on full dataset
-    initial_params: Dict[str, Any],  # ERM parameters (w*)
+    key: jax.random.PRNGKey,
+    posterior: Posterior,
     data: Tuple[jnp.ndarray, jnp.ndarray],
     config: "VIConfig",
     num_chains: int,
-    beta: float,
-    gamma: float,
+    grad_loss_minibatch: Callable[[Array, Tuple[Array, Array]], Array],  # FLAT gradient
+    loss_full_fn: Optional[Callable] = None,  # For Ln recording (takes model, not flat)
+    n_data: Optional[int] = None,
+    beta: Optional[float] = None,
+    gamma: Optional[float] = None,
 ) -> SamplerRunResult:
-    """Variational inference sampler using mixture of factor analyzers.
+    """Variational inference sampler - FLAT INTERFACE ONLY
 
     Implements STL (sticking-the-landing) pathwise gradients for continuous params
     and Rao-Blackwellized score gradients for mixture weights.
 
     Args:
-        rng_key: JRNG key
-        loss_batch_fn: Function computing mean loss on a minibatch
-        loss_full_fn: Function computing mean loss on full dataset
-        initial_params: ERM parameters (w*), center of local posterior
+        key: JRNG key
+        posterior: Posterior with flat-space interface
         data: Tuple of (X, Y)
         config: VIConfig with M, r, steps, batch_size, lr, etc.
         num_chains: Number of independent VI runs (for consistency checking)
+        grad_loss_minibatch: Gradient of minibatch loss in FLAT space
+        loss_full_fn: Optional function to compute loss for recording (takes model)
+        n_data: Number of data points
         beta: Inverse temperature (typically 1/log(n))
         gamma: Localizer strength
 
@@ -62,18 +67,24 @@ def run_vi(
         SamplerRunResult with traces, timings, and work tracking
     """
     X, Y = data
-    n_data = X.shape[0]
-    ref_dtype = jax.tree_util.tree_leaves(initial_params)[0].dtype
+    if n_data is None:
+        n_data = X.shape[0]
+    if beta is None or gamma is None:
+        raise ValueError("beta and gamma must be provided for VI")
+
+    dtype = posterior.vm.dtype
 
     # Start timer
     total_start_time = time.time()
 
     # Normalize PRNG key to typed threefry format (host-side, before any vmap/jit)
     # Required for FlowJAX compatibility - converts legacy uint32[2] keys and ints
-    rng_key = ensure_typed_key(rng_key)
+    key = ensure_typed_key(key)
 
-    # Flatten initial parameters
-    params_flat, unravel_fn = jax.flatten_util.ravel_pytree(initial_params)
+    # Get flat initial parameters from posterior
+    params_flat = posterior.flat0
+    # Use VectorisedModel's to_model for unraveling
+    unravel_fn = posterior.vm.to_model
 
     # === Whitening Pre-Pass (Stage 1) ===
     # Compute diagonal preconditioner A_diag based on whitening_mode
@@ -85,29 +96,18 @@ def run_vi(
         n_whitening_samples = min(1000, max(500, config.steps // 10))
 
         # Initialize EMA state for gradient moments
-        key, key_whitening = jax.random.split(rng_key)
+        key, key_whitening = jax.random.split(key)
         v_diag = jnp.ones_like(params_flat)  # Second moment (RMSProp/Adam)
         m_diag = jnp.zeros_like(params_flat) if config.whitening_mode == "adam" else None
 
-        # Gradient function at w* (compute loss gradient only, no localization)
-        def compute_grad_at_wstar(minibatch):
-            params_unravel = unravel_fn(params_flat)
-            Xb, Yb = minibatch
-            grad_loss = jax.grad(lambda p: loss_batch_fn(p, Xb, Yb))(params_unravel)
-            grad_flat, _ = jax.flatten_util.ravel_pytree(grad_loss)
-            return grad_flat
-
-        # Accumulate gradient moments
+        # Accumulate gradient moments using flat gradient
         for _ in range(n_whitening_samples):
             key_whitening, key_batch = jax.random.split(key_whitening)
             indices = jax.random.choice(key_batch, n_data, shape=(config.batch_size,), replace=True)
-            minibatch = (X[indices], Y[indices])
+            minibatch = (X[indices].astype(dtype), Y[indices].astype(dtype))
 
-            # Cast minibatch to required dtype
-            minibatch = jax.tree.map(lambda x: x.astype(ref_dtype), minibatch)
-
-            # Compute gradient at w*
-            grad_flat = compute_grad_at_wstar(minibatch)
+            # Compute FLAT gradient at w*
+            grad_flat = grad_loss_minibatch(params_flat, minibatch)
 
             # Update moments with EMA
             decay = config.whitening_decay
@@ -123,8 +123,29 @@ def run_vi(
     # Create whitener (identity if A_diag is None, diagonal otherwise)
     whitener = vi.make_whitener(A_diag)
 
+    # Create loss functions for VI algorithms (they expect model-space functions)
+    # NOTE: VI algorithms are not fully refactored yet - they expect functions that take models
+    # We create wrappers that convert flat -> model internally
+    def loss_batch_fn_wrapped(model, Xb, Yb):
+        # This is only used if loss_full_fn is provided for Ln recording
+        if loss_full_fn is not None:
+            return loss_full_fn(model)
+        else:
+            # Fallback: compute from minibatch (not ideal but works)
+            # VI algorithms use this for ELBO computation
+            # We'd need to compute loss from model - but grad_loss_minibatch
+            # doesn't give us the loss value
+            # For now, raise an error - VI requires loss_full_fn
+            raise NotImplementedError("VI requires loss_full_fn to be provided")
+
+    def loss_full_fn_wrapped(model):
+        if loss_full_fn is not None:
+            return loss_full_fn(model)
+        else:
+            raise NotImplementedError("VI requires loss_full_fn to be provided")
+
     # Run VI fitting and estimation for each chain
-    chain_keys = jax.random.split(rng_key, num_chains)
+    chain_keys = jax.random.split(key, num_chains)
 
     # Unified dispatch: all algorithms go through registry
     algo = vi.get(config.algo)
@@ -132,8 +153,8 @@ def run_vi(
     def run_one_chain(chain_key):
         result = algo.run(
             rng_key=chain_key,
-            loss_batch_fn=loss_batch_fn,
-            loss_full_fn=loss_full_fn,
+            loss_batch_fn=loss_batch_fn_wrapped,
+            loss_full_fn=loss_full_fn_wrapped,
             wstar_flat=params_flat,
             unravel_fn=unravel_fn,
             data=data,
@@ -153,8 +174,8 @@ def run_vi(
     # Run first chain separately to get timings and work dict
     first_result = algo.run(
         rng_key=chain_keys[0],
-        loss_batch_fn=loss_batch_fn,
-        loss_full_fn=loss_full_fn,
+        loss_batch_fn=loss_batch_fn_wrapped,
+        loss_full_fn=loss_full_fn_wrapped,
         wstar_flat=params_flat,
         unravel_fn=unravel_fn,
         data=data,
@@ -211,7 +232,7 @@ def run_vi(
             all_traces["elbo"], jnp.nan
         ),  # Placeholder - NaN to fail fast if used incorrectly (VI doesn't sample Ln)
         "cumulative_fge": all_traces["cumulative_fge"],
-        "acceptance_rate": jnp.ones_like(all_traces["elbo"], dtype=ref_dtype),
+        "acceptance_rate": jnp.ones_like(all_traces["elbo"], dtype=dtype),
         "energy": all_traces["elbo"],  # ELBO serves as "energy"
         "elbo": all_traces["elbo"],  # VI-specific ELBO trace (total objective)
         "is_divergent": jnp.zeros_like(all_traces["elbo"], dtype=bool),

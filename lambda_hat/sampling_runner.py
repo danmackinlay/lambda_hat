@@ -140,6 +140,9 @@ def run_sampler(
             num_chains=cfg.sampler.chains,
             grad_loss_minibatch=grad_loss_minibatch_flat,
             loss_full_fn=loss_full,
+            n_data=n_data,
+            beta=beta,
+            gamma=gamma,
         )
 
     else:
