@@ -36,13 +36,13 @@ samplers:
 
 ```bash
 # Local execution (testing)
-uv run python workflows/parsl_llc.py --local
+uv run lambda-hat workflow llc --local
 
 # SLURM cluster (production)
-uv run python workflows/parsl_llc.py --parsl-config parsl_config_slurm.py
+uv run lambda-hat workflow llc --parsl-card config/parsl/slurm/gpu-a100.yaml
 
 # With promotion (galleries)
-uv run python workflows/parsl_llc.py --local --promote
+uv run lambda-hat workflow llc --local --promote
 ```
 
 Parsl automatically:
@@ -206,7 +206,7 @@ samplers:
   - { name: vi, overrides: { steps: 100 } }  # Fast VI for testing
 ```
 
-Run locally: `uv run python workflows/parsl_llc.py --local`
+Run locally: `uv run lambda-hat workflow llc --local`
 
 Once validated, scale up to full sweep on cluster.
 
@@ -313,7 +313,7 @@ targets:
 1. Check logs: `logs/run_sampler/*.err`
 2. Identify failed configs from missing `analysis.json`
 3. Create new `config/retry.yaml` with only failed configs
-4. Rerun: `uv run python workflows/parsl_llc.py --config config/retry.yaml --local`
+4. Rerun: `uv run lambda-hat workflow llc --config config/retry.yaml --local`
 
 **Problem**: Results are missing metrics
 

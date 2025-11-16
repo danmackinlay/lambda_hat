@@ -36,13 +36,13 @@ Then run the full pipeline:
 
 ```bash
 # Execute locally (testing)
-uv run parsl-llc --local
+uv run lambda-hat workflow llc --local
 
 # Execute on SLURM cluster
-uv run parsl-llc --parsl-config parsl_config_slurm.py
+uv run lambda-hat workflow llc --parsl-card config/parsl/slurm/gpu-a100.yaml
 
 # With optional promotion (gallery generation)
-uv run parsl-llc --local --promote
+uv run lambda-hat workflow llc --local --promote
 ```
 
 See [Parallel Execution Guide](./parallelism.md) for detailed execution instructions.
@@ -280,7 +280,7 @@ optuna:
 
 **CLI overrides** available:
 ```bash
-uv run parsl-optuna \
+uv run lambda-hat workflow optuna \
     --config config/my_optuna.yaml \
     --max-trials 50 \
     --batch-size 8 \
@@ -292,13 +292,13 @@ uv run parsl-optuna \
 
 ```bash
 # Local testing
-uv run parsl-optuna --config config/optuna_demo.yaml --local
+uv run lambda-hat workflow optuna --config config/optuna_demo.yaml --local
 
 # SLURM cluster
-uv run parsl-optuna --config config/optuna_demo.yaml
+uv run lambda-hat workflow optuna --config config/optuna_demo.yaml
 
 # Custom settings
-uv run parsl-optuna \
+uv run lambda-hat workflow optuna \
     --config config/my_optuna.yaml \
     --max-trials 100 \
     --batch-size 16

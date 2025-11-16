@@ -27,10 +27,10 @@ Run the workflow locally using ThreadPoolExecutor:
 
 ```bash
 # Run locally (uses up to 8 CPU cores by default)
-uv run python workflows/parsl_llc.py --local
+uv run lambda-hat workflow llc --local
 
 # With promotion enabled
-uv run python workflows/parsl_llc.py --local --promote
+uv run lambda-hat workflow llc --local --promote
 ```
 
 ### Controlling Parallelism
@@ -85,10 +85,10 @@ Run the workflow on a SLURM cluster:
 
 ```bash
 # Submit workflow to SLURM
-uv run python workflows/parsl_llc.py --parsl-config parsl_config_slurm.py
+uv run lambda-hat workflow llc --parsl-card config/parsl/slurm/gpu-a100.yaml
 
 # With promotion
-uv run python workflows/parsl_llc.py --parsl-config parsl_config_slurm.py --promote
+uv run lambda-hat workflow llc --parsl-card config/parsl/slurm/gpu-a100.yaml --promote
 ```
 
 **How it works:**
