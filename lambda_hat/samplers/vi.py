@@ -11,11 +11,38 @@ from lambda_hat import vi
 from lambda_hat.posterior import Posterior
 from lambda_hat.types import SamplerRunResult
 from lambda_hat.utils.rng import ensure_typed_key
+from lambda_hat.vi.types import Batch, FlatObjective
 
 if TYPE_CHECKING:
     from lambda_hat.config import VIConfig
 
 Array = jnp.ndarray
+
+
+class _FlatObjective:
+    """Adapter implementing FlatObjective protocol.
+
+    Wraps flat loss and gradient functions with optional value_and_grad.
+    """
+
+    def __init__(
+        self,
+        loss_fn: Callable[[Array, Batch], Array],
+        grad_fn: Callable[[Array, Batch], Array],
+    ):
+        self._loss_fn = loss_fn
+        self._grad_fn = grad_fn
+        # Create value_and_grad via JAX (single-pass computation)
+        self._vag = jax.value_and_grad(loss_fn)
+
+    def loss(self, w_flat: Array, batch: Batch) -> Array:
+        return self._loss_fn(w_flat, batch)
+
+    def grad(self, w_flat: Array, batch: Batch) -> Array:
+        return self._grad_fn(w_flat, batch)
+
+    def value_and_grad(self, w_flat: Array, batch: Batch) -> Tuple[Array, Array]:
+        return self._vag(w_flat, batch)
 
 
 class VIState(NamedTuple):
@@ -40,8 +67,13 @@ def run_vi(
     data: Tuple[jnp.ndarray, jnp.ndarray],
     config: "VIConfig",
     num_chains: int,
+    loss_minibatch_flat: Callable[
+        [Array, Tuple[Array, Array]], Array
+    ],  # NEW: scalar value in flat space
     grad_loss_minibatch: Callable[[Array, Tuple[Array, Array]], Array],  # FLAT gradient
-    loss_full_fn: Optional[Callable] = None,  # For Ln recording (takes model, not flat)
+    loss_full_flat: Callable[
+        [Array], Array
+    ],  # NEW: scalar full-data loss in flat space (for Ln_wstar, Eq[L_n])
     n_data: Optional[int] = None,
     beta: Optional[float] = None,
     gamma: Optional[float] = None,
@@ -57,8 +89,9 @@ def run_vi(
         data: Tuple of (X, Y)
         config: VIConfig with M, r, steps, batch_size, lr, etc.
         num_chains: Number of independent VI runs (for consistency checking)
+        loss_minibatch_flat: Minibatch loss VALUE in FLAT space
         grad_loss_minibatch: Gradient of minibatch loss in FLAT space
-        loss_full_fn: Optional function to compute loss for recording (takes model)
+        loss_full_flat: Full-data loss VALUE in FLAT space (for Ln_wstar, Eq[L_n])
         n_data: Number of data points
         beta: Inverse temperature (typically 1/log(n))
         gamma: Localizer strength
@@ -83,8 +116,6 @@ def run_vi(
 
     # Get flat initial parameters from posterior
     params_flat = posterior.flat0
-    # Use VectorisedModel's to_model for unraveling
-    unravel_fn = posterior.vm.to_model
 
     # === Whitening Pre-Pass (Stage 1) ===
     # Compute diagonal preconditioner A_diag based on whitening_mode
@@ -123,26 +154,11 @@ def run_vi(
     # Create whitener (identity if A_diag is None, diagonal otherwise)
     whitener = vi.make_whitener(A_diag)
 
-    # Create loss functions for VI algorithms (they expect model-space functions)
-    # NOTE: VI algorithms are not fully refactored yet - they expect functions that take models
-    # We create wrappers that convert flat -> model internally
-    def loss_batch_fn_wrapped(model, Xb, Yb):
-        # This is only used if loss_full_fn is provided for Ln recording
-        if loss_full_fn is not None:
-            return loss_full_fn(model)
-        else:
-            # Fallback: compute from minibatch (not ideal but works)
-            # VI algorithms use this for ELBO computation
-            # We'd need to compute loss from model - but grad_loss_minibatch
-            # doesn't give us the loss value
-            # For now, raise an error - VI requires loss_full_fn
-            raise NotImplementedError("VI requires loss_full_fn to be provided")
+    # Build flat objective for VI algorithms (flat-only interface)
+    objective = _FlatObjective(loss_minibatch_flat, grad_loss_minibatch)
 
-    def loss_full_fn_wrapped(model):
-        if loss_full_fn is not None:
-            return loss_full_fn(model)
-        else:
-            raise NotImplementedError("VI requires loss_full_fn to be provided")
+    # Compute Ln_wstar once at sampler level (algorithms no longer need full-loss callable)
+    Ln_wstar = loss_full_flat(params_flat)
 
     # Run VI fitting and estimation for each chain
     chain_keys = jax.random.split(key, num_chains)

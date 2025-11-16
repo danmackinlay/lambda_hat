@@ -97,6 +97,28 @@ def make_posterior(
     return Posterior(vm=vm, logpost_flat=_lp, grad_logpost_flat=_grad, flat0=flat0)
 
 
+def make_loss_minibatch_flat(
+    vm: VectorisedModel, loss_minibatch: Callable[[Any, Array, Array], Array]
+) -> Callable[[Array, Tuple[Array, Array]], Array]:
+    """Create minibatch loss VALUE function in flat space.
+
+    Args:
+        vm: VectorisedModel
+        loss_minibatch: Minibatch loss function (model, Xb, Yb) -> scalar
+
+    Returns:
+        Function (flat, (Xb, Yb)) -> scalar loss
+    """
+
+    @jax.jit
+    def _loss_fn(flat: Array, minibatch: Tuple[Array, Array]) -> Array:
+        Xb, Yb = minibatch
+        model = vm.to_model(flat)
+        return loss_minibatch(model, Xb, Yb)
+
+    return _loss_fn
+
+
 def make_grad_loss_minibatch_flat(
     vm: VectorisedModel, loss_minibatch: Callable[[Any, Array, Array], Array]
 ) -> Callable[[Array, Tuple[Array, Array]], Array]:
@@ -121,3 +143,24 @@ def make_grad_loss_minibatch_flat(
         return eqx.filter_grad(_loss_fn)(flat)
 
     return _grad_fn
+
+
+def make_loss_full_flat(
+    vm: VectorisedModel, loss_full: Callable[[Any], Array]
+) -> Callable[[Array], Array]:
+    """Create full-data loss VALUE function in flat space.
+
+    Args:
+        vm: VectorisedModel
+        loss_full: Full-data loss function (model) -> scalar
+
+    Returns:
+        Function (flat) -> scalar loss
+    """
+
+    @jax.jit
+    def _loss_fn(flat: Array) -> Array:
+        model = vm.to_model(flat)
+        return loss_full(model)
+
+    return _loss_fn

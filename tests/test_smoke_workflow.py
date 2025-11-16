@@ -54,7 +54,9 @@ def test_smoke_workflow_all_samplers(tmp_path):
     output = result.stdout + result.stderr
 
     # Basic success assertion
-    assert result.returncode == 0, f"Workflow failed with return code {result.returncode}:\n{output}"
+    assert result.returncode == 0, (
+        f"Workflow failed with return code {result.returncode}:\n{output}"
+    )
 
     # Verify all 4 samplers were submitted/ran
     # (workflow output includes "Submitting <sampler> for <target>")
