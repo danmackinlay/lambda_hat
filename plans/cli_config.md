@@ -4,7 +4,7 @@ Yes — there *are* well-known design patterns for config + CLI management that 
 
 ## A) Standard patterns in config/CLI management
 
-Here are key patterns relevant to your workflow (sweeps, optuna loops, reproducible artefacts etc.):
+Here are key patterns relevant to your workflow (sweeps, optuna loops, reproducible artifacts etc.):
 
 1. **Hierarchical config with merge & override**
 

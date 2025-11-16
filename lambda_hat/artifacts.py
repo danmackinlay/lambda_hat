@@ -96,7 +96,7 @@ class Paths:
     @staticmethod
     def from_env() -> "Paths":
         """Create Paths from environment variables."""
-        home = Path(os.environ.get("LAMBDA_HAT_HOME", Path.cwd() / ".artefacts")).resolve()
+        home = Path(os.environ.get("LAMBDA_HAT_HOME", Path.cwd() / "artifacts")).resolve()
         return Paths(
             home=home,
             store=Path(os.environ.get("LAMBDA_HAT_STORE", home / "store")).resolve(),

@@ -25,7 +25,7 @@ uv sync --extra flowvi     # Add FlowJAX for flow-based VI (optional)
 # All commands via unified 'lambda-hat' CLI
 uv run lambda-hat build --config-yaml config/experiments.yaml --target-id tgt_abc123
 uv run lambda-hat sample --config-yaml config/experiments.yaml --target-id tgt_abc123
-uv run lambda-hat promote gallery --runs-root artefacts/experiments/dev/runs --samplers sgld,hmc
+uv run lambda-hat promote gallery --runs-root artifacts/experiments/dev/runs --samplers sgld,hmc
 uv run lambda-hat artifacts gc      # garbage collect old artifacts
 uv run lambda-hat artifacts ls      # list experiments and runs
 uv run lambda-hat --help            # see all commands
@@ -72,9 +72,9 @@ uv run ruff check --fix
 
 ## Artifacts
 
-* Default artifact home: `artefacts/` (configurable via `LAMBDA_HAT_HOME`).
-* Store: `artefacts/store/` (content-addressed immutable objects).
-* Experiments: `artefacts/experiments/{experiment}/runs/`.
+* Default artifact home: `artifacts/` (configurable via `LAMBDA_HAT_HOME`).
+* Store: `artifacts/store/` (content-addressed immutable objects).
+* Experiments: `artifacts/experiments/{experiment}/runs/`.
 * See `docs/output_management.md` for complete layout details.
 
 ## Don't

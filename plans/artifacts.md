@@ -6,7 +6,6 @@ Got it. Below is a concrete, HPC‑friendly plan (with drop‑in code you can pa
 * **Adds first‑class TensorBoard logging** (per run, aggregated per experiment).
 * **Enables simple, safe cleanup (GC)** of unreachable objects and stale run/scratch files.
 * **Uses `direnv`** for sane defaults, but still lets CLI overrides do their thing.
-* **Avoids any `llc` naming**; uses `lambda_hat` consistently.
 
 ---
 
