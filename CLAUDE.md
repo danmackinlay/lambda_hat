@@ -3,8 +3,8 @@ Minimal rules for this repo. Deviations break CI.
 ## Versions (hard pins)
 - **Python ≥ 3.11**
 - **JAX ≥ 0.7.1** (use `jax.tree.map`, `jax.lax.scan`, etc.)
-- **BlackJAX == 1.2.5** (don’t import newer APIs)
-- Use **uv** for everything; use **Snakemake** for workflows.
+- **BlackJAX == 1.2.5** (don't import newer APIs)
+- Use **uv** for everything; use **Parsl** for workflows.
 
 ## Install
 
@@ -14,23 +14,34 @@ uv sync --extra cuda12     # CUDA 12 (Linux)
 uv sync --extra flowvi     # Add FlowJAX for flow-based VI (optional)
 ```
 
-## Run (always via uv)
+## Run (unified CLI)
 
 ```bash
-# Console scripts from pyproject.toml
-uv run lambda-hat-build-target --config-yaml config.yaml --target-id tgt_abc123
-uv run lambda-hat-sample       --config-yaml config.yaml --target-id tgt_abc123
-uv run lambda-hat-promote      --help
+# All commands via unified 'lambda-hat' CLI
+uv run lambda-hat build --config-yaml config.yaml --target-id tgt_abc123
+uv run lambda-hat sample --config-yaml config.yaml --target-id tgt_abc123
+uv run lambda-hat promote gallery --runs-root runs --samplers sgld,hmc
+uv run lambda-hat artifacts gc      # garbage collect old artifacts
+uv run lambda-hat artifacts ls      # list experiments and runs
+uv run lambda-hat --help            # see all commands
 ```
 
-## Workflow (Snakemake is canonical)
+## Workflow (Parsl is canonical)
 
-**Two-stage pipeline:** Stage A builds targets (neural networks + datasets), Stage B runs samplers (MCMC or variational). Snakemake orchestrates N targets × M samplers in parallel.
+**Three-stage pipeline:** Stage A builds targets (neural networks + datasets), Stage B runs samplers (MCMC or variational), Stage C promotes results (gallery + aggregation). Parsl orchestrates N targets × M samplers in parallel with Python-native DAGs.
 
 ```bash
-uv run snakemake -n                 # dry run
-uv run snakemake -j 4               # local
-uv run snakemake --profile slurm -j 100   # cluster
+# Local execution (testing)
+uv run lambda-hat workflow llc --local
+
+# SLURM cluster execution
+uv run lambda-hat workflow llc --parsl-card config/parsl/slurm/gpu-a100.yaml
+
+# With promotion (Stage C)
+uv run lambda-hat workflow llc --local --promote
+
+# Optuna hyperparameter optimization
+uv run lambda-hat workflow optuna --config config/optuna.yaml --study-name my_study
 ```
 
 ## Testing & Lint
@@ -45,7 +56,7 @@ uv run ruff check --fix
 
 * SGLD: `float32`; HMC/MCLMC: `float64`; VI: `float32` (configurable).
 * Precision is per-sampler via `sampler.<name>.dtype` config field.
-* Haiku call shape: `model.apply(params, None, X)`.
+* Equinox call shape: `model(X)` (model IS the params).
 * Use `jax.tree.map` (not deprecated `tree_map`), `jax.flatten_util.ravel_pytree`, `jax.random.split`.
 
 ## Config
@@ -55,10 +66,10 @@ uv run ruff check --fix
 
 ## Don't
 
-* Don't run entry points directly; always use `uv run` and prefer Snakemake for workflows.
+* Don't run entry points directly; always use `uv run` and prefer Parsl for workflows.
 * Don't bump BlackJAX/JAX without updating code paths.
 * Don't add back-compat shims; fail fast.
-* Don't use legacy Hydra CLI (removed); Snakemake + OmegaConf is the only supported workflow.
+* Don't use legacy Hydra CLI (removed); Parsl + OmegaConf is the only supported workflow.
 
 ## Samplers
 
@@ -70,6 +81,8 @@ uv run ruff check --fix
   - Flow: Normalizing flows via manifold-plus-noise construction (requires `--extra flowvi`)
     - RealNVP coupling flow (default), MAF, or NSF architectures
     - Low-rank latent space with orthogonal noise
+    - **KNOWN ISSUE**: Currently broken with Parsl workflows due to PRNG key format incompatibility in vmap context
+    - Works in unit tests (non-vmapped); see docs/flow_prng_issue.md for diagnosis
     - NOTE: HVP control variate deferred to future work
   - Work metrics: `n_full_loss` (MC samples for lambda), `n_minibatch_grads` (optimization steps), `sampler_flavour`
   - FGE tracking: `cumulative_fge = batch_size / n_data` per step (minibatch accounting)

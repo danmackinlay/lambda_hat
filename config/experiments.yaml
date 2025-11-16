@@ -1,10 +1,28 @@
-store_root: "runs"
-jax_enable_x64: true
+# Lambda-Hat Experiments Configuration
+#
+# This file defines the N × M experiment grid:
+#   targets:  Neural network configurations (model + data + teacher + seed)
+#   samplers: MCMC/VI algorithms and their hyperparameters
+#
+# The Parsl workflow automatically creates N targets × M samplers jobs.
+#
+# Execution:
+#   Local testing:  uv run parsl-llc --local
+#   SLURM cluster:  uv run parsl-llc --parsl-config parsl_config_slurm.py
+#
+# See docs/configuration.md for detailed parameter documentation.
+# See docs/sweeps.md for sweep design patterns and examples.
+
+experiment: "dev"         # Experiment name (can be overridden by CLI --experiment)
+store_root: "runs"        # Output directory for all artifacts (legacy, prefer new artifact system)
+jax_enable_x64: true      # Use float64 (recommended for HMC/MCLMC)
 
 targets:
+  # Each target = unique (model, data, teacher, seed) combination
+  # Creates a content-addressed target ID: tgt_<hash>
   - { model: small, data: small, teacher: _null, seed: 42 }
   - { model: base,  data: base,  teacher: _null, seed: 43,
-      overrides: { training: { steps: 10000 } } }
+      overrides: { training: { steps: 10000 } } }  # Override default training steps
 
 samplers:
   - { name: hmc }

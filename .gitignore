@@ -11,19 +11,11 @@ wheels/
 .claude/
 .idea/
 
-# Slurm cruft
-slurm_logs/
-
-
-# Snakemake
-.snakemake/
-logs/
-temp_config/
 
 # Virtual environments
 .venv
 
-# Visualization outputs
+# run outputs (legacy)
 runs/*
 !runs/.keep
 *.png
@@ -31,6 +23,14 @@ runs/*
 *.jpeg
 *.pdf
 todo*.md
+results/
+temp_*
+test_*
+parsl_runinfo/
+logs/
+
+# New artifact storage
+artefacts/
 
 # Exception: tracked README example images
 !assets/readme/*.png

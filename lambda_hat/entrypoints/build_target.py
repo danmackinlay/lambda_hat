@@ -7,10 +7,11 @@ import jax
 from omegaconf import OmegaConf
 
 from lambda_hat import omegaconf_support  # noqa: F401
+from lambda_hat.artifacts import ArtifactStore, Paths, RunContext, safe_symlink
+from lambda_hat.nn_eqx import count_params
 from lambda_hat.target_artifacts import (
     TargetMeta,
-    _flatten_params_dict,
-    _hash_arrays,
+    _hash_model,
     save_target_artifact_explicit,
 )
 from lambda_hat.targets import build_target
@@ -18,13 +19,13 @@ from lambda_hat.targets import build_target
 
 def _pkg_versions() -> Dict[str, str]:
     import blackjax
-    import haiku as hk
+    import equinox as eqx
     import jax
     import numpy as np
 
     return {
         "jax": getattr(jax, "__version__", "unknown"),
-        "haiku": getattr(hk, "__version__", "unknown"),
+        "equinox": getattr(eqx, "__version__", "unknown"),
         "blackjax": getattr(blackjax, "__version__", "unknown"),
         "numpy": getattr(np, "__version__", "unknown"),
     }
@@ -34,21 +35,39 @@ def main():
     ap = argparse.ArgumentParser("lambda-hat-build-target")
     ap.add_argument("--config-yaml", required=True, help="Path to composed YAML config")
     ap.add_argument("--target-id", required=True, help="Target ID string")
-    ap.add_argument("--target-dir", required=True, help="Directory where to write artifacts")
+    ap.add_argument(
+        "--experiment",
+        required=False,
+        help="Experiment name (defaults from config then env)",
+    )
     args = ap.parse_args()
 
     cfg = OmegaConf.load(args.config_yaml)
 
+    # Determine experiment name (CLI > config > env)
+    experiment = args.experiment or cfg.get("experiment", None)
+
+    # Initialize artifact system
+    paths = Paths.from_env()
+    paths.ensure()
+    store = ArtifactStore(paths.store)
+
+    # Create RunContext for this build
+    ctx = RunContext.create(
+        experiment=experiment, algo="build_target", paths=paths, tag=args.target_id
+    )
+    target_dir = ctx.scratch_dir / "target_payload"
+    target_dir.mkdir(parents=True, exist_ok=True)
+
     # Fail-fast validation
     assert "target" in cfg and "seed" in cfg.target, "cfg.target.seed missing"
     assert "jax" in cfg and "enable_x64" in cfg.jax, "cfg.jax.enable_x64 missing"
-    assert "store" in cfg and "root" in cfg.store, "cfg.store.root missing"
 
     jax.config.update("jax_enable_x64", bool(cfg.jax.enable_x64))
 
     print("=== LLC: Build Target ===")
     print(f"Target ID: {args.target_id}")
-    print(f"Target Dir: {args.target_dir}")
+    print(f"Target Dir: {target_dir}")
     print(OmegaConf.to_yaml(cfg, resolve=True))
 
     # RNG
@@ -68,13 +87,12 @@ def main():
     if used_teacher_widths is not None:
         print(f"teacher.widths={used_teacher_widths}")
 
-    # Metadata & hashing
-    flat = _flatten_params_dict(theta)
-    theta_hash = _hash_arrays(flat)
+    # Metadata & hashing (Equinox)
+    theta_hash = _hash_model(theta)
     dims = {
         "n": int(X.shape[0]),
         "d": int(X.shape[1]),
-        "p": sum(v.size for v in flat.values()),
+        "p": count_params(theta),
     }
 
     # Create model_cfg with resolved widths injected
@@ -116,10 +134,46 @@ def main():
         hostname=cfg.runtime.hostname,
     )
 
-    # Write exactly where Snakemake told us
-    save_target_artifact_explicit(args.target_dir, X, Y, theta, meta)
-    print(f"[build-target] wrote {args.target_dir}")
+    save_target_artifact_explicit(target_dir, X, Y, theta, meta)
+    print(f"[build-target] wrote {target_dir}")
     print(f"[build-target] L0 = {L0:.6f}")
+
+    # Commit to artifact store
+    urn = store.put_dir(
+        target_dir,
+        a_type="target",
+        meta={
+            "target_id": args.target_id,
+            "seed": int(cfg.target.seed),
+            "model_cfg": model_cfg,
+            "data_cfg": OmegaConf.to_container(cfg.data, resolve=True),
+            "training_cfg": OmegaConf.to_container(cfg.training, resolve=True),
+            "teacher_cfg": teacher_cfg,
+        },
+    )
+
+    # Create symlinks in experiment
+    target_short_id = urn.split(":")[-1][:12]
+    safe_symlink(
+        store.path_for(urn) / "payload",
+        paths.experiments / ctx.experiment / "targets" / target_short_id,
+    )
+    safe_symlink(
+        paths.experiments / ctx.experiment / "targets" / target_short_id,
+        ctx.inputs_dir / "target",
+    )
+
+    # Write run manifest
+    ctx.write_run_manifest(
+        {
+            "phase": "build_target",
+            "outputs": [{"urn": urn, "role": "target"}],
+            "target_id": args.target_id,
+        }
+    )
+
+    print(f"[build-target] committed to store: {urn}")
+    print(f"[build-target] experiment: {ctx.experiment}, run: {ctx.run_id}")
 
 
 if __name__ == "__main__":

@@ -13,7 +13,7 @@ if TYPE_CHECKING:
 
 from lambda_hat.config import validate_teacher_cfg
 
-from .models import build_mlp_forward_fn, infer_widths
+from .nn_eqx import build_mlp, infer_widths
 
 
 def sample_X(key, cfg: "Config", n: int, in_dim: int):
@@ -82,24 +82,23 @@ def build_teacher(key, cfg: Config):
             t_widths = infer_widths(t_in, t_out, m_cfg.depth, m_cfg.target_params, m_cfg.hidden)
         t_act = m_cfg.activation
 
-    # Build Haiku model
-    model = build_mlp_forward_fn(
+    # Build Equinox model
+    model = build_mlp(
         in_dim=t_in,
         widths=t_widths,
         out_dim=t_out,
         activation=t_act,
         bias=True,
-        init=m_cfg.init,
         layernorm=False,
+        key=key,
     )
 
-    # Initialize parameters
-    dummy_x = jnp.ones((1, t_in))
-    params = model.init(key, dummy_x)
+    # For Equinox, model IS the params
+    params = model
 
     def forward(X):
-        # Haiku's apply requires an RNG as the 2nd arg; pass None when not needed.
-        return model.apply(params, None, X)
+        # Equinox models are called directly
+        return model(X)
 
     return params, forward
 

@@ -43,13 +43,14 @@ try:
     import flowjax.flows as fjx_flows
 
     # FlowJAX 17.2.1 requires new-style typed JAX PRNG keys
-    jax.config.update("jax_default_prng_impl", "rbg")
-
+    # PRNG implementation is set globally in lambda_hat/__init__.py to threefry2x32
     _FLOWJAX_AVAILABLE = True
 except ImportError as e:
     _IMPORT_ERROR = e
-    # Create placeholder objects for type checking
-    eqx = None  # type: ignore
+    # Create placeholder objects for type checking and class inheritance
+    from types import SimpleNamespace
+
+    eqx = SimpleNamespace(Module=object)  # type: ignore
     fjx_bij = None  # type: ignore
     fjx_dist = None  # type: ignore
     fjx_flows = None  # type: ignore
@@ -288,9 +289,8 @@ def build_flow_elbo_step(
                 perp_component = 0.0
 
             # Lift to parameter space: w = w* + D^{-1/2}(U@z + E_perp@eps)
-            w_flat = (
-                lift_consts["wstar"] +
-                lift_consts["D_inv_sqrt"] * (lift_consts["U"] @ z + perp_component)
+            w_flat = lift_consts["wstar"] + lift_consts["D_inv_sqrt"] * (
+                lift_consts["U"] @ z + perp_component
             )
 
             # Log-determinant of block-triangular Jacobian
@@ -329,7 +329,7 @@ def build_flow_elbo_step(
         new_flow_params = optax.apply_updates(flow_params, updates)
 
         # Metrics
-        work_fge = jnp.asarray(batch_size / float(n_data), dtype=jnp.float64)
+        work_fge = jnp.asarray(batch_size / n_data, dtype=jnp.float64)
         metrics = {
             "elbo": -loss_val,  # Positive ELBO for logging
             "grad_norm": grad_norm,
@@ -458,14 +458,8 @@ class _FlowAlgorithm:
                 "Flow VI requires flowjax and equinox. Install with: uv sync --extra flowvi"
             ) from _IMPORT_ERROR
 
-        # Convert legacy PRNGKey to new RBG key format if needed
-        # (rng_key may come from jax.random.PRNGKey which has shape (2,), but RBG needs (4,))
-        if hasattr(rng_key, "shape") and rng_key.shape == (2,):
-            # Legacy key - extract seed and create RBG key
-            # JAX legacy keys are uint32[2], first element is the seed
-            seed = int(rng_key[0])
-            rng_key = jax.random.key(seed)
-
+        # rng_key is already normalized to typed threefry format by run_vi()
+        # No key conversion here - would cause ConcretizationTypeError under vmap
         key_init, key_train, key_eval = jax.random.split(rng_key, 3)
 
         d = wstar_flat.size
@@ -480,7 +474,9 @@ class _FlowAlgorithm:
 
         # Extract D_inv_sqrt from whitener (provided by run_vi's pre-pass)
         # If whitener is None, A_inv_sqrt will fail fast (no fallback)
-        D_inv_sqrt = whitener.A_inv_sqrt.astype(dtype) if whitener is not None else jnp.ones(d, dtype=dtype)
+        D_inv_sqrt = (
+            whitener.A_inv_sqrt.astype(dtype) if whitener is not None else jnp.ones(d, dtype=dtype)
+        )
 
         # Initialize InjectiveLift
         dist = init_injective_lift(
@@ -603,17 +599,36 @@ class _FlowAlgorithm:
 
         # cumulative_fge is already in traces from scan loop (proper minibatch accounting)
 
-        # Extras
+        # Extras - unify with MFA structure (vmap-safe: arrays/scalars only, no modules)
+        E_L = jnp.asarray(eval_extras["E_L"])
+        L0 = jnp.asarray(eval_extras["L0"])
+        L_std = jnp.asarray(eval_extras["L_std"])
+        logq_mean = jnp.asarray(eval_extras["logq_mean"])
+        logq_std = jnp.asarray(eval_extras["logq_std"])
+
         extras = {
-            **eval_extras,
-            "final_dist": dist_final,  # Save trained distribution
+            # MFA-compatible naming
+            "Eq_Ln": E_L,  # Expected loss under q (scalar per chain)
+            "Ln_wstar": L0,  # Loss at w* (scalar per chain)
+            "cv_info": {
+                "Eq_Ln_mc": E_L,  # Flow has no HVP control variate yet
+                "Eq_Ln_cv": E_L,
+                "variance_reduction": jnp.asarray(1.0, dtype=E_L.dtype),
+            },
+            # Flow-specific diagnostics (arrays only, no FlowJAX modules)
+            "diag": {
+                "L_std": L_std,
+                "logq_mean": logq_mean,
+                "logq_std": logq_std,
+            },
         }
 
-        # Timings
+        # Timings (match MFA format expected by sampling.py)
+        total_time = train_time + eval_time
         timings = {
-            "train": train_time,
-            "eval": eval_time,
-            "total": train_time + eval_time,
+            "adaptation": 0.0,  # Flow doesn't have separate adaptation phase
+            "sampling": total_time,
+            "total": total_time,
         }
 
         # Work metrics (harmonized with MFA structure)
@@ -624,7 +639,7 @@ class _FlowAlgorithm:
         }
 
         return {
-            "lambda_hat": float(lambda_hat),
+            "lambda_hat": lambda_hat,  # Keep as JAX array (vmap-compatible)
             "traces": traces,
             "extras": extras,
             "timings": timings,
@@ -637,7 +652,8 @@ def make_flow_algo() -> _FlowAlgorithm:
     return _FlowAlgorithm()
 
 
-# Register the algorithm
-from lambda_hat.vi import registry  # noqa: E402
+# Register the algorithm only if flowjax is available
+if _FLOWJAX_AVAILABLE:
+    from lambda_hat.vi import registry  # noqa: E402
 
-registry.register("flow", make_flow_algo)
+    registry.register("flow", make_flow_algo)

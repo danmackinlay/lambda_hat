@@ -1,0 +1,31 @@
+# Optuna hyperparameter optimization demo config
+#
+# This config defines problems for Optuna to optimize hyperparameters against.
+# Each problem gets an HMC reference, then methods are optimized to match it.
+
+# Problem specifications (similar to targets in experiments.yaml)
+problems:
+  # Small test problem for quick iteration
+  - model: small          # Model config from lambda_hat/conf/model/small.yaml
+    data: base            # Data config from lambda_hat/conf/data/base.yaml
+    teacher: _null        # No teacher (null synthetic)
+    seed: 42
+
+  # Additional problems can be added here for multi-problem optimization
+  # - model: base
+  #   data: base
+  #   teacher: _null
+  #   seed: 43
+
+# Methods to optimize (currently supports: sgld, vi, mclmc)
+methods:
+  - vi                    # Start with VI only for testing
+  # - sgld                # Uncomment to add SGLD
+  # - mclmc               # Uncomment to add MCLMC
+
+# Optuna configuration (optional, can override via CLI)
+optuna:
+  max_trials: 50          # Max trials per (problem, method) - reduced for demo
+  batch_size: 8           # Concurrent trials - reduced for local testing
+  hmc_budget_sec: 3600    # 1 hour for HMC reference (reduced for demo)
+  method_budget_sec: 600  # 10 minutes per trial (reduced for demo)

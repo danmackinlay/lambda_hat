@@ -34,7 +34,8 @@ This repo provides benchmark estimators of LLC on small but non-trivial neural n
 * [OmegaConf](https://omegaconf.readthedocs.io/) for configuration management
 * [Haiku](https://github.com/haiku/haiku) for neural network definitions
 
-**Supported samplers**: HMC, MCLMC, SGLD, VI (variational inference).
+**Supported samplers**: HMC, MCLMC, SGLD, VI (variational inference with MFA or Flow algorithms).
+**Note**: Flow VI requires `uv sync --extra flowvi` but is currently broken with Parsl workflows (see docs/flow_prng_issue.md).
 
 We target networks with dimension up to about $10^5$ which means we can ground-truth against classic samplers like HMC (which we expect to become non-viable in higher dimension or dataset size).
 In this regime we can relu upon classic MCMC to tell us the “true” LLC rather than relying on analytic results for approximate networks such as Deep Linear Networks.
@@ -58,7 +59,7 @@ pip install .[cuda12]    # For CUDA 12 (Linux)
 
 ## Entrypoints
 
-Lambda-Hat provides three command-line tools that implement the two-stage workflow. Snakemake orchestrates these automatically, but they can also be invoked directly for debugging or custom workflows.
+Lambda-Hat provides three command-line tools that implement the two-stage workflow. Parsl orchestrates these automatically, but they can also be invoked directly for debugging or custom workflows.
 
 ### `lambda-hat-build-target` (Stage A)
 
@@ -123,60 +124,85 @@ uv run lambda-hat-promote single \
   --plot-name running_llc.png
 ```
 
-These are orchestrated together with the required simulations by snakemake
-
-```bash
-uv run snakemake -j 1 promote
-```
+These can be orchestrated automatically by adding the `--promote` flag to the Parsl workflow (see Orchestration section below).
 
 
 ---
 
 ## Orchestration
 
-We use **Snakemake** for the full pipeline.
-OmegaConf parses our YAML configs.
+We use **Parsl** for the full pipeline. Parsl provides Python-native DAG execution with better support for dynamic parameter sweeps and HPC cluster integration.
 
 ### Quickstart
 
 ```bash
-# Preview the DAG and outputs
-uv run snakemake -n
+# Run locally (uses ThreadPoolExecutor)
+uv run parsl-llc --local
 
-# Run locally (4 cores)
-uv run snakemake -j 4
+# Run locally with promotion (generates galleries)
+uv run parsl-llc --local --promote
 ```
 
 ### Editing experiments
 
 * Edit `config/experiments.yaml` to add/remove targets and samplers.
-* Snakemake computes IDs and directories; scripts do **not** invent paths.
+* Parsl computes IDs and directories using the same logic; scripts do **not** invent paths.
 
-### Forcing & targeting
+### Promotion (opt-in)
 
-```bash
-# Force re-run a rule and everything downstream
-uv run snakemake --forcerun run_sampler -j 8
-
-# Run a specific output
-uv run snakemake runs/targets/tgt_abcdef123456/run_hmc_12ab34cd/analysis.json
-```
-
-### HPC
-
-Use your Snakemake profile:
+Promotion generates asset galleries from sampling runs. It's opt-in via the `--promote` flag:
 
 ```bash
-uv run snakemake --profile slurm -j 100
+# Run workflow with promotion
+uv run parsl-llc --local --promote
+
+# Specify which plots to promote
+uv run parsl-llc --local --promote \
+    --promote-plots trace.png,llc_convergence_combined.png
 ```
 
-(Adjust HPC section to your environment if you keep a profile.)
-(Note we are not on the cluster right now so testing for this can be deferred).
+### HPC Execution
+
+For SLURM clusters, use the SLURM Parsl config:
+
+```bash
+# Run on SLURM cluster (auto-scales 0-50 jobs)
+uv run parsl-llc --parsl-config parsl_config_slurm.py
+
+# Customize Parsl config
+# Edit parsl_config_slurm.py to adjust partition, walltime, resources
+```
+
+### Hyperparameter Optimization
+
+**Optuna workflow** for automated hyperparameter tuning using Bayesian optimization:
+
+```bash
+# Optimize hyperparameters locally
+uv run parsl-optuna --config config/optuna_demo.yaml --local
+
+# Optimize on SLURM cluster
+uv run parsl-optuna --config config/optuna_demo.yaml
+```
+
+**How it works:**
+1. Computes HMC reference LLC for each problem (high-quality baseline)
+2. Optimizes method hyperparameters (SGLD/VI/MCLMC) to minimize `|LLC - LLC_ref|`
+3. Uses Optuna's TPE sampler for Bayesian search
+4. Results written to `results/optuna_trials.parquet`
+
+**Use cases:**
+- Find optimal hyperparameters for your problem class
+- Compare methods under fair time budgets
+- Automate parameter tuning instead of manual sweeps
+
+See [`docs/optuna_workflow.md`](docs/optuna_workflow.md) for detailed configuration and usage.
 
 ---
 
 ## Artifact Layout
 
+**Standard workflow** (`parsl-llc`):
 ```
 runs/
 └── targets/
@@ -196,7 +222,28 @@ runs/
         └── run_mclmc_gh901234/
 ```
 
-Artifacts are written to `runs/...` directly. The sampler name is included in the folder name because it's a low-cardinality, human-useful facet; all other hyperparameters live in `analysis.json`.
+**Optuna workflow** (`parsl-optuna`):
+```
+artifacts/
+├── problems/
+│   └── p_abc123/
+│       └── ref.json                 # HMC reference LLC
+└── runs/
+    └── p_abc123/
+        └── vi/
+            ├── r_def456/            # one trial
+            │   ├── manifest.json    # trial hyperparameters
+            │   └── metrics.json     # trial results
+            └── r_ghi789/
+
+results/
+├── optuna_trials.parquet            # all trials aggregated
+└── studies/
+    └── optuna_llc/
+        └── p_abc123:vi.pkl          # Optuna study (for resume)
+```
+
+Artifacts are written to `runs/...` (default for `parsl-llc`) or `artifacts/...` (default for `parsl-optuna`). These paths are configurable via CLI arguments (`--logs-dir`, `--temp-cfg-dir`, `--results-dir`, `--artifacts-dir`). The sampler name is included in folder names as a human-useful facet; all other hyperparameters live in `analysis.json` or `metrics.json`.
 
 ---
 
@@ -217,4 +264,5 @@ Artifacts are written to `runs/...` directly. The sampler name is included in th
 
 - [Configuration Details](./docs/configuration.md)
 - [Running on SLURM](./docs/parallelism.md)
+- [Hyperparameter Optimization with Optuna](./docs/optuna_workflow.md)
 - [BlackJAX Notes](./docs/blackjax.md)

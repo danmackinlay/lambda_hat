@@ -1,0 +1,10 @@
+# Minimal config for Parsl workflow integration test
+# 1 target × 1 sampler, very small problem size
+store_root: "test_runs_parsl"
+jax_enable_x64: false
+
+targets:
+  - { model: small, data: small, teacher: _null, seed: 42 }
+
+samplers:
+  - { name: vi, overrides: { steps: 10, M: 2, r: 1 }, seed: 99 }

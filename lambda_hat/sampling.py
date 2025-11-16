@@ -11,6 +11,7 @@ import jax.numpy as jnp
 
 from lambda_hat import vi
 from lambda_hat.types import SamplerRunResult
+from lambda_hat.utils.rng import ensure_typed_key
 
 if TYPE_CHECKING:
     from lambda_hat.config import SGLDConfig, VIConfig
@@ -769,6 +770,10 @@ def run_vi(
     # Start timer
     total_start_time = time.time()
 
+    # Normalize PRNG key to typed threefry format (host-side, before any vmap/jit)
+    # Required for FlowJAX compatibility - converts legacy uint32[2] keys and ints
+    rng_key = ensure_typed_key(rng_key)
+
     # Flatten initial parameters
     params_flat, unravel_fn = jax.flatten_util.ravel_pytree(initial_params)
 
@@ -864,6 +869,16 @@ def run_vi(
     algo_timings = first_result["timings"]
     algo_work = first_result["work"]
 
+    # Validate that algorithm returns only vmap-compatible types (arrays/scalars)
+    # Prevents errors like "PjitFunction is not a valid JAX type"
+    def _all_leaves_are_arrays(x):
+        leaves, _ = jax.tree_util.tree_flatten(x)
+        return all(isinstance(l, (jax.Array, jnp.ndarray, int, float, bool)) for l in leaves)
+
+    assert _all_leaves_are_arrays(
+        (first_result["lambda_hat"], first_result["traces"], first_result["extras"])
+    ), f"VI algorithm '{config.algo}' returned non-JAX objects; see docs/flow_vmap_issues.md"
+
     # Vmap across chains: returns (lambda_hats, all_traces, all_extras)
     results = jax.vmap(run_one_chain)(chain_keys)
     lambda_hats, all_traces, all_extras = results
@@ -909,13 +924,25 @@ def run_vi(
         # Common diagnostics (all VI algorithms provide these)
         "grad_norm": all_traces["grad_norm"],
         # Algorithm-specific traces (only include if present)
-        **{k: all_traces[k] for k in [
-            "elbo_like", "logq", "radius2", "resp_entropy",  # MFA-specific
-            "pi_min", "pi_max", "pi_entropy",  # MFA mixture weights
-            "D_sqrt_min", "D_sqrt_max", "D_sqrt_med",  # MFA covariance
-            "A_col_norm_max",  # MFA low-rank factor
-            "d_latent", "sigma_perp",  # Flow-specific
-        ] if k in all_traces},
+        **{
+            k: all_traces[k]
+            for k in [
+                "elbo_like",
+                "logq",
+                "radius2",
+                "resp_entropy",  # MFA-specific
+                "pi_min",
+                "pi_max",
+                "pi_entropy",  # MFA mixture weights
+                "D_sqrt_min",
+                "D_sqrt_max",
+                "D_sqrt_med",  # MFA covariance
+                "A_col_norm_max",  # MFA low-rank factor
+                "d_latent",
+                "sigma_perp",  # Flow-specific
+            ]
+            if k in all_traces
+        },
     }
 
     # Use timings from algorithm and override total with actual wall time

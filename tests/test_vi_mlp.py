@@ -18,10 +18,10 @@ import jax
 
 jax.config.update("jax_enable_x64", True)
 
-import haiku as hk
+import equinox as eqx
 import jax.numpy as jnp
 
-from lambda_hat.models import MLP
+from lambda_hat.nn_eqx import build_mlp
 from lambda_hat.vi import mfa as vi
 
 
@@ -35,34 +35,34 @@ def make_tiny_mlp_target(key, in_dim=4, out_dim=1, hidden=8):
         hidden: Hidden layer width
 
     Returns:
-        params: Haiku parameters (PyTree)
+        model: Equinox MLP module (parameters are part of the module)
         unravel_fn: Function to reshape flat params back to PyTree
-        apply_fn: Function to evaluate MLP(params, x)
+        apply_fn: Function to evaluate MLP(x)
         d: Total number of parameters (flat)
     """
 
-    # Define MLP using Haiku
-    def model_fn(x):
-        mlp = MLP(widths=[hidden], out_dim=out_dim, activation="relu", bias=True)
-        return mlp(x)
-
-    # Transform to pure functions
-    model = hk.without_apply_rng(hk.transform(model_fn))
-
-    # Initialize parameters
+    # Create MLP using Equinox
     key_init, key = jax.random.split(key)
-    dummy_input = jnp.ones((1, in_dim))
-    params = model.init(key_init, dummy_input)
+    model = build_mlp(
+        in_dim=in_dim,
+        widths=[hidden],
+        out_dim=out_dim,
+        activation="relu",
+        bias=True,
+        key=key_init,
+    )
 
     # Get flattening utilities
+    params, _ = eqx.partition(model, eqx.is_array)
     flat_params, unravel_fn = jax.flatten_util.ravel_pytree(params)
     d = flat_params.shape[0]
 
-    # Apply function
-    def apply_fn(params_pytree, x):
-        return model.apply(params_pytree, x)
+    # Apply function (model is already initialized, just call it)
+    def apply_fn(model_pytree, x):
+        """Apply function that takes a model PyTree and input."""
+        return model_pytree(x)
 
-    return params, unravel_fn, apply_fn, d
+    return model, unravel_fn, apply_fn, d
 
 
 def generate_regression_data(key, n_data, in_dim, teacher_fn):
@@ -124,16 +124,21 @@ def test_vi_tiny_mlp_convergence():
     data = (X, Y)
 
     # Train student to convergence (simple ERM)
+    # Extract initial parameters from the model
+    model_params, model_static = eqx.partition(params, eqx.is_array)
+    params_flat, _ = jax.flatten_util.ravel_pytree(model_params)
+
     def mse_loss(params_flat):
         params_tree = unravel_fn(params_flat)
-        preds = apply_fn(params_tree, X).reshape(-1)
+        # Reconstruct model from flat params
+        model_recon = eqx.combine(params_tree, model_static)
+        preds = apply_fn(model_recon, X).reshape(-1)
         return jnp.mean((preds - Y) ** 2)
 
     # Find wstar via simple optimization
     import optax
 
     optimizer = optax.adam(0.01)
-    params_flat, _ = jax.flatten_util.ravel_pytree(params)
 
     opt_state = optimizer.init(params_flat)
     for step in range(500):
@@ -147,15 +152,20 @@ def test_vi_tiny_mlp_convergence():
 
     # Define loss functions for VI
     # NOTE: VI calls unravel_fn before passing to loss_batch_fn,
-    # so w is ALREADY a PyTree here, not flat!
+    # so w is ALREADY a PyTree here (of parameters), not flat!
+    # We need to reconstruct the model from the parameter PyTree
     def loss_batch_fn(w_pytree, Xb, Yb):
         """Batch loss (data-dependent!)"""
-        preds = apply_fn(w_pytree, Xb).reshape(-1)
+        # Reconstruct model from flat params
+        model_recon = eqx.combine(w_pytree, model_static)
+        preds = apply_fn(model_recon, Xb).reshape(-1)
         return jnp.mean((preds - Yb) ** 2)
 
     def loss_full_fn(w_pytree):
         """Full dataset loss"""
-        preds = apply_fn(w_pytree, X).reshape(-1)
+        # Reconstruct model from flat params
+        model_recon = eqx.combine(w_pytree, model_static)
+        preds = apply_fn(model_recon, X).reshape(-1)
         return jnp.mean((preds - Y) ** 2)
 
     # Create whitener
@@ -245,15 +255,20 @@ def test_vi_tiny_mlp_cv_reduces_variance():
     data = (X, Y)
 
     # Quick ERM convergence
+    # Extract initial parameters from the model
+    model_params, model_static = eqx.partition(params, eqx.is_array)
+    params_flat, _ = jax.flatten_util.ravel_pytree(model_params)
+
     def mse_loss(params_flat):
         params_tree = unravel_fn(params_flat)
-        preds = apply_fn(params_tree, X).reshape(-1)
+        # Reconstruct model from flat params
+        model_recon = eqx.combine(params_tree, model_static)
+        preds = apply_fn(model_recon, X).reshape(-1)
         return jnp.mean((preds - Y) ** 2)
 
     import optax
 
     optimizer = optax.adam(0.01)
-    params_flat, _ = jax.flatten_util.ravel_pytree(params)
     opt_state = optimizer.init(params_flat)
 
     for _ in range(300):
@@ -263,13 +278,17 @@ def test_vi_tiny_mlp_cv_reduces_variance():
 
     wstar_flat = params_flat
 
-    # Loss functions (w is PyTree, not flat!)
+    # Loss functions (w is PyTree of parameters, not flat!)
     def loss_batch_fn(w_pytree, Xb, Yb):
-        preds = apply_fn(w_pytree, Xb).reshape(-1)
+        # Reconstruct model from parameter pytree
+        model_recon = eqx.combine(w_pytree, model_static)
+        preds = apply_fn(model_recon, Xb).reshape(-1)
         return jnp.mean((preds - Yb) ** 2)
 
     def loss_full_fn(w_pytree):
-        preds = apply_fn(w_pytree, X).reshape(-1)
+        # Reconstruct model from parameter pytree
+        model_recon = eqx.combine(w_pytree, model_static)
+        preds = apply_fn(model_recon, X).reshape(-1)
         return jnp.mean((preds - Y) ** 2)
 
     whitener = vi.make_whitener(None)
@@ -336,15 +355,20 @@ def test_vi_tiny_mlp_basic_sanity():
     data = (X, Y)
 
     # Use initial params as wstar (no training)
-    wstar_flat, _ = jax.flatten_util.ravel_pytree(params)
+    model_params, model_static = eqx.partition(params, eqx.is_array)
+    wstar_flat, _ = jax.flatten_util.ravel_pytree(model_params)
 
-    # Minimal loss functions (w is PyTree!)
+    # Minimal loss functions (w is PyTree of parameters!)
     def loss_batch_fn(w_pytree, Xb, Yb):
-        preds = apply_fn(w_pytree, Xb).reshape(-1)
+        # Reconstruct model from parameter pytree
+        model_recon = eqx.combine(w_pytree, model_static)
+        preds = apply_fn(model_recon, Xb).reshape(-1)
         return jnp.mean((preds - Yb) ** 2)
 
     def loss_full_fn(w_pytree):
-        preds = apply_fn(w_pytree, X).reshape(-1)
+        # Reconstruct model from parameter pytree
+        model_recon = eqx.combine(w_pytree, model_static)
+        preds = apply_fn(model_recon, X).reshape(-1)
         return jnp.mean((preds - Y) ** 2)
 
     whitener = vi.make_whitener(None)

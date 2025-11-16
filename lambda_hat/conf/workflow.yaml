@@ -3,7 +3,7 @@
 
 # Unified Workflow Configuration for N x M Sweeps
 
-# NOTE: This file is consumed via OmegaConf mergers from the Snakefile 
+# NOTE: This file is consumed via OmegaConf mergers from the Snakefile
 
 # --- Shared Config ---
 jax:
@@ -17,6 +17,11 @@ runtime:
   seed: 12345  # Used for sampler PRNG splitting (Stage B Seed)
   code_sha: ${git_sha:}
   hostname: ${hostname:}
+
+# Misc (toplevel Config fields)
+use_tqdm: true
+progress_update_every: 50
+profile_adaptation: true
 
 # --- Stage A: Target Definition (Used for Fingerprinting) ---
 target:
@@ -45,5 +50,3 @@ training:
 
 # Teacher configuration is loaded via config group defaults (teacher: _null)
 
-# --- Dynamic Target ID Resolution ---
-# Target ID will be passed from Snakemake

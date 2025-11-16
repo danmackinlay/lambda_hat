@@ -4,7 +4,7 @@
     "maxFileSize": 52428800
   },
   "output": {
-    "filePath": "../repomix-output.xml",
+    "filePath": "../lambda_hat.xml",
     "style": "xml",
     "parsableStyle": false,
     "fileSummary": true,

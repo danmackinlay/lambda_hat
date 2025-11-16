@@ -17,16 +17,20 @@ requires-python = ">=3.11,<3.13"
 dependencies = [
     "arviz~=0.22.0",
     "blackjax==1.2.5",
+    "click>=8.1.0",
     "cookiecutter>=2.6.0",
-    "dm-haiku>=0.0.10",
+    "equinox>=0.13.1",
     "flax>=0.12.0",
     "matplotlib>=3.7.0",
     "numpy>=1.24.0",
     "omegaconf>=2.3.0",
     "optax>=0.2.5",
+    "optuna>=4.2.0",
+    "pandas>=2.0.0",
+    "parsl>=2024.11.18",
+    "pyarrow>=14.0.0",
     "pyyaml>=6.0",
     "scipy>=1.11",
-    "snakemake>=9.11.6",
     "tensorboardx>=2.6.4",
 ]
 
@@ -42,9 +46,8 @@ cuda12 = [
   "jax[cuda12_local]~=0.7.2"
 ]
 
-# Normalizing flow VI (requires Equinox + FlowJAX)
+# Normalizing flow VI (requires FlowJAX; Equinox is now in base deps)
 flowvi = [
-  "equinox>=0.13.1",
   "flowjax>=0.11.0",
 ]
 
@@ -57,9 +60,7 @@ dev = [
 ]
 
 [project.scripts]
-lambda-hat-promote = "lambda_hat.entrypoints.promote:main"
-lambda-hat-build-target = "lambda_hat.entrypoints.build_target:main"
-lambda-hat-sample = "lambda_hat.entrypoints.sample:main"
+lambda-hat = "lambda_hat.cli:cli"
 
 [tool.ruff]
 line-length = 100

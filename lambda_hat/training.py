@@ -5,10 +5,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Dict, Tuple
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import optax
-from jax import jit, value_and_grad
+from jax import jit
 
 if TYPE_CHECKING:
     from .config import Config
@@ -20,15 +21,21 @@ def train_erm(
     """Train to find the empirical risk minimizer w*
 
     Args:
-        loss_fn: Loss function that takes params and returns scalar loss
-        params_init: Initial Haiku parameters
+        loss_fn: Loss function that takes params (Equinox model) and returns scalar loss
+        params_init: Initial Equinox model
         cfg: Configuration object
         key: JRNG key for any randomness
 
     Returns:
-        Tuple of (optimized_params, metrics_dict)
+        Tuple of (optimized_model, metrics_dict)
     """
     t_cfg = cfg.training
+
+    # For Equinox: separate trainable params from static structure
+    # Use inexact dtype filter to exclude functions (custom_jvp) and integer arrays
+    trainable_params, static_model = eqx.partition(
+        params_init, lambda x: eqx.is_array(x) and jnp.issubdtype(x.dtype, jnp.inexact)
+    )
 
     # Setup optimizer
     if t_cfg.optimizer == "adam":
@@ -40,21 +47,25 @@ def train_erm(
     else:
         raise ValueError(f"Unknown optimizer: {t_cfg.optimizer}")
 
-    opt_state = opt.init(params_init)
-    params = params_init
+    opt_state = opt.init(trainable_params)
 
     # Create update function
     @jit
-    def update(params, opt_state):
-        loss_val, grads = value_and_grad(loss_fn)(params)
-        updates, opt_state = opt.update(grads, opt_state, params)
-        params = optax.apply_updates(params, updates)
-        return params, opt_state, loss_val
+    def update(trainable_params, opt_state):
+        # Use Equinox's filter_value_and_grad which handles PyTrees with non-array leaves
+        def loss_with_params(params_diff):
+            model = eqx.combine(params_diff, static_model)
+            return loss_fn(model)
+
+        loss_val, grads = eqx.filter_value_and_grad(loss_with_params)(trainable_params)
+        updates, opt_state = opt.update(grads, opt_state, trainable_params)
+        trainable_params = optax.apply_updates(trainable_params, updates)
+        return trainable_params, opt_state, loss_val
 
     # Training loop
     losses = []
     for step in range(t_cfg.steps):
-        params, opt_state, loss_val = update(params, opt_state)
+        trainable_params, opt_state, loss_val = update(trainable_params, opt_state)
         losses.append(float(loss_val))
 
         # Early stopping check
@@ -72,12 +83,15 @@ def train_erm(
             if cfg.use_tqdm:
                 print(f"Step {step}/{t_cfg.steps}, Loss: {loss_val:.6f}")
 
+    # Recombine final model
+    final_model = eqx.combine(trainable_params, static_model)
+
     # Compute final metrics
-    final_loss = float(loss_fn(params))
+    final_loss = float(loss_fn(final_model))
     metrics = {
         "final_loss": final_loss,
         "steps": step + 1,
         "initial_loss": losses[0] if losses else 0.0,
     }
 
-    return params, metrics
+    return final_model, metrics

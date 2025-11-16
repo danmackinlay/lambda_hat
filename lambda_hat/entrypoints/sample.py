@@ -2,7 +2,6 @@
 import argparse
 import json
 import time
-from pathlib import Path
 
 import jax
 from omegaconf import OmegaConf
@@ -13,11 +12,13 @@ from lambda_hat.analysis import (
     create_combined_convergence_plot,
     create_work_normalized_variance_plot,
 )
+from lambda_hat.artifacts import ArtifactStore, Paths, RunContext
 from lambda_hat.config import validate_teacher_cfg
 from lambda_hat.losses import as_dtype, make_loss_fns
-from lambda_hat.models import build_mlp_forward_fn, count_params
+from lambda_hat.nn_eqx import build_mlp, count_params
 from lambda_hat.sampling_runner import run_sampler
-from lambda_hat.target_artifacts import append_sample_manifest, load_target_artifact
+
+# No longer need legacy target_artifacts imports (using load_target_artifact_from_dir inline)
 from lambda_hat.targets import TargetBundle
 
 
@@ -25,10 +26,32 @@ def main():
     ap = argparse.ArgumentParser("lambda-hat-sample")
     ap.add_argument("--config-yaml", required=True, help="Path to composed YAML config")
     ap.add_argument("--target-id", required=True, help="Target ID string")
-    ap.add_argument("--run-dir", required=True, help="Directory where to write run outputs")
+    ap.add_argument(
+        "--experiment",
+        required=False,
+        help="Experiment name (defaults from config then env)",
+    )
     args = ap.parse_args()
 
     cfg = OmegaConf.load(args.config_yaml)
+
+    # Determine experiment name and sampler name early
+    experiment = args.experiment or cfg.get("experiment", None)
+    sampler_name = cfg.sampler.name
+
+    # Initialize artifact system
+    paths = Paths.from_env()
+    paths.ensure()
+    store = ArtifactStore(paths.store)
+
+    # Create RunContext for this sampling run
+    ctx = RunContext.create(
+        experiment=experiment,
+        algo=sampler_name,
+        paths=paths,
+        tag=args.target_id[:8],  # Use short target ID as tag
+    )
+    run_dir = ctx.run_dir
 
     # Fail-fast validation
     assert "sampler" in cfg and "name" in cfg.sampler, "cfg.sampler.name missing"
@@ -38,43 +61,70 @@ def main():
 
     print("=== LLC: Sample ===")
     print(f"Target ID: {args.target_id}")
-    print(f"Run Dir: {args.run_dir}")
+    print(f"Run Dir: {run_dir}")
     try:
         print(OmegaConf.to_yaml(cfg, resolve=True))
     except Exception:
         # Fallback to non-resolved view to keep the run alive
         print(OmegaConf.to_yaml(cfg, resolve=False))
 
-    # Load target artifact using store.root and target_id
-    X, Y, params, meta, tdir = load_target_artifact(cfg.store.root, args.target_id)
+    # Resolve target from experiment (new artifact system)
+    # Find target in experiment's targets directory (symlinks to content-addressed store)
+    targets_dir = paths.experiments / experiment / "targets"
+    target_payload = None
+    target_meta = None
 
-    # Guardrails
-    if bool(cfg.jax.enable_x64) != bool(meta["jax_enable_x64"]):
-        raise RuntimeError(
-            f"Precision mismatch: sampler x64={cfg.jax.enable_x64}, "
-            f"target x64={meta['jax_enable_x64']}"
+    # Search for matching target_id
+    for target_link in targets_dir.glob("*"):
+        meta_path = target_link / "meta.json"
+        if meta_path.exists():
+            with open(meta_path) as f:
+                meta = json.load(f)
+                if meta.get("target_id") == args.target_id:
+                    target_payload = target_link
+                    target_meta = meta
+                    break
+
+    if target_payload is None:
+        raise FileNotFoundError(
+            f"Target {args.target_id} not found in experiment {experiment}. "
+            f"Available targets: {list(targets_dir.glob('*'))}"
         )
 
-    # Recreate forward function from stored model config
-    mcfg = meta["model_cfg"]
+    # Guardrails
+    if bool(cfg.jax.enable_x64) != bool(target_meta["jax_enable_x64"]):
+        raise RuntimeError(
+            f"Precision mismatch: sampler x64={cfg.jax.enable_x64}, "
+            f"target x64={target_meta['jax_enable_x64']}"
+        )
 
-    # Use persisted widths (should always be present in new artifacts)
-    widths = mcfg.get("widths")
+    # Build model template from metadata
+    model_cfg = target_meta["model_cfg"]
+    widths = model_cfg.get("widths")
     assert widths is not None, "Artifact missing resolved model widths"
 
     # Validate teacher config if present
-    if meta.get("teacher_cfg"):
-        validate_teacher_cfg(meta["teacher_cfg"])
+    if target_meta.get("teacher_cfg"):
+        validate_teacher_cfg(target_meta["teacher_cfg"])
 
-    model = build_mlp_forward_fn(
-        in_dim=int(X.shape[-1]),
+    # Create model template for loading (dummy key for structure only)
+    model_template = build_mlp(
+        in_dim=model_cfg.get("in_dim", 2),
         widths=widths,
-        out_dim=int(Y.shape[-1] if Y.ndim > 1 else 1),
-        activation=mcfg.get("activation", "relu"),
-        bias=mcfg.get("bias", True),
-        init=mcfg.get("init", "he"),
-        layernorm=mcfg.get("layernorm", False),
+        out_dim=model_cfg.get("out_dim", 1),
+        activation=model_cfg.get("activation", "relu"),
+        bias=model_cfg.get("bias", True),
+        layernorm=model_cfg.get("layernorm", False),
+        key=jax.random.PRNGKey(0),  # Dummy key, will be overwritten
     )
+
+    # Load target artifact with model template
+    from lambda_hat.target_artifacts import load_target_artifact_from_dir
+
+    X, Y, model, meta, tdir = load_target_artifact_from_dir(
+        target_payload, model_template=model_template
+    )
+    params = model  # For Equinox, model IS the params
 
     # Get L0 from metadata
     L0 = meta.get("metrics", {}).get("L0")
@@ -100,8 +150,10 @@ def main():
     student_df = data_cfg.get("student_df", 4.0)
 
     # Loss fns (float32)
+    # Equinox models are called directly: model(x), not model.apply(params, None, x)
+    predict_fn = lambda m, x: m(x)
     loss_full_f32, loss_minibatch_f32 = make_loss_fns(
-        model.apply,
+        predict_fn,
         X_f32,
         Y_f32,
         loss_type=loss_type,
@@ -158,7 +210,6 @@ def main():
     )
 
     # Write artifacts
-    run_dir = Path(args.run_dir)
     run_dir.mkdir(parents=True, exist_ok=True)
     idata.to_netcdf(run_dir / "trace.nc")
     (run_dir / "analysis.json").write_text(json.dumps(metrics, indent=2, sort_keys=True))
@@ -171,8 +222,7 @@ def main():
     ):
         from tensorboardX import SummaryWriter
 
-        tb_dir = run_dir / "diagnostics" / "tb"
-        tb_dir.mkdir(parents=True, exist_ok=True)
+        tb_dir = ctx.tb_dir
         writer = SummaryWriter(str(tb_dir))
 
         # Log scalar traces over optimization steps
@@ -245,25 +295,23 @@ def main():
     create_combined_convergence_plot({sampler_name: idata}, run_dir)
     create_work_normalized_variance_plot({sampler_name: idata}, run_dir)
 
-    # Manifest entry
+    # Write run manifest (replaces legacy append_sample_manifest)
     sp = OmegaConf.to_container(cfg.sampler, resolve=True)
-    append_sample_manifest(
-        cfg.store.root,
-        args.target_id,
+    ctx.write_run_manifest(
         {
+            "phase": "sample",
+            "inputs": [],  # Could add target URN reference if needed
             "target_id": args.target_id,
             "sampler": sampler_name,
             "hyperparams": sp,
             "dtype64": bool(cfg.jax.enable_x64),
             "walltime_sec": dt,
-            "artifact_path": str(run_dir),
             "metrics": metrics,
-            "code_sha": cfg.runtime.code_sha,
-            "created_at": time.time(),
-        },
+        }
     )
 
     print(f"[sample] wrote trace.nc & analysis.json in {dt:.2f}s → {run_dir}")
+    print(f"[sample] experiment: {ctx.experiment}, run: {ctx.run_id}")
 
 
 if __name__ == "__main__":

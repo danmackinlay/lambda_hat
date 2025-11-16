@@ -1,13 +1,13 @@
-# Parameter Sweeps with Snakemake
+# Parameter Sweeps
 
-This document explains how to design and execute parameter sweeps using **Snakemake's configuration-driven approach**. Unlike timestamp-based execution, Lambda-Hat creates deterministic N × M experiment matrices defined in `config/experiments.yaml`.
+This document explains how to design and execute parameter sweeps with Parsl. Lambda-Hat creates deterministic N × M experiment matrices defined in `config/experiments.yaml`.
 
 ## Core Concept: N × M Sweeps
 
 Lambda-Hat automatically generates a **Cartesian product** of targets and samplers from your experiment configuration:
 
 - **N targets** (different model/data/seed combinations)
-- **M samplers** (different MCMC algorithms and hyperparameters)
+- **M samplers** (different MCMC/VI algorithms and hyperparameters)
 - **Total: N × M sampling jobs** (plus N target-building jobs)
 
 ### Example Configuration
@@ -27,28 +27,36 @@ samplers:
   - { name: hmc }
   - { name: sgld, overrides: { step_size: 1e-6 } }
   - { name: mclmc, overrides: { draws: 5000 } }
+  - { name: vi, overrides: { M: 8, r: 2 } }
 ```
 
-**Result**: 3 targets × 3 samplers = 9 sampling jobs + 3 target-building jobs = 12 total jobs.
+**Result**: 3 targets × 4 samplers = 12 sampling jobs + 3 target-building jobs = **15 total jobs**.
 
 ### Execute the Sweep
 
 ```bash
-# Preview the entire DAG
-uv run snakemake -n
+# Local execution (testing)
+uv run python workflows/parsl_llc.py --local
 
-# Execute locally with 4 parallel jobs
-uv run snakemake -j 4
+# SLURM cluster (production)
+uv run python workflows/parsl_llc.py --parsl-config parsl_config_slurm.py
 
-# Execute on HPC cluster
-uv run snakemake --profile slurm -j 100
+# With promotion (galleries)
+uv run python workflows/parsl_llc.py --local --promote
 ```
+
+Parsl automatically:
+- Builds all N targets in parallel
+- Runs all M samplers per target (waiting for target to complete)
+- Aggregates results into `results/llc_runs.parquet`
+
+---
 
 ## Designing Sweeps
 
 ### 1. Model Architecture Sweeps
 
-Create multiple model presets or use overrides:
+Compare different network architectures:
 
 ```yaml
 targets:
@@ -59,32 +67,53 @@ targets:
 
   # Using overrides for one-off variations
   - { model: base, data: base, seed: 42,
-      overrides: {
-        model: { activation: identity, depth: 6 },
-        training: { steps: 15000 }
-      }}
+      overrides: { model: { depth: 8, activation: gelu } } }
 ```
 
-### 2. Data Scaling Sweeps
+**Use case**: Understand how architecture affects LLC estimates.
 
-Vary dataset size and characteristics:
+### 2. Data Distribution Sweeps
+
+Test robustness across different data distributions:
 
 ```yaml
 targets:
-  - { model: base, data: small, seed: 42 }   # n_data=5000
-  - { model: base, data: base,  seed: 42 }   # n_data=20000
-  - { model: base, data: large, seed: 42 }   # n_data=100000
-
-  # Custom data configuration
-  - { model: base, data: base, seed: 42,
-      overrides: {
-        data: { n_data: 50000, noise_scale: 0.05 }
-      }}
+  - { model: base, data: gauss_iso, seed: 42 }
+  - { model: base, data: gauss_aniso, seed: 42 }
+  - { model: base, data: mixture, seed: 42 }
+  - { model: base, data: heavy_tail, seed: 42,
+      overrides: { data: { noise_model: student_t } } }
 ```
 
-### 3. Seed Sweeps for Statistical Robustness
+**Use case**: Validate sampler performance on diverse data.
 
-Multiple random seeds for the same configuration:
+### 3. Sampler Hyperparameter Sweeps
+
+Compare different sampler configurations:
+
+```yaml
+samplers:
+  # HMC with different integration steps
+  - { name: hmc, overrides: { num_integration_steps: 5 } }
+  - { name: hmc, overrides: { num_integration_steps: 10 } }
+  - { name: hmc, overrides: { num_integration_steps: 20 } }
+
+  # SGLD with different step sizes
+  - { name: sgld, overrides: { step_size: 1e-5 } }
+  - { name: sgld, overrides: { step_size: 1e-6 } }
+  - { name: sgld, overrides: { step_size: 1e-7 } }
+
+  # VI with different ranks
+  - { name: vi, overrides: { M: 4, r: 1 } }
+  - { name: vi, overrides: { M: 8, r: 2 } }
+  - { name: vi, overrides: { M: 16, r: 4 } }
+```
+
+**Use case**: Hyperparameter tuning and sensitivity analysis.
+
+### 4. Seed Sweeps (Replications)
+
+Multiple random seeds for statistical significance:
 
 ```yaml
 targets:
@@ -95,246 +124,208 @@ targets:
   - { model: base, data: base, seed: 46 }
 ```
 
-### 4. Sampler Hyperparameter Sweeps
+**Use case**: Error bars and statistical testing.
 
-Explore different MCMC configurations:
+**Note**: Each target with a different seed creates a *different neural network* with independent weights, providing true replication.
 
-```yaml
-samplers:
-  # HMC with different step counts
-  - { name: hmc }  # Uses defaults from hmc.yaml
-  - { name: hmc, overrides: { num_integration_steps: 5 } }
-  - { name: hmc, overrides: { num_integration_steps: 20 } }
+### 5. Combined Sweeps
 
-  # SGLD with different step sizes
-  - { name: sgld, overrides: { step_size: 1e-7 } }
-  - { name: sgld, overrides: { step_size: 1e-6 } }
-  - { name: sgld, overrides: { step_size: 1e-5 } }
-
-  # Multiple chains
-  - { name: hmc, overrides: { chains: 8 } }
-```
-
-## Advanced Patterns
-
-### 1. Mixed Precision Experiments
-
-Compare float32 vs float64 performance:
+Complex factorial designs:
 
 ```yaml
-# High precision (recommended for HMC/MCLMC)
-jax_enable_x64: true
 targets:
-  - { model: base, data: base, seed: 42 }
-samplers:
-  - { name: hmc }
-  - { name: mclmc }
-```
-
-Create a separate experiment file for float32:
-
-```yaml
-# config/experiments_f32.yaml
-jax_enable_x64: false
-targets:
-  - { model: base, data: base, seed: 42 }
-samplers:
-  - { name: sgld }  # SGLD works well with float32
-```
-
-Run separately:
-```bash
-uv run snakemake -j 4  # Uses default experiments.yaml
-uv run snakemake -j 4 --configfile config/experiments_f32.yaml
-```
-
-### 2. Targeted Experiments
-
-Create focused experiments for specific research questions:
-
-```yaml
-# config/experiments_wide_vs_deep.yaml
-targets:
-  # Wide networks
-  - { model: base, data: base, seed: 42,
-      overrides: { model: { depth: 2, target_params: 50000 } }}
-  - { model: base, data: base, seed: 43,
-      overrides: { model: { depth: 2, target_params: 50000 } }}
-
-  # Deep networks
-  - { model: base, data: base, seed: 42,
-      overrides: { model: { depth: 8, target_params: 50000 } }}
-  - { model: base, data: base, seed: 43,
-      overrides: { model: { depth: 8, target_params: 50000 } }}
+  # 2 models × 2 datasets × 3 seeds = 12 targets
+  - { model: small, data: small, seed: 42 }
+  - { model: small, data: small, seed: 43 }
+  - { model: small, data: small, seed: 44 }
+  - { model: small, data: large, seed: 42 }
+  - { model: small, data: large, seed: 43 }
+  - { model: small, data: large, seed: 44 }
+  - { model: base, data: small, seed: 42 }
+  - { model: base, data: small, seed: 43 }
+  - { model: base, data: small, seed: 44 }
+  - { model: base, data: large, seed: 42 }
+  - { model: base, data: large, seed: 43 }
+  - { model: base, data: large, seed: 44 }
 
 samplers:
+  # 3 samplers
   - { name: hmc }
   - { name: sgld }
+  - { name: vi }
 ```
 
-### 3. Ablation Studies
+**Result**: 12 targets × 3 samplers = **36 sampling jobs** + 12 target builds = 48 total jobs.
 
-Systematic feature removal:
+---
 
-```yaml
-# config/experiments_ablation.yaml
-targets:
-  # Baseline
-  - { model: base, data: base, seed: 42 }
+## Analyzing Sweep Results
 
-  # No bias terms
-  - { model: base, data: base, seed: 42,
-      overrides: { model: { bias: false } }}
-
-  # Linear networks (identity activation)
-  - { model: base, data: base, seed: 42,
-      overrides: { model: { activation: identity } }}
-```
-
-## Partial Execution and Debugging
-
-### Run Specific Subsets
-
-```bash
-# Build targets only (no sampling)
-uv run snakemake "runs/targets/*/meta.json" -j 4
-
-# Run only HMC samplers
-uv run snakemake "runs/targets/*/run_hmc_*/analysis.json" -j 4
-
-# Run specific target across all samplers
-uv run snakemake "runs/targets/tgt_abc123456789/run_*/analysis.json" -j 4
-
-# Single target-sampler combination
-uv run snakemake runs/targets/tgt_abc123456789/run_hmc_xy789abc/analysis.json
-```
-
-### Debugging Failed Jobs
-
-```bash
-# See what jobs would run
-uv run snakemake -n --detailed-summary
-
-# Check for failed/incomplete jobs
-uv run snakemake --summary
-
-# Rerun only failed jobs
-uv run snakemake --rerun-incomplete -j 4
-
-# Force rerun specific rules
-uv run snakemake --forcerun build_target -j 4
-uv run snakemake --forcerun run_sampler -j 4
-```
-
-### Incremental Execution
-
-Add new configurations without rebuilding existing ones:
-
-```yaml
-# Add to existing experiments.yaml
-targets:
-  - { model: small, data: small, seed: 42 }  # Already built
-  - { model: base,  data: base,  seed: 43 }  # Already built
-  - { model: huge,  data: large, seed: 44 }  # NEW - will be built
-
-samplers:
-  - { name: hmc }     # Already run on existing targets
-  - { name: sgld }    # Already run on existing targets
-  - { name: mclmc }   # NEW - will run on all targets
-```
-
-Snakemake will automatically:
-1. Skip building existing targets
-2. Skip running existing sampler combinations
-3. Build the new target
-4. Run the new sampler on all targets (including existing ones)
-
-## Results Aggregation
-
-After sweep completion, analyze results programmatically:
+All results are aggregated into a single parquet file:
 
 ```python
 import pandas as pd
-from pathlib import Path
-import json
 
-def analyze_sweep_results(runs_root="runs"):
-    results = []
+# Load results
+df = pd.read_parquet('results/llc_runs.parquet')
 
-    for target_dir in (Path(runs_root) / "targets").iterdir():
-        if not target_dir.name.startswith("tgt_"):
-            continue
+# Group by sampler
+print(df.groupby('sampler')[['llc_mean', 'llc_std', 'ess_bulk']].mean())
 
-        # Load target metadata
-        with open(target_dir / "meta.json") as f:
-            meta = json.load(f)
+# Filter by target configuration
+hmc_runs = df[df['sampler'] == 'hmc']
 
-        # Collect all sampling runs
-        for run_dir in target_dir.iterdir():
-            if not run_dir.name.startswith("run_"):
-                continue
-
-            with open(run_dir / "analysis.json") as f:
-                analysis = json.load(f)
-
-            results.append({
-                "target_id": meta["target_id"],
-                "model_depth": meta["model_cfg"]["depth"],
-                "n_data": meta["data_cfg"]["n_data"],
-                "target_params": meta["dims"]["p"],
-                "seed": meta["seed"],
-                "sampler": run_dir.name.split("_")[1],
-                "llc_mean": analysis["llc_mean"],
-                "llc_std": analysis["llc_std"],
-                "ess": analysis["ess"],
-                "walltime": analysis["walltime_sec"]
-            })
-
-    df = pd.DataFrame(results)
-
-    # Example analysis: LLC vs network size by sampler
-    summary = df.groupby(["sampler", "target_params"]).agg({
-        "llc_mean": ["mean", "std"],
-        "ess": "mean",
-        "walltime": "mean"
-    }).round(3)
-
-    return df, summary
-
-# Usage
-df, summary = analyze_sweep_results()
-print(summary)
+# Plot LLC estimates
+import matplotlib.pyplot as plt
+df.boxplot(column='llc_mean', by='sampler')
+plt.show()
 ```
 
-## Performance Considerations
+Each row contains:
+- `target_id`: Target identifier
+- `sampler`: Sampler name
+- `run_id`: Run identifier
+- `llc_mean`, `llc_std`: LLC estimates
+- `ess_bulk`, `ess_tail`, `r_hat`: MCMC diagnostics
+- `walltime_sec`: Execution time
+- Configuration metadata from `config_yaml`
 
-### 1. Target Reuse
-- Targets are expensive (neural network training)
-- Same target config → same target ID → automatic reuse
-- Build targets once, sweep samplers many times
+---
 
-### 2. Computational Resources
-```bash
-# Memory-intensive targets, lightweight sampling
-uv run snakemake "runs/targets/*/meta.json" -j 2 --resources mem_mb=16000
-uv run snakemake "runs/targets/*/run_*/analysis.json" -j 8 --resources mem_mb=4000
+## Best Practices
 
-# HPC with different resource requirements per rule
-uv run snakemake --profile slurm -j 100 \
-  --set-resources build_target:time=120 \
-  --set-resources run_sampler:time=360
+### Start Small
+
+Begin with a minimal sweep to test the pipeline:
+
+```yaml
+targets:
+  - { model: small, data: small, seed: 42 }
+
+samplers:
+  - { name: vi, overrides: { steps: 100 } }  # Fast VI for testing
 ```
 
-### 3. Storage Management
-- Large traces: Use promotion to extract key plots
-- Cleanup old experiments: Remove unused target directories
-- Archive completed sweeps: Tar up `runs/targets/` subdirectories
+Run locally: `uv run python workflows/parsl_llc.py --local`
+
+Once validated, scale up to full sweep on cluster.
+
+### Incremental Scaling
+
+**Phase 1**: Test with 1 target × 1 sampler locally
+**Phase 2**: Scale to 2-3 targets × 2-3 samplers locally
+**Phase 3**: Move to cluster with 10+ targets × 4+ samplers
+**Phase 4**: Full production sweep (50+ targets × 5+ samplers)
+
+### Resource Planning
+
+Estimate total compute time:
+
+```
+Total time ≈ (N_targets × target_build_time) + (N_targets × M_samplers × sample_time)
+```
+
+**Example**:
+- 20 targets, each takes 30 min to build
+- 5 samplers per target, each takes 2 hours
+- With perfect parallelism: `max(20 × 30min, 20 × 5 × 2hr) = max(10hr, 200hr) = 200hr`
+- With 50 parallel SLURM jobs: `200hr / 50 = 4 hours` wall clock
+
+Adjust `max_blocks` in `parsl_config_slurm.py` based on your cluster quota.
+
+### Naming Conventions
+
+Use descriptive preset names for clarity:
 
 ```bash
-# Promote key results before cleanup
-uv run lambda-hat-promote gallery --runs-root runs --samplers hmc,sgld,mclmc \
-  --outdir results/sweep_2024_01 --snippet-out results/sweep_2024_01/README.md
+# Good preset names
+lambda_hat/conf/model/cnn_shallow.yaml
+lambda_hat/conf/model/mlp_deep_relu.yaml
+lambda_hat/conf/data/mnist_clean.yaml
+lambda_hat/conf/data/cifar10_noisy.yaml
 
-# Archive specific targets
-tar -czf archive_targets_2024_01.tar.gz runs/targets/tgt_*
+# Less clear
+lambda_hat/conf/model/exp1.yaml
+lambda_hat/conf/data/test2.yaml
 ```
+
+This makes `config/experiments.yaml` self-documenting.
+
+---
+
+## Common Sweep Patterns
+
+### Baseline Comparison
+
+Compare new sampler against established baselines:
+
+```yaml
+samplers:
+  - { name: hmc }        # Gold standard
+  - { name: mclmc }      # Fast alternative
+  - { name: sgld }       # Stochastic
+  - { name: vi }         # Variational (new!)
+```
+
+### Ablation Study
+
+Test individual components:
+
+```yaml
+targets:
+  - { model: base, data: base, seed: 42,
+      overrides: { model: { bias: true } } }
+  - { model: base, data: base, seed: 42,
+      overrides: { model: { bias: false } } }
+
+  - { model: base, data: base, seed: 42,
+      overrides: { model: { activation: relu } } }
+  - { model: base, data: base, seed: 42,
+      overrides: { model: { activation: tanh } } }
+```
+
+### Scaling Study
+
+Understand performance at different scales:
+
+```yaml
+targets:
+  - { model: tiny,  data: tiny,  seed: 42 }  # d=10, n=50
+  - { model: small, data: small, seed: 42 }  # d=50, n=100
+  - { model: base,  data: base,  seed: 42 }  # d=500, n=1000
+  - { model: large, data: large, seed: 42 }  # d=5000, n=10000
+```
+
+---
+
+## Troubleshooting Sweeps
+
+**Problem**: Sweep is too large (hundreds of jobs)
+
+**Solution**:
+1. Reduce scope by commenting out some targets/samplers
+2. Use `max_blocks` to limit parallelism: edit `parsl_config_slurm.py`
+3. Run in batches: split `config/experiments.yaml` into multiple files
+
+**Problem**: Some jobs fail while others succeed
+
+**Solution**:
+1. Check logs: `logs/run_sampler/*.err`
+2. Identify failed configs from missing `analysis.json`
+3. Create new `config/retry.yaml` with only failed configs
+4. Rerun: `uv run python workflows/parsl_llc.py --config config/retry.yaml --local`
+
+**Problem**: Results are missing metrics
+
+**Solution**:
+- Parsl creates `results/llc_runs.parquet` with all successful runs
+- Failed runs are automatically excluded
+- Check which runs succeeded: `ls runs/targets/*/run_*/analysis.json`
+
+---
+
+## See Also
+
+- [Configuration Guide](./configuration.md) - Detailed config syntax
+- [Parallel Execution](./parallelism.md) - Execution strategies
+- [Output Management](./output_management.md) - Understanding artifacts

@@ -32,6 +32,7 @@ def get(name: str) -> VIAlgorithm:
         ValueError: If algorithm name is not registered
     """
     # Lazy-load flow on first access to avoid requiring flowjax
+    # Note: Equinox is now in base deps, but FlowJAX is still optional
     if name == "flow" and name not in _REGISTRY:
         try:
             from lambda_hat.vi import flow  # noqa: F401
@@ -41,6 +42,15 @@ def get(name: str) -> VIAlgorithm:
 
     if name not in _REGISTRY:
         available = sorted(_REGISTRY.keys())
+
+        # Special error message for 'flow' when flowvi is not installed
+        if name == "flow":
+            raise ValueError(
+                f"VI algorithm 'flow' requires optional dependencies. "
+                f"Install with: uv sync --extra flowvi\n"
+                f"Available algorithms without extra dependencies: {available}"
+            )
+
         raise ValueError(f"Unknown VI algorithm '{name}'. Available algorithms: {available}")
     return _REGISTRY[name]()
 
