@@ -12,6 +12,7 @@ Implements a mixture of factor analyzers with:
 """
 
 from typing import Any, Callable, Dict, NamedTuple, Optional, Tuple
+import time
 
 import jax
 import jax.numpy as jnp
@@ -934,7 +935,6 @@ class _MFAAlgorithm:
                 - timings: dict of timing info (empty for now, compatibility)
                 - work: dict of computational work metrics
         """
-        import time
 
         t0 = time.time()
 

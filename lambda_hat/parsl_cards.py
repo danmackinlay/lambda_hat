@@ -59,9 +59,7 @@ def build_parsl_config_from_card(card: DictConfig) -> Config:
         )
         max_threads = card.get("max_threads")
         if max_threads is None:
-            import os as _os
-
-            max_threads = min(_os.cpu_count() or 4, 8)
+            max_threads = min(os.cpu_count() or 4, 8)
         return Config(
             executors=[
                 ThreadPoolExecutor(

@@ -6,6 +6,7 @@ from typing import Any, Callable
 
 import jax
 import jax.numpy as jnp
+import equinox as eqx
 
 from lambda_hat.config import validate_teacher_cfg
 
@@ -146,7 +147,6 @@ def build_target(key, cfg: Config) -> tuple[TargetBundle, list[int], list[int] |
         d = count_params(params_star_f32)
 
         # Flatten params for VI (extract arrays only from Equinox model)
-        import equinox as eqx
 
         trainable_params, _ = eqx.partition(params_star_f32, eqx.is_array)
         params_star_flat, unravel_fn = jax.flatten_util.ravel_pytree(trainable_params)

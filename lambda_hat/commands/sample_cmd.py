@@ -8,6 +8,7 @@ from typing import Dict, Optional
 import jax
 from omegaconf import OmegaConf
 import jax.numpy as jnp
+import equinox as eqx
 
 from lambda_hat.analysis import (
     analyze_traces,
@@ -17,7 +18,8 @@ from lambda_hat.analysis import (
 )
 from lambda_hat.artifacts import Paths, RunContext
 from lambda_hat.config import validate_teacher_cfg
-from lambda_hat.losses import as_dtype, make_loss_fns
+from lambda_hat.equinox_adapter import ensure_dtype
+from lambda_hat.losses import make_loss_fns
 from lambda_hat.nn_eqx import build_mlp, count_params
 from lambda_hat.sampling_runner import run_sampler
 from lambda_hat.target_artifacts import load_target_artifact_from_dir
@@ -128,15 +130,19 @@ def sample_entry(config_yaml: str, target_id: str, experiment: Optional[str] = N
     # NOW enable x64 if requested (after deserialization succeeded)
     jax.config.update("jax_enable_x64", bool(cfg.jax.enable_x64))
 
-    # Cast loaded model to sampler's required dtype
+    # Cast loaded model and data to sampler's required dtype using equinox_adapter
     # Determine dtype from sampler config (default: float64 if x64, else float32)
-    sampler_dtype = OmegaConf.select(cfg, f"sampler.{cfg.sampler.name}.dtype")
-    if sampler_dtype is None:
-        sampler_dtype = "float64" if cfg.jax.enable_x64 else "float32"
+    sampler_dtype_str = OmegaConf.select(cfg, f"sampler.{cfg.sampler.name}.dtype")
+    if sampler_dtype_str is None:
+        sampler_dtype_str = "float64" if cfg.jax.enable_x64 else "float32"
 
-    model = as_dtype(model, sampler_dtype)
-    X = as_dtype(X, sampler_dtype)
-    Y = as_dtype(Y, sampler_dtype)
+
+    target_dtype = jnp.float32 if sampler_dtype_str == "float32" else jnp.float64
+
+    # Use equinox_adapter for safe dtype casting (handles static leaves correctly)
+    model = ensure_dtype(model, target_dtype)
+    X = X.astype(target_dtype)
+    Y = Y.astype(target_dtype)
 
     params = model  # For Equinox, model IS the params
 
@@ -174,8 +180,6 @@ def sample_entry(config_yaml: str, target_id: str, experiment: Optional[str] = N
 
     # Flatten params for VI (required by TargetBundle even if HMC/SGLD don't use it)
     # For Equinox models, extract only array leaves (not activation functions, etc.)
-    import equinox as eqx
-
     trainable_params, _ = eqx.partition(params, eqx.is_array)
     params0_flat, unravel_fn = jax.flatten_util.ravel_pytree(trainable_params)
 
