@@ -10,7 +10,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from lambda_hat.entrypoints.parsl_llc import run_workflow
+from lambda_hat.workflows.parsl_llc import run_workflow
 
 ROOT = Path(__file__).resolve().parent.parent
 

@@ -268,7 +268,7 @@ def workflow_llc(config, experiment, parsl_card, parsl_sets, local, promote, pro
     from omegaconf import OmegaConf
 
     from lambda_hat.artifacts import Paths, RunContext
-    from lambda_hat.entrypoints.parsl_llc import run_workflow
+    from lambda_hat.workflows.parsl_llc import run_workflow
     from lambda_hat.parsl_cards import build_parsl_config_from_card, load_parsl_config_from_card
 
     # Initialize artifact system early to get RunContext for Parsl run_dir
@@ -352,7 +352,7 @@ def workflow_optuna(config, study_name, storage):
     This uses Optuna + Parsl to optimize sampler hyperparameters.
     """
     # Import and delegate to parsl_optuna entrypoint
-    from lambda_hat.entrypoints.parsl_optuna import main as parsl_optuna_main
+    from lambda_hat.workflows.parsl_optuna import main as parsl_optuna_main
 
     # TODO: Refactor parsl_optuna.py to accept parameters instead of sys.argv
     # For now, manipulate sys.argv to pass arguments
