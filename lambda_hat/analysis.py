@@ -3,19 +3,26 @@
 
 from __future__ import annotations
 
+import logging
 import warnings
 from pathlib import Path
 from typing import Dict, Optional, Tuple
 
-import arviz as az
-import jax.numpy as jnp
 import matplotlib
 
-# Use non-GUI backend to avoid thread safety issues on macOS
+# Use non-GUI backend and disable LaTeX BEFORE any other matplotlib imports
+# This must happen before importing pyplot or arviz to avoid ParseException in parallel execution
 matplotlib.use("Agg")
+matplotlib.rcParams["text.usetex"] = False
+matplotlib.rcParams["mathtext.default"] = "regular"
+
+import arviz as az
+import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+
+log = logging.getLogger(__name__)
 
 
 def _debug_print_idata(idata, name: str):
@@ -32,11 +39,11 @@ def _debug_print_idata(idata, name: str):
             unique=(len(np.unique(arr[np.isfinite(arr)])) if np.isfinite(arr).any() else 0),
         )
 
-    print(f"\n=== DEBUG {name} ===")
+    log.debug("=== DEBUG %s ===", name)
     if hasattr(idata, "posterior") and "llc" in idata.posterior:
-        print("llc:", _summ(idata.posterior["llc"].values))
+        log.debug("llc: %s", _summ(idata.posterior["llc"].values))
     if hasattr(idata, "posterior") and "L" in idata.posterior:
-        print("L:", _summ(idata.posterior["L"].values))
+        log.debug("L: %s", _summ(idata.posterior["L"].values))
     if hasattr(idata, "sample_stats"):
         for key in [
             "energy",
@@ -52,7 +59,7 @@ def _debug_print_idata(idata, name: str):
             "grad_norm",
         ]:
             if key in idata.sample_stats:
-                print(f"{key}:", _summ(idata.sample_stats[key].values))
+                log.debug("%s: %s", key, _summ(idata.sample_stats[key].values))
 
 
 def analyze_traces(

@@ -17,6 +17,7 @@ Usage:
 
 import argparse
 import json
+import logging
 import sys
 from pathlib import Path
 
@@ -26,6 +27,7 @@ from omegaconf import OmegaConf
 from parsl import python_app
 
 from lambda_hat.artifacts import Paths, RunContext
+from lambda_hat.logging_config import configure_logging
 from lambda_hat.parsl_cards import build_parsl_config_from_card, load_parsl_config_from_card
 from lambda_hat.workflow_utils import (
     compose_build_cfg,
@@ -33,6 +35,8 @@ from lambda_hat.workflow_utils import (
     run_id_for,
     target_id_for,
 )
+
+log = logging.getLogger(__name__)
 
 # ============================================================================
 # Parsl Apps (task definitions)
@@ -440,6 +444,9 @@ def main():
 
     args = parser.parse_args()
 
+    # Configure logging at entrypoint
+    configure_logging()
+
     # Initialize artifact system early to get RunContext for Parsl run_dir
     from lambda_hat.artifacts import Paths, RunContext
 
@@ -452,7 +459,7 @@ def main():
     # Resolve Parsl config
     if args.local and not args.parsl_card:
         # Local mode: build config directly from card spec with RunContext run_dir
-        print("Using Parsl mode: local (ThreadPool)")
+        log.info("Using Parsl mode: local (ThreadPool)")
         parsl_cfg = build_parsl_config_from_card(
             OmegaConf.create({"type": "local", "run_dir": str(ctx_early.parsl_dir)})
         )
@@ -462,29 +469,29 @@ def main():
         if not card_path.is_absolute():
             card_path = Path.cwd() / card_path
         if not card_path.exists():
-            print(f"Error: Parsl card not found: {card_path}", file=sys.stderr)
+            log.error("Parsl card not found: %s", card_path)
             sys.exit(1)
-        print(f"Using Parsl card: {card_path}")
+        log.info("Using Parsl card: %s", card_path)
         # Add run_dir override to parsl_sets
         parsl_sets_with_rundir = (args.parsl_sets or []) + [f"run_dir={ctx_early.parsl_dir}"]
         if args.parsl_sets:
-            print(f"  Overrides: {args.parsl_sets}")
+            log.info("  Overrides: %s", args.parsl_sets)
         parsl_cfg = load_parsl_config_from_card(card_path, parsl_sets_with_rundir)
     else:
-        print("Error: Must specify either --local or --parsl-card", file=sys.stderr)
+        log.error("Error: Must specify either --local or --parsl-card")
         sys.exit(1)
 
     # Parse promote plots
     promote_plots = [p.strip() for p in args.promote_plots.split(",") if p.strip()]
 
     # Run workflow
-    print(f"Using experiments config: {args.config}")
+    log.info("Using experiments config: %s", args.config)
     if args.experiment:
-        print(f"Experiment: {args.experiment}")
+        log.info("Experiment: %s", args.experiment)
     if args.promote:
-        print(f"Promotion enabled: {promote_plots}")
+        log.info("Promotion enabled: %s", promote_plots)
     else:
-        print("Promotion disabled (use --promote to enable)\n")
+        log.info("Promotion disabled (use --promote to enable)")
 
     # Load Parsl config
     parsl.load(parsl_cfg)
@@ -496,9 +503,9 @@ def main():
             enable_promotion=args.promote,
             promote_plots=promote_plots,
         )
-        print(f"\n✓ Workflow complete! Results: {output_path}")
+        log.info("✓ Workflow complete! Results: %s", output_path)
     except Exception as e:
-        print(f"\n✗ Workflow failed: {e}", file=sys.stderr)
+        log.error("✗ Workflow failed: %s", e)
         raise
     finally:
         parsl.clear()

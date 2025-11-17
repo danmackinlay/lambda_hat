@@ -1,6 +1,7 @@
 # lambda_hat/commands/build_cmd.py
 """Build command - Stage A: Train neural network and create target artifact."""
 
+import logging
 import time
 from typing import Dict, Optional
 
@@ -9,6 +10,7 @@ from omegaconf import OmegaConf
 
 from lambda_hat import omegaconf_support  # noqa: F401
 from lambda_hat.artifacts import ArtifactStore, Paths, RunContext, safe_symlink
+from lambda_hat.logging_config import configure_logging
 from lambda_hat.nn_eqx import count_params
 from lambda_hat.target_artifacts import (
     TargetMeta,
@@ -16,6 +18,8 @@ from lambda_hat.target_artifacts import (
     save_target_artifact_explicit,
 )
 from lambda_hat.targets import build_target
+
+log = logging.getLogger(__name__)
 
 
 def _pkg_versions() -> Dict[str, str]:
@@ -70,10 +74,13 @@ def build_entry(config_yaml: str, target_id: str, experiment: Optional[str] = No
 
     jax.config.update("jax_enable_x64", bool(cfg.jax.enable_x64))
 
-    print("=== LLC: Build Target ===")
-    print(f"Target ID: {target_id}")
-    print(f"Target Dir: {target_dir}")
-    print(OmegaConf.to_yaml(cfg, resolve=True))
+    # Configure logging at entrypoint
+    configure_logging()
+
+    log.info("=== LLC: Build Target ===")
+    log.info("Target ID: %s", target_id)
+    log.info("Target Dir: %s", target_dir)
+    log.debug("Config:\n%s", OmegaConf.to_yaml(cfg, resolve=True))
 
     # RNG
     key = jax.random.PRNGKey(int(cfg.target.seed))
@@ -88,9 +95,9 @@ def build_entry(config_yaml: str, target_id: str, experiment: Optional[str] = No
     L0 = target_bundle.L0
 
     # Log resolved widths for debugging
-    print(f"Resolved widths: model={used_model_widths}, teacher={used_teacher_widths}")
+    log.debug("Resolved widths: model=%s, teacher=%s", used_model_widths, used_teacher_widths)
     if used_teacher_widths is not None:
-        print(f"teacher.widths={used_teacher_widths}")
+        log.debug("teacher.widths=%s", used_teacher_widths)
 
     # Metadata & hashing (Equinox)
     theta_hash = _hash_model(theta)
@@ -140,8 +147,8 @@ def build_entry(config_yaml: str, target_id: str, experiment: Optional[str] = No
     )
 
     save_target_artifact_explicit(target_dir, X, Y, theta, meta)
-    print(f"[build-target] wrote {target_dir}")
-    print(f"[build-target] L0 = {L0:.6f}")
+    log.info("[build-target] wrote %s", target_dir)
+    log.info("[build-target] L0 = %.6f", L0)
 
     # Commit to artifact store
     urn = store.put_dir(
@@ -177,8 +184,8 @@ def build_entry(config_yaml: str, target_id: str, experiment: Optional[str] = No
         }
     )
 
-    print(f"[build-target] committed to store: {urn}")
-    print(f"[build-target] experiment: {ctx.experiment}, run: {ctx.run_id}")
+    log.info("[build-target] committed to store: %s", urn)
+    log.info("[build-target] experiment: %s, run: %s", ctx.experiment, ctx.run_id)
 
     return {
         "urn": urn,

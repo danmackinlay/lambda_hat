@@ -2,6 +2,7 @@
 """Sample command - Stage B: Run MCMC/VI sampler on target."""
 
 import json
+import logging
 import time
 from typing import Dict, Optional
 
@@ -19,11 +20,14 @@ from lambda_hat.analysis import (
 from lambda_hat.artifacts import Paths, RunContext
 from lambda_hat.config import validate_teacher_cfg
 from lambda_hat.equinox_adapter import ensure_dtype
+from lambda_hat.logging_config import configure_logging
 from lambda_hat.losses import make_loss_fns
 from lambda_hat.nn_eqx import build_mlp, count_params
 from lambda_hat.sampling_runner import run_sampler
 from lambda_hat.target_artifacts import load_target_artifact_from_dir
 from lambda_hat.targets import TargetBundle
+
+log = logging.getLogger(__name__)
 
 
 def sample_entry(config_yaml: str, target_id: str, experiment: Optional[str] = None) -> Dict:
@@ -70,14 +74,17 @@ def sample_entry(config_yaml: str, target_id: str, experiment: Optional[str] = N
     current_x64 = jax.config.jax_enable_x64
     jax.config.update("jax_enable_x64", False)
 
-    print("=== LLC: Sample ===")
-    print(f"Target ID: {target_id}")
-    print(f"Run Dir: {run_dir}")
+    # Configure logging at entrypoint
+    configure_logging()
+
+    log.info("=== LLC: Sample ===")
+    log.info("Target ID: %s", target_id)
+    log.info("Run Dir: %s", run_dir)
     try:
-        print(OmegaConf.to_yaml(cfg, resolve=True))
+        log.debug("Config:\n%s", OmegaConf.to_yaml(cfg, resolve=True))
     except Exception:
         # Fallback to non-resolved view to keep the run alive
-        print(OmegaConf.to_yaml(cfg, resolve=False))
+        log.debug("Config (unresolved):\n%s", OmegaConf.to_yaml(cfg, resolve=False))
 
     # Resolve target from experiment (new artifact system)
     # Find target in experiment's targets directory (symlinks to content-addressed store)
@@ -261,8 +268,8 @@ def sample_entry(config_yaml: str, target_id: str, experiment: Optional[str] = N
         }
     )
 
-    print(f"[sample] wrote trace.nc & analysis.json in {dt:.2f}s → {run_dir}")
-    print(f"[sample] experiment: {ctx.experiment}, run: {ctx.run_id}")
+    log.info("[sample] wrote trace.nc & analysis.json in %.2fs → %s", dt, run_dir)
+    log.info("[sample] experiment: %s, run: %s", ctx.experiment, ctx.run_id)
 
     return {
         "run_id": ctx.run_id,
@@ -340,4 +347,4 @@ def _write_tensorboard_logs(ctx, traces, metrics, work):
             writer.add_scalar("vi/Ln_wstar", work["Ln_wstar"], num_steps)
 
     writer.close()
-    print(f"[sample] TensorBoard logs written to {tb_dir}")
+    log.info("[sample] TensorBoard logs written to %s", tb_dir)
