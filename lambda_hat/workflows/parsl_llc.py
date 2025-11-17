@@ -294,6 +294,7 @@ def run_workflow(
             sampler = record["sampler"]
             run_id = record["run_id"]
             print(f"  [{i}/{len(run_futures)}] ✗ FAILED: {target_id}/{sampler}/{run_id}")
+            print(f"    Error: {str(e)}")
             print(f"    Stderr:  {stderr_path}")
             print(f"    Stdout:  {stdout_path}")
 

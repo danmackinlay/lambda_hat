@@ -209,7 +209,7 @@ def sample_entry(config_yaml: str, target_id: str, experiment: Optional[str] = N
     traces = result["traces"]  # dict of arrays (C, T)
     timings = result["timings"]  # {"adaptation":..., "sampling":..., "total":...}
     work = result.get("work")  # {"n_full_loss":..., "n_minibatch_grads":...}
-    n_data = X_f32.shape[0]
+    n_data = X.shape[0]
     beta = float(result["beta"])
 
     # Extract sampler flavour from work dict, or infer from sampler name

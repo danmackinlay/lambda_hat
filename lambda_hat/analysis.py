@@ -9,6 +9,10 @@ from typing import Dict, Optional, Tuple
 
 import arviz as az
 import jax.numpy as jnp
+import matplotlib
+
+# Use non-GUI backend to avoid thread safety issues on macOS
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
