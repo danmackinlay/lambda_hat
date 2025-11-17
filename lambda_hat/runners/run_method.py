@@ -5,6 +5,7 @@ given hyperparameters and returns LLC estimate for Optuna optimization.
 """
 
 import json
+import logging
 import time
 from pathlib import Path
 
@@ -18,6 +19,8 @@ from lambda_hat.nn_eqx import build_mlp, count_params
 from lambda_hat.sampling_runner import run_sampler
 from lambda_hat.targets import TargetBundle, build_target
 from lambda_hat.workflow_utils import compose_build_cfg
+
+log = logging.getLogger(__name__)
 
 
 def run_method_trial(
@@ -49,12 +52,12 @@ def run_method_trial(
             - diagnostics: dict with ESS, work metrics, etc.
     """
     method_name = method_cfg["name"]
-    print(f"[Method Trial] Starting {method_name} trial")
-    print(f"  Problem: {problem_spec}")
-    print(f"  Hyperparams: {method_cfg}")
-    print(f"  Budget: {budget_sec}s ({budget_sec / 60:.1f}min)")
-    print(f"  Reference LLC: {ref_llc:.4f}")
-    print(f"  Output: {out_metrics_json}")
+    log.info("[Method Trial] Starting %s trial", method_name)
+    log.info("  Problem: %s", problem_spec)
+    log.info("  Hyperparams: %s", method_cfg)
+    log.info("  Budget: %ds (%.1fmin)", budget_sec, budget_sec / 60)
+    log.info("  Reference LLC: %.4f", ref_llc)
+    log.info("  Output: %s", out_metrics_json)
 
     # Determine seed
     if seed is None:
@@ -66,7 +69,7 @@ def run_method_trial(
     build_cfg = compose_build_cfg(problem_spec, jax_enable_x64=enable_x64)
     jax.config.update("jax_enable_x64", enable_x64)
 
-    print(f"  Precision: {'float64' if enable_x64 else 'float32'}")
+    log.info("  Precision: %s", "float64" if enable_x64 else "float32")
 
     # Build target (returns TargetBundle and widths)
 
@@ -165,14 +168,14 @@ def run_method_trial(
 
     # Run method with time budget enforcement
     n_data = X_cast.shape[0]
-    print(f"[Method Trial] Running {method_name} (d={d}, n={n_data})...")
+    log.info("[Method Trial] Running %s (d=%d, n=%d)...", method_name, d, n_data)
     key = jax.random.PRNGKey(seed)
 
     t0 = time.time()
     try:
         result = run_sampler(method_name, sampler_cfg, target_bundle, key)
     except Exception as e:
-        print(f"[Method Trial] FAILED: {e}")
+        log.error("[Method Trial] FAILED: %s", e)
         # Return failure metrics for Optuna
         runtime_sec = time.time() - t0
         fail_metrics = {
@@ -187,7 +190,7 @@ def run_method_trial(
     finally:
         runtime_sec = time.time() - t0
 
-    print(f"[Method Trial] {method_name} completed in {runtime_sec:.1f}s")
+    log.info("[Method Trial] %s completed in %.1fs", method_name, runtime_sec)
 
     # Analyze traces to extract LLC
     traces = result["traces"]
@@ -245,9 +248,13 @@ def run_method_trial(
     # Write to output JSON (idempotent)
     _write_metrics(out_metrics_json, trial_metrics)
 
-    print(f"[Method Trial] LLC_hat = {llc_hat:.4f} ± {se_hat:.4f if se_hat else 0:.4f}")
-    print(f"[Method Trial] Error vs ref = {error:.4f} ({error / ref_llc * 100:.1f}%)")
-    print(f"[Method Trial] Wrote metrics to {out_metrics_json}")
+    log.info(
+        "[Method Trial] LLC_hat = %.4f ± %.4f", llc_hat, se_hat if se_hat else 0
+    )
+    log.info(
+        "[Method Trial] Error vs ref = %.4f (%.1f%%)", error, error / ref_llc * 100
+    )
+    log.info("[Method Trial] Wrote metrics to %s", out_metrics_json)
 
     return trial_metrics
 

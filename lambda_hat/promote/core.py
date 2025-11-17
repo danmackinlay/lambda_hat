@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import shutil
 from pathlib import Path
 from typing import Dict, List, Tuple
+
+log = logging.getLogger(__name__)
 
 DEFAULT_FILENAME = "llc_convergence_combined.png"
 
@@ -89,7 +92,7 @@ def promote(
 
         dst = outdir / f"{sampler}.png"
         shutil.copyfile(src, dst)
-        print(f"Promoted {src} -> {dst}")
+        log.info("Promoted %s -> %s", src, dst)
 
 
 def promote_gallery(
@@ -118,7 +121,7 @@ def promote_gallery(
 
         metrics = _load_metrics(run_dir)
         rows.append((sampler, dst, metrics))
-        print(f"[gallery] {sampler}: {src} -> {dst}")
+        log.info("[gallery] %s: %s -> %s", sampler, src, dst)
 
     if md_snippet_out is not None:
         # Write a very small, README-friendly HTML snippet for a 3-across gallery
@@ -136,6 +139,6 @@ def promote_gallery(
         lines.append("</p>")
         lines.append("<!-- auto-generated: end gallery -->\n")
         md_snippet_out.write_text("\n".join(lines))
-        print(f"[gallery] Wrote README snippet -> {md_snippet_out}")
+        log.info("[gallery] Wrote README snippet -> %s", md_snippet_out)
 
     return rows

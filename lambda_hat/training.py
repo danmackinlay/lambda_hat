@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any, Dict, Tuple
 
 import equinox as eqx
@@ -13,6 +14,8 @@ from jax import jit
 
 if TYPE_CHECKING:
     from .config import Config
+
+log = logging.getLogger(__name__)
 
 
 def train_erm(
@@ -75,13 +78,13 @@ def train_erm(
                 std = jnp.std(jnp.array(recent_losses))
                 if std < t_cfg.early_stop_tol:
                     if cfg.use_tqdm:
-                        print(f"Early stopping at step {step}, std={std:.2e}")
+                        log.info("Early stopping at step %d, std=%.2e", step, std)
                     break
 
         # Logging
         if step % max(1, t_cfg.steps // 10) == 0:
             if cfg.use_tqdm:
-                print(f"Step {step}/{t_cfg.steps}, Loss: {loss_val:.6f}")
+                log.info("Step %d/%d, Loss: %.6f", step, t_cfg.steps, loss_val)
 
     # Recombine final model
     final_model = eqx.combine(trainable_params, static_model)

@@ -1,10 +1,14 @@
 # lambda_hat/commands/promote_cmd.py
 """Promote commands - Stage C: Copy plots to galleries."""
 
+import logging
 from pathlib import Path
 from typing import List, Optional
 
+from lambda_hat.logging_config import configure_logging
 from lambda_hat.promote.core import promote, promote_gallery
+
+log = logging.getLogger(__name__)
 
 
 def promote_single_entry(
@@ -18,10 +22,11 @@ def promote_single_entry(
         outdir: Output directory for promoted plots
         plot_name: Name of plot file to copy (default: trace.png)
     """
+    configure_logging()
     runs_root = Path(runs_root)
     outdir = Path(outdir)
     promote(runs_root, samplers, outdir, plot_name=plot_name)
-    print(f"[promote] single target plots → {outdir}")
+    log.info("[promote] single target plots → %s", outdir)
 
 
 def promote_gallery_entry(
@@ -43,13 +48,14 @@ def promote_gallery_entry(
     Returns:
         Optional[str]: Path to generated HTML snippet if snippet_out provided, else None
     """
+    configure_logging()
     runs_root = Path(runs_root)
     outdir = Path(outdir)
     snippet_path = Path(snippet_out) if snippet_out else None
 
     promote_gallery(runs_root, samplers, outdir, plot_name=plot_name, snippet_out=snippet_path)
-    print(f"[promote] gallery → {outdir}")
+    log.info("[promote] gallery → %s", outdir)
     if snippet_path:
-        print(f"[promote] HTML snippet → {snippet_path}")
+        log.info("[promote] HTML snippet → %s", snippet_path)
         return str(snippet_path)
     return None

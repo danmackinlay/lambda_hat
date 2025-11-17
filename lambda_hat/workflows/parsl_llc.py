@@ -175,12 +175,12 @@ def run_workflow(
     # Create RunContext for this workflow orchestration
     ctx = RunContext.create(experiment=experiment, algo="parsl_llc", paths=paths)
 
-    print(f"Loaded {len(targets_conf)} targets and {len(samplers_conf)} samplers")
-    print(f"Experiment: {experiment}, JAX x64: {jax_x64}")
-    print(f"Run dir: {ctx.run_dir}")
-    print(f"Artifacts: {ctx.artifacts_dir}")
-    print(f"Logs: {ctx.logs_dir}")
-    print(f"Scratch: {ctx.scratch_dir}")
+    log.info("Loaded %d targets and %d samplers", len(targets_conf), len(samplers_conf))
+    log.info("Experiment: %s, JAX x64: %s", experiment, jax_x64)
+    log.info("Run dir: %s", ctx.run_dir)
+    log.info("Artifacts: %s", ctx.artifacts_dir)
+    log.info("Logs: %s", ctx.logs_dir)
+    log.info("Scratch: %s", ctx.scratch_dir)
 
     # Create config directory in scratch
     temp_cfg_dir = ctx.scratch_dir / "configs"
@@ -190,7 +190,7 @@ def run_workflow(
     # Stage A: Build Targets
     # ========================================================================
 
-    print("\n=== Stage A: Building Targets ===")
+    log.info("=== Stage A: Building Targets ===")
     target_futures = {}
     target_ids = []
 
@@ -209,7 +209,7 @@ def run_workflow(
         cfg_yaml_path.write_text(OmegaConf.to_yaml(build_cfg))
 
         # Submit build job (uses artifact system via command modules)
-        print(f"  Submitting build for {tid} (model={t['model']}, data={t['data']})")
+        log.info("  Submitting build for %s (model=%s, data=%s)", tid, t["model"], t["data"])
         future = build_target_app(
             cfg_yaml=str(cfg_yaml_path),
             target_id=tid,
@@ -222,7 +222,7 @@ def run_workflow(
     # Stage B: Run Samplers
     # ========================================================================
 
-    print("\n=== Stage B: Running Samplers ===")
+    log.info("=== Stage B: Running Samplers ===")
     run_futures = []
     run_records = []
 
@@ -241,7 +241,7 @@ def run_workflow(
             cfg_yaml_path.write_text(OmegaConf.to_yaml(sample_cfg))
 
             # Submit sampling job (uses artifact system via command modules)
-            print(f"  Submitting {s['name']} for {tid} (run_id={rid})")
+            log.info("  Submitting %s for %s (run_id=%s)", s["name"], tid, rid)
             future = run_sampler_app(
                 cfg_yaml=str(cfg_yaml_path),
                 target_id=tid,
@@ -265,7 +265,7 @@ def run_workflow(
     # Wait for all runs to complete
     # ========================================================================
 
-    print(f"\n=== Waiting for {len(run_futures)} sampling runs to complete ===")
+    log.info("=== Waiting for %d sampling runs to complete ===", len(run_futures))
     failed_runs = []
 
     for i, (future, record) in enumerate(zip(run_futures, run_records), 1):
@@ -274,7 +274,7 @@ def run_workflow(
             target_id = record["target_id"]
             sampler = record["sampler"]
             run_id = record["run_id"]
-            print(f"  [{i}/{len(run_futures)}] ✓ {target_id}/{sampler}/{run_id}")
+            log.info("  [%d/%d] ✓ %s/%s/%s", i, len(run_futures), target_id, sampler, run_id)
         except Exception as e:
             # Construct log paths from record metadata
             stderr_path = (
@@ -297,32 +297,32 @@ def run_workflow(
             target_id = record["target_id"]
             sampler = record["sampler"]
             run_id = record["run_id"]
-            print(f"  [{i}/{len(run_futures)}] ✗ FAILED: {target_id}/{sampler}/{run_id}")
-            print(f"    Error: {str(e)}")
-            print(f"    Stderr:  {stderr_path}")
-            print(f"    Stdout:  {stdout_path}")
+            log.error("  [%d/%d] ✗ FAILED: %s/%s/%s", i, len(run_futures), target_id, sampler, run_id)
+            log.error("    Error: %s", str(e))
+            log.error("    Stderr:  %s", stderr_path)
+            log.error("    Stdout:  %s", stdout_path)
 
             if stderr_tail:
-                print("    --- Last 15 lines of stderr ---")
+                log.error("    --- Last 15 lines of stderr ---")
                 for line in stderr_tail.splitlines():
-                    print(f"    {line}")
-                print("    --- End stderr ---")
+                    log.error("    %s", line)
+                log.error("    --- End stderr ---")
 
             failed_runs.append({**record, "error": str(e), "stderr_path": str(stderr_path)})
 
     # Summary of failures
     if failed_runs:
-        print(f"\n⚠ FAILURE SUMMARY: {len(failed_runs)} of {len(run_futures)} runs failed")
+        log.error("⚠ FAILURE SUMMARY: %d of %d runs failed", len(failed_runs), len(run_futures))
         for fr in failed_runs:
-            print(f"  • {fr['target_id']}/{fr['sampler']}/{fr['run_id']}")
-            print(f"    Check logs: {fr['stderr_path']}")
+            log.error("  • %s/%s/%s", fr["target_id"], fr["sampler"], fr["run_id"])
+            log.error("    Check logs: %s", fr["stderr_path"])
 
     # ========================================================================
     # Stage C: Promotion (optional, opt-in)
     # ========================================================================
 
     if enable_promotion:
-        print("\n=== Stage C: Promotion ===")
+        log.info("=== Stage C: Promotion ===")
         unique_samplers = sorted({s["name"] for s in samplers_conf})
 
         # Promotion outputs go to artifacts directory
@@ -330,7 +330,7 @@ def run_workflow(
 
         # Promote each plot type
         for plot_name in promote_plots:
-            print(f"  Promoting {plot_name}...")
+            log.info("  Promoting %s...", plot_name)
             promote_future = promote_app(
                 store_root=store_root,
                 samplers=unique_samplers,
@@ -340,17 +340,17 @@ def run_workflow(
             )
             try:
                 md_path = promote_future.result()
-                print(f"    → Gallery written to {md_path}")
+                log.info("    → Gallery written to %s", md_path)
             except Exception as e:
-                print(f"    → Promotion FAILED: {e}")
+                log.error("    → Promotion FAILED: %s", e)
     else:
-        print("\n=== Stage C: Promotion skipped (use --promote to enable) ===")
+        log.info("=== Stage C: Promotion skipped (use --promote to enable) ===")
 
     # ========================================================================
     # Aggregate results into single parquet file
     # ========================================================================
 
-    print("\n=== Aggregating Results ===")
+    log.info("=== Aggregating Results ===")
     rows = []
 
     # Find all run directories under the experiment (sample entrypoint creates them)
@@ -376,15 +376,15 @@ def run_workflow(
                     }
                     rows.append(row)
                 except Exception as e:
-                    print(f"  Warning: Failed to read {analysis_path} or {manifest_path}: {e}")
+                    log.warning("  Warning: Failed to read %s or %s: %s", analysis_path, manifest_path, e)
             elif not analysis_path.exists():
-                print(f"  Warning: Missing analysis.json at {analysis_path}")
+                log.warning("  Warning: Missing analysis.json at %s", analysis_path)
 
     df = pd.DataFrame(rows)
     output_path = ctx.artifacts_dir / "llc_runs.parquet"
 
     df.to_parquet(output_path, index=False)
-    print(f"\nWrote {len(df)} rows to {output_path}")
+    log.info("Wrote %d rows to %s", len(df), output_path)
 
     return output_path
 

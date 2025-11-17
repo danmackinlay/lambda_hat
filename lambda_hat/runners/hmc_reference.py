@@ -5,6 +5,7 @@ against approximate methods (SGLD, VI, MCLMC).
 """
 
 import json
+import logging
 import time
 from pathlib import Path
 
@@ -18,6 +19,8 @@ from lambda_hat.nn_eqx import build_mlp, count_params
 from lambda_hat.sampling_runner import run_sampler
 from lambda_hat.targets import TargetBundle
 from lambda_hat.workflow_utils import compose_build_cfg, target_id_for
+
+log = logging.getLogger(__name__)
 
 
 def run_hmc_reference(problem_spec, out_ref_json, budget_sec=36000, seed=42):
@@ -42,9 +45,9 @@ def run_hmc_reference(problem_spec, out_ref_json, budget_sec=36000, seed=42):
             - runtime_sec: float, actual runtime
             - n_samples: int, number of HMC samples
     """
-    print(f"[HMC Reference] Starting for problem: {problem_spec}")
-    print(f"  Budget: {budget_sec}s ({budget_sec / 3600:.1f}h)")
-    print(f"  Output: {out_ref_json}")
+    log.info("[HMC Reference] Starting for problem: %s", problem_spec)
+    log.info("  Budget: %ds (%.1fh)", budget_sec, budget_sec / 3600)
+    log.info("  Output: %s", out_ref_json)
 
     # Build target using existing workflow infrastructure
     # Enable x64 for HMC (high precision)
@@ -53,7 +56,7 @@ def run_hmc_reference(problem_spec, out_ref_json, budget_sec=36000, seed=42):
 
     # Compute target ID for caching (optional, for logging/debugging)
     tid = target_id_for(build_cfg)
-    print(f"  Target ID: {tid}")
+    log.info("  Target ID: %s", tid)
 
     # Build target: model + dataset
     # Reuse logic from commands/build_cmd.py
@@ -181,19 +184,19 @@ def run_hmc_reference(problem_spec, out_ref_json, budget_sec=36000, seed=42):
     )
 
     # Run HMC with time budget enforcement
-    print(f"[HMC Reference] Running HMC (d={d}, n={n_data})...")
+    log.info("[HMC Reference] Running HMC (d=%d, n=%d)...", d, n_data)
     key = jax.random.PRNGKey(seed)
 
     t0 = time.time()
     try:
         result = run_sampler("hmc", hmc_cfg, target_bundle, key)
     except Exception as e:
-        print(f"[HMC Reference] FAILED: {e}")
+        log.error("[HMC Reference] FAILED: %s", e)
         raise
     finally:
         runtime_sec = time.time() - t0
 
-    print(f"[HMC Reference] HMC completed in {runtime_sec:.1f}s")
+    log.info("[HMC Reference] HMC completed in %.1fs", runtime_sec)
 
     # Analyze traces to extract LLC
     traces = result["traces"]
@@ -242,7 +245,9 @@ def run_hmc_reference(problem_spec, out_ref_json, budget_sec=36000, seed=42):
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(ref, indent=2))
 
-    print(f"[HMC Reference] LLC_ref = {llc_ref:.4f} ± {se_ref:.4f if se_ref else 0:.4f}")
-    print(f"[HMC Reference] Wrote reference to {out_ref_json}")
+    log.info(
+        "[HMC Reference] LLC_ref = %.4f ± %.4f", llc_ref, se_ref if se_ref else 0
+    )
+    log.info("[HMC Reference] Wrote reference to %s", out_ref_json)
 
     return ref

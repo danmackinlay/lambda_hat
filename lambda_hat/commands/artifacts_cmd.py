@@ -2,12 +2,16 @@
 """Artifact management commands - GC, list, and TensorBoard helpers."""
 
 import json
+import logging
 import os
 import shutil
 import time
 from typing import Dict, Optional
 
 from lambda_hat.artifacts import Paths
+from lambda_hat.logging_config import configure_logging
+
+log = logging.getLogger(__name__)
 
 
 def _collect_reachable(paths: Paths) -> set:
@@ -47,6 +51,7 @@ def gc_entry(ttl_days: Optional[int] = None) -> Dict:
             - removed: Number of objects removed
             - ttl_days: TTL used
     """
+    configure_logging()
     paths = Paths.from_env()
     paths.ensure()
 
@@ -88,25 +93,26 @@ def gc_entry(ttl_days: Optional[int] = None) -> Dict:
             except (json.JSONDecodeError, KeyError, FileNotFoundError):
                 continue
 
-    print(f"GC removed {removed} unreachable objects (older than {ttl_days}d).")
+    log.info("GC removed %d unreachable objects (older than %dd).", removed, ttl_days)
     return {"removed": removed, "ttl_days": ttl_days}
 
 
 def ls_entry() -> None:
     """List experiments and their runs to stdout."""
+    configure_logging()
     paths = Paths.from_env()
     paths.ensure()
 
     experiments = sorted(d.name for d in paths.experiments.glob("*") if d.is_dir())
     if not experiments:
-        print("No experiments found.")
+        log.info("No experiments found.")
         return
 
     for exp_name in experiments:
-        print(f"[{exp_name}]")
+        log.info("[%s]", exp_name)
         manifest = paths.experiments / exp_name / "manifest.jsonl"
         if not manifest.exists():
-            print("  (no runs)")
+            log.info("  (no runs)")
             continue
 
         try:
@@ -117,9 +123,9 @@ def ls_entry() -> None:
                 run_id = rec.get("run_id", "?")
                 algo = rec.get("algo", "?")
                 phase = rec.get("phase", "?")
-                print(f"  {run_id}  {algo}  phase={phase}")
+                log.info("  %s  %s  phase=%s", run_id, algo, phase)
         except (json.JSONDecodeError, FileNotFoundError):
-            print("  (error reading manifest)")
+            log.warning("  (error reading manifest)")
 
 
 def tb_entry(experiment: str) -> str:
@@ -131,8 +137,9 @@ def tb_entry(experiment: str) -> str:
     Returns:
         str: Path to TensorBoard logdir
     """
+    configure_logging()
     paths = Paths.from_env()
     paths.ensure()
     tb_dir = paths.experiments / experiment / "tb"
-    print(f"TensorBoard logdir: {tb_dir}")
+    log.info("TensorBoard logdir: %s", tb_dir)
     return str(tb_dir)

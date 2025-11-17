@@ -20,6 +20,7 @@ See plans/optuna.md for design details.
 
 import argparse
 import json
+import logging
 import pickle
 import sys
 import time
@@ -31,8 +32,11 @@ import parsl
 from omegaconf import OmegaConf
 
 from lambda_hat.id_utils import problem_id, trial_id
+from lambda_hat.logging_config import configure_logging
 from lambda_hat.parsl_cards import build_parsl_config_from_card, load_parsl_config_from_card
 from lambda_hat.runners.parsl_apps import compute_hmc_reference, run_method_trial
+
+log = logging.getLogger(__name__)
 
 
 def huber_loss(x, delta=0.1):
@@ -144,7 +148,7 @@ def run_optuna_workflow(
 
     # Load Parsl configuration
     if local and not parsl_card_path:
-        print("Using Parsl mode: local (ThreadPool)")
+        log.info("Using Parsl mode: local (ThreadPool)")
         parsl_cfg = build_parsl_config_from_card(OmegaConf.create({"type": "local"}))
     elif parsl_card_path:
         card_path = Path(parsl_card_path)
@@ -152,9 +156,9 @@ def run_optuna_workflow(
             card_path = Path.cwd() / card_path
         if not card_path.exists():
             raise FileNotFoundError(f"Parsl card not found: {card_path}")
-        print(f"Using Parsl card: {card_path}")
+        log.info("Using Parsl card: %s", card_path)
         if parsl_overrides:
-            print(f"  Overrides: {parsl_overrides}")
+            log.info("  Overrides: %s", parsl_overrides)
         parsl_cfg = load_parsl_config_from_card(card_path, parsl_overrides or [])
     else:
         raise ValueError("Must specify either local=True or parsl_card_path")
@@ -163,28 +167,27 @@ def run_optuna_workflow(
     parsl.load(parsl_cfg)
 
     # Load experiment configuration
-    print(f"Loading experiment config from {config_path}...")
+    log.info("Loading experiment config from %s...", config_path)
     exp = OmegaConf.load(config_path)
 
     # Extract problems and methods
     problems = list(exp.get("problems", []))
     methods = list(exp.get("methods", ["sgld", "vi", "mclmc"]))
 
-    print("\n=== Optuna Workflow Configuration ===")
-    print(f"Problems: {len(problems)}")
-    print(f"Methods: {methods}")
-    print(f"Max trials per (problem, method): {max_trials_per_method}")
-    print(f"Batch size (concurrent trials): {batch_size}")
-    print(f"HMC budget: {hmc_budget_sec}s ({hmc_budget_sec / 3600:.1f}h)")
-    print(f"Method budget: {method_budget_sec}s ({method_budget_sec / 60:.1f}min)")
-    print(f"Artifacts: {artifacts_dir}, Results: {results_dir}")
-    print()
+    log.info("=== Optuna Workflow Configuration ===")
+    log.info("Problems: %d", len(problems))
+    log.info("Methods: %s", methods)
+    log.info("Max trials per (problem, method): %d", max_trials_per_method)
+    log.info("Batch size (concurrent trials): %d", batch_size)
+    log.info("HMC budget: %ds (%.1fh)", hmc_budget_sec, hmc_budget_sec / 3600)
+    log.info("Method budget: %ds (%.1fmin)", method_budget_sec, method_budget_sec / 60)
+    log.info("Artifacts: %s, Results: %s", artifacts_dir, results_dir)
 
     # ========================================================================
     # Stage 1: Compute HMC References
     # ========================================================================
 
-    print("=== Stage 1: Computing HMC References ===")
+    log.info("=== Stage 1: Computing HMC References ===")
     ref_futs = {}
     ref_meta = {}  # pid -> {llc_ref, se_ref, ...}
 
@@ -195,36 +198,36 @@ def run_optuna_workflow(
         out_ref = artifacts_dir / "problems" / pid / "ref.json"
         out_ref.parent.mkdir(parents=True, exist_ok=True)
 
-        print(f"  Problem {pid}:")
-        print(f"    Spec: {problem_spec}")
+        log.info("  Problem %s:", pid)
+        log.info("    Spec: %s", problem_spec)
 
         # Check if reference already exists
         if out_ref.exists():
-            print(f"    Reference exists, loading from {out_ref}")
+            log.info("    Reference exists, loading from %s", out_ref)
             ref_meta[pid] = json.loads(out_ref.read_text())
         else:
-            print("    Submitting HMC reference computation...")
+            log.info("    Submitting HMC reference computation...")
             ref_futs[pid] = compute_hmc_reference(
                 problem_spec, str(out_ref), budget_sec=hmc_budget_sec
             )
 
     # Wait for missing references to complete
-    print(f"\n  Waiting for {len(ref_futs)} HMC references to complete...")
+    log.info("  Waiting for %d HMC references to complete...", len(ref_futs))
     for pid, fut in ref_futs.items():
         try:
             ref_meta[pid] = fut.result()
-            print(f"    ✓ {pid}: LLC_ref = {ref_meta[pid]['llc_ref']:.4f}")
+            log.info("    ✓ %s: LLC_ref = %.4f", pid, ref_meta[pid]["llc_ref"])
         except Exception as e:
-            print(f"    ✗ {pid}: FAILED - {e}")
+            log.error("    ✗ %s: FAILED - %s", pid, e)
             raise
 
-    print(f"\n  All {len(ref_meta)} HMC references ready")
+    log.info("  All %d HMC references ready", len(ref_meta))
 
     # ========================================================================
     # Stage 2: Optuna Optimization (ask-and-tell loop)
     # ========================================================================
 
-    print("\n=== Stage 2: Hyperparameter Optimization ===")
+    log.info("=== Stage 2: Hyperparameter Optimization ===")
 
     # Storage for Optuna studies (in-memory + periodic pickle)
     study_dir = results_dir / "studies" / "optuna_llc"
@@ -243,10 +246,10 @@ def run_optuna_workflow(
         pid = problem_id(problem_spec)
         llc_ref = float(ref_meta[pid]["llc_ref"])
 
-        print(f"\n  Problem {pid} (LLC_ref = {llc_ref:.4f})")
+        log.info("  Problem %s (LLC_ref = %.4f)", pid, llc_ref)
 
         for method_name in methods:
-            print(f"    Method: {method_name}")
+            log.info("    Method: %s", method_name)
 
             # Create Optuna study
             study_name = f"{pid}:{method_name}"
@@ -302,14 +305,15 @@ def run_optuna_workflow(
                 return fut
 
             # Prime the pump: fill initial batch
-            print(
-                f"      Submitting initial batch of {min(batch_size, max_trials_per_method)} trials..."
+            log.info(
+                "      Submitting initial batch of %d trials...",
+                min(batch_size, max_trials_per_method),
             )
             while submitted < min(batch_size, max_trials_per_method):
                 submit_one()
 
             # Main loop: process completions and refill batch
-            print(f"      Running optimization loop (max {max_trials_per_method} trials)...")
+            log.info("      Running optimization loop (max %d trials)...", max_trials_per_method)
             while len(study.trials) < max_trials_per_method:
                 # Check for completed futures
                 done = [f for f in list(inflight.keys()) if f.done()]
@@ -326,7 +330,7 @@ def run_optuna_workflow(
                         result = f.result()  # dict: {llc_hat, se_hat, runtime_sec, ...}
                     except Exception as e:
                         # Penalize crashed trials with large objective
-                        print(f"        Trial {tid} FAILED: {e}")
+                        log.error("        Trial %s FAILED: %s", tid, e)
                         study.tell(t, float("inf"))
                         continue
 
@@ -353,9 +357,13 @@ def run_optuna_workflow(
 
                     # Log progress
                     error_pct = abs(llc_hat - llc_ref) / llc_ref * 100
-                    print(
-                        f"        Trial {len(study.trials)}/{max_trials_per_method}: "
-                        f"LLC={llc_hat:.4f}, error={error_pct:.1f}%, obj={obj:.4f}"
+                    log.info(
+                        "        Trial %d/%d: LLC=%.4f, error=%.1f%%, obj=%.4f",
+                        len(study.trials),
+                        max_trials_per_method,
+                        llc_hat,
+                        error_pct,
+                        obj,
                     )
 
                     # Refill batch if under budget
@@ -372,22 +380,22 @@ def run_optuna_workflow(
             # Report best trial
             best_trial = study.best_trial
             if best_trial.value == float("inf"):
-                print("      ⚠ All trials failed - no valid hyperparameters found")
+                log.warning("      ⚠ All trials failed - no valid hyperparameters found")
             else:
-                print(f"      ✓ Best trial: obj={best_trial.value:.4f}")
-                print(f"        Hyperparams: {best_trial.params}")
+                log.info("      ✓ Best trial: obj=%.4f", best_trial.value)
+                log.info("        Hyperparams: %s", best_trial.params)
 
     # ========================================================================
     # Stage 3: Aggregate Results
     # ========================================================================
 
-    print("\n=== Stage 3: Aggregating Results ===")
+    log.info("=== Stage 3: Aggregating Results ===")
     df = pd.DataFrame(all_rows)
     output_path = results_dir / "optuna_trials.parquet"
     df.to_parquet(output_path, index=False)
 
-    print(f"  Wrote {len(df)} trials to {output_path}")
-    print("\n✓ Optuna workflow complete!")
+    log.info("  Wrote %d trials to %s", len(df), output_path)
+    log.info("✓ Optuna workflow complete!")
 
     # Clean up Parsl
     parsl.clear()
@@ -461,8 +469,11 @@ def main():
 
     args = parser.parse_args()
 
+    # Configure logging at entrypoint
+    configure_logging()
+
     # Run workflow
-    print(f"Using Optuna config: {args.config}\n")
+    log.info("Using Optuna config: %s", args.config)
 
     try:
         output_path = run_optuna_workflow(
@@ -477,9 +488,9 @@ def main():
             artifacts_dir=args.artifacts_dir,
             results_dir=args.results_dir,
         )
-        print(f"\n✓ Results: {output_path}")
+        log.info("✓ Results: %s", output_path)
     except Exception as e:
-        print(f"\n✗ Workflow failed: {e}", file=sys.stderr)
+        log.error("✗ Workflow failed: %s", e)
         raise
 
 
