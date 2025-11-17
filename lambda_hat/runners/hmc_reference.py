@@ -51,8 +51,8 @@ def run_hmc_reference(problem_spec, out_ref_json, budget_sec=36000, seed=42):
 
     # Build target using existing workflow infrastructure
     # Enable x64 for HMC (high precision)
+    # Note: JAX_ENABLE_X64 is set by executor's worker_init, not at runtime
     build_cfg = compose_build_cfg(problem_spec, jax_enable_x64=True)
-    jax.config.update("jax_enable_x64", True)
 
     # Compute target ID for caching (optional, for logging/debugging)
     tid = target_id_for(build_cfg)

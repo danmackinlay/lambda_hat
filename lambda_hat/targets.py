@@ -4,9 +4,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
-import equinox as eqx
 
 from lambda_hat.config import validate_teacher_cfg
 

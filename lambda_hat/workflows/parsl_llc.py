@@ -28,7 +28,7 @@ from parsl import python_app
 
 from lambda_hat.artifacts import Paths, RunContext
 from lambda_hat.logging_config import configure_logging
-from lambda_hat.parsl_cards import build_parsl_config_from_card, load_parsl_config_from_card
+from lambda_hat.parsl_cards import load_parsl_config_from_card
 from lambda_hat.workflow_utils import (
     compose_build_cfg,
     compose_sample_cfg,
@@ -39,19 +39,59 @@ from lambda_hat.workflow_utils import (
 log = logging.getLogger(__name__)
 
 # ============================================================================
+# Helper Functions
+# ============================================================================
+
+
+def get_executor_for_dtype(dtype_str: str) -> str:
+    """Determine which executor to use based on dtype.
+
+    Args:
+        dtype_str: Either "float64" or "float32"
+
+    Returns:
+        Executor label: "htex64" for float64, "htex32" for float32
+    """
+    return "htex64" if dtype_str == "float64" else "htex32"
+
+
+def get_sampler_dtype(sample_cfg: OmegaConf, sampler_name: str) -> str:
+    """Extract sampler's dtype from sample config.
+
+    Args:
+        sample_cfg: Composed sample configuration
+        sampler_name: Sampler name (hmc, mclmc, sgld, vi)
+
+    Returns:
+        dtype string: "float64" or "float32"
+    """
+    # Read dtype from sampler config, matching sampling_runner.py logic
+    if sampler_name in ("hmc", "mclmc"):
+        return str(sample_cfg.sampler.get(sampler_name, {}).get("dtype", "float64"))
+    elif sampler_name == "sgld":
+        return str(sample_cfg.sampler.sgld.get("dtype", "float32"))
+    elif sampler_name == "vi":
+        return str(sample_cfg.sampler.vi.dtype)
+    else:
+        # Default to float32 for unknown samplers
+        return "float32"
+
+
+# ============================================================================
 # Parsl Apps (task definitions)
 # ============================================================================
 
 
 @python_app
-def build_target_app(cfg_yaml, target_id, experiment, jax_x64):
+def build_target_app(cfg_yaml, target_id, experiment):
     """Build a target (train neural network) via direct command call.
+
+    Environment is set by executor's worker_init (JAX_ENABLE_X64, MPLBACKEND).
 
     Args:
         cfg_yaml: Path to composed build config YAML
         target_id: Target identifier (e.g., 'tgt_abc123')
         experiment: Experiment name for artifact system
-        jax_x64: JAX precision flag (0 or 1)
 
     Returns:
         dict: Build result from build_entry with keys:
@@ -61,24 +101,21 @@ def build_target_app(cfg_yaml, target_id, experiment, jax_x64):
             - L0: Initial loss
             - experiment: Experiment name
     """
-    import jax
-
-    jax.config.update("jax_enable_x64", bool(jax_x64))
-
     from lambda_hat.commands.build_cmd import build_entry
 
     return build_entry(cfg_yaml, target_id, experiment)
 
 
 @python_app
-def run_sampler_app(cfg_yaml, target_id, experiment, jax_x64, inputs=None):
+def run_sampler_app(cfg_yaml, target_id, experiment, inputs=None):
     """Run a sampler (MCMC/VI) for a target via direct command call.
+
+    Environment is set by executor's worker_init (JAX_ENABLE_X64, MPLBACKEND).
 
     Args:
         cfg_yaml: Path to composed sample config YAML
         target_id: Target identifier
         experiment: Experiment name for artifact system
-        jax_x64: JAX precision flag (0 or 1)
         inputs: List of futures this task depends on (target build)
 
     Returns:
@@ -88,10 +125,6 @@ def run_sampler_app(cfg_yaml, target_id, experiment, jax_x64, inputs=None):
             - metrics: Analysis metrics
             - experiment: Experiment name
     """
-    import jax
-
-    jax.config.update("jax_enable_x64", bool(jax_x64))
-
     from lambda_hat.commands.sample_cmd import sample_entry
 
     return sample_entry(cfg_yaml, target_id, experiment)
@@ -167,7 +200,9 @@ def run_workflow(
     jax_x64 = bool(exp.get("jax_enable_x64", True))
     # Legacy store_root for promote functionality (backward compatibility)
     store_root = exp.get("store_root", "runs")
-    jax_x64_flag = 1 if jax_x64 else 0
+
+    # Determine default executor for build tasks based on global jax_x64 setting
+    build_executor = get_executor_for_dtype("float64" if jax_x64 else "float32")
 
     targets_conf = list(exp["targets"])
     samplers_conf = list(exp["samplers"])
@@ -209,12 +244,18 @@ def run_workflow(
         cfg_yaml_path.write_text(OmegaConf.to_yaml(build_cfg))
 
         # Submit build job (uses artifact system via command modules)
-        log.info("  Submitting build for %s (model=%s, data=%s)", tid, t["model"], t["data"])
+        log.info(
+            "  Submitting build for %s (model=%s, data=%s) → %s",
+            tid,
+            t["model"],
+            t["data"],
+            build_executor,
+        )
         future = build_target_app(
             cfg_yaml=str(cfg_yaml_path),
             target_id=tid,
             experiment=experiment,
-            jax_x64=jax_x64_flag,
+            executor=build_executor,
         )
         target_futures[tid] = future
 
@@ -236,18 +277,30 @@ def run_workflow(
             sample_cfg = compose_sample_cfg(tid, s, jax_enable_x64=jax_x64)
             rid = run_id_for(sample_cfg)
 
+            # Determine executor based on sampler's dtype
+            sampler_name = s["name"]
+            dtype = get_sampler_dtype(sample_cfg, sampler_name)
+            executor = get_executor_for_dtype(dtype)
+
             # Write temp config YAML
             cfg_yaml_path = temp_cfg_dir / f"sample_{tid}_{s['name']}_{rid}.yaml"
             cfg_yaml_path.write_text(OmegaConf.to_yaml(sample_cfg))
 
             # Submit sampling job (uses artifact system via command modules)
-            log.info("  Submitting %s for %s (run_id=%s)", s["name"], tid, rid)
+            log.info(
+                "  Submitting %s for %s (run_id=%s, dtype=%s) → %s",
+                sampler_name,
+                tid,
+                rid,
+                dtype,
+                executor,
+            )
             future = run_sampler_app(
                 cfg_yaml=str(cfg_yaml_path),
                 target_id=tid,
                 experiment=experiment,
-                jax_x64=jax_x64_flag,
                 inputs=[target_futures[tid]],  # Dependency: wait for target build
+                executor=executor,
             )
             run_futures.append(future)
 
@@ -429,7 +482,7 @@ def main():
     parser.add_argument(
         "--local",
         action="store_true",
-        help="Use local ThreadPool executor (equivalent to --parsl-card config/parsl/local.yaml)",
+        help="Use local HTEX executors (equivalent to --parsl-card config/parsl/local.yaml)",
     )
     parser.add_argument(
         "--promote",
@@ -458,11 +511,13 @@ def main():
 
     # Resolve Parsl config
     if args.local and not args.parsl_card:
-        # Local mode: build config directly from card spec with RunContext run_dir
-        log.info("Using Parsl mode: local (ThreadPool)")
-        parsl_cfg = build_parsl_config_from_card(
-            OmegaConf.create({"type": "local", "run_dir": str(ctx_early.parsl_dir)})
-        )
+        # Local mode: load local.yaml card with RunContext run_dir
+        log.info("Using Parsl mode: local (dual HTEX)")
+        local_card_path = Path("config/parsl/local.yaml")
+        if not local_card_path.exists():
+            log.error("Local card not found: %s", local_card_path)
+            sys.exit(1)
+        parsl_cfg = load_parsl_config_from_card(local_card_path, [f"run_dir={ctx_early.parsl_dir}"])
     elif args.parsl_card:
         # Card-based config with run_dir override
         card_path = Path(args.parsl_card)

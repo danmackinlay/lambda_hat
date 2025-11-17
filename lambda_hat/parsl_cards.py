@@ -9,8 +9,8 @@ from pathlib import Path
 from omegaconf import DictConfig, OmegaConf
 from parsl.addresses import address_by_hostname
 from parsl.config import Config
-from parsl.executors import HighThroughputExecutor, ThreadPoolExecutor
-from parsl.providers import SlurmProvider
+from parsl.executors import HighThroughputExecutor
+from parsl.providers import LocalProvider, SlurmProvider
 
 
 def _scheduler_options_from_card(c: DictConfig) -> str:
@@ -53,19 +53,39 @@ def build_parsl_config_from_card(card: DictConfig) -> Config:
     run_dir = card.get("run_dir", "parsl_runinfo")
 
     if typ == "local":
-        # Set JAX default behavior
-        os.environ.setdefault(
-            "JAX_DEFAULT_PRNG_IMPL", card.get("jax_default_prng_impl", "threefry2x32")
-        )
-        max_threads = card.get("max_threads")
-        if max_threads is None:
-            max_threads = min(os.cpu_count() or 4, 8)
+        # Build dual HTEX executors for x64 and x32 precision isolation
+        executors_config = card.get("executors", [])
+        if not executors_config:
+            raise ValueError(
+                "Local config requires 'executors' list with htex64 and htex32 definitions"
+            )
+
+        executors = []
+        total_workers = min(os.cpu_count() or 4, 8)
+        default_max_workers = total_workers // len(executors_config)
+
+        for exec_cfg in executors_config:
+            max_workers = exec_cfg.get("max_workers")
+            if max_workers is None:
+                max_workers = default_max_workers
+
+            provider = LocalProvider(
+                init_blocks=1,
+                max_blocks=1,
+                nodes_per_block=1,
+                worker_init=exec_cfg.get("worker_init", "").strip(),
+            )
+
+            htex = HighThroughputExecutor(
+                label=exec_cfg.get("label", "htex_local"),
+                cores_per_worker=int(exec_cfg.get("cores_per_worker", 1)),
+                max_workers_per_node=int(max_workers),
+                provider=provider,
+            )
+            executors.append(htex)
+
         return Config(
-            executors=[
-                ThreadPoolExecutor(
-                    label=card.get("label", "local_threads"), max_threads=int(max_threads)
-                )
-            ],
+            executors=executors,
             retries=int(card.get("retries", 1)),
             run_dir=run_dir,
         )

@@ -59,6 +59,17 @@ def run_sampler(
 
     dtype = jnp.float32 if dtype_str == "float32" else jnp.float64
 
+    # Validate that environment JAX_ENABLE_X64 matches sampler's dtype requirement
+    # This ensures executor routing is working correctly
+    expected_x64 = dtype_str == "float64"
+    actual_x64 = jax.config.jax_enable_x64
+    if expected_x64 != actual_x64:
+        log.warning(
+            f"JAX precision mismatch: sampler '{sampler_name}' expects dtype={dtype_str} "
+            f"(JAX_ENABLE_X64={expected_x64}) but environment has JAX_ENABLE_X64={actual_x64}. "
+            f"This may indicate incorrect executor routing."
+        )
+
     # Cast model and data to sampler's dtype
     model = ensure_dtype(target.params0, dtype)
     X = target.X.astype(dtype)
