@@ -11,6 +11,13 @@ import jax.numpy as jnp
 import pytest
 from omegaconf import OmegaConf
 
+from lambda_hat.equinox_adapter import vectorise_model
+from lambda_hat.posterior import (
+    make_grad_loss_minibatch_flat,
+    make_loss_full_flat,
+    make_loss_minibatch_flat,
+    make_posterior,
+)
 from lambda_hat.samplers import run_vi
 
 # Suppress JAX warnings for cleaner test output
@@ -24,24 +31,41 @@ def tiny_problem():
     n = 100
     key = jax.random.PRNGKey(42)
 
-    # Simple linear regression setup
+    # Simple linear regression setup (just a dict with parameter array)
     params = {"w": jax.random.normal(key, (d,)).astype(jnp.float32)}
     X = jax.random.normal(key, (n, d)).astype(jnp.float32)
     Y = jax.random.normal(key, (n,)).astype(jnp.float32)
 
-    def loss_batch(p, Xb, Yb):
-        return jnp.mean((p["w"] @ Xb.T - Yb) ** 2)
+    # Loss functions that work on model (dict with 'w' key)
+    def loss_batch(model, Xb, Yb):
+        return jnp.mean((model["w"] @ Xb.T - Yb) ** 2)
 
-    def loss_full(p):
-        return jnp.mean((p["w"] @ X.T - Y) ** 2)
+    def loss_full(model):
+        return jnp.mean((model["w"] @ X.T - Y) ** 2)
+
+    # Vectorize the model
+    vm, flat0 = vectorise_model(params, dtype=jnp.float32)
+
+    # Create posterior
+    beta = 1.0
+    gamma = 0.001
+    posterior = make_posterior(vm, flat0, loss_full, n, beta, gamma)
+
+    # Create flat loss functions
+    loss_minibatch_flat = make_loss_minibatch_flat(vm, loss_batch)
+    grad_loss_minibatch = make_grad_loss_minibatch_flat(vm, loss_batch)
+    loss_full_flat = make_loss_full_flat(vm, loss_full)
 
     return {
-        "params": params,
+        "posterior": posterior,
+        "loss_minibatch_flat": loss_minibatch_flat,
+        "grad_loss_minibatch": grad_loss_minibatch,
+        "loss_full_flat": loss_full_flat,
         "X": X,
         "Y": Y,
-        "loss_batch": loss_batch,
-        "loss_full": loss_full,
         "n_data": n,
+        "beta": beta,
+        "gamma": gamma,
         "key": key,
     }
 
@@ -75,18 +99,20 @@ def mfa_config():
 
 
 def test_vi_algorithms_return_consistent_structure(tiny_problem, mfa_config):
-    """Test that both MFA and Flow return dicts with same keys."""
+    """Test that MFA returns SamplerRunResult with correct structure."""
     # Run MFA
     mfa_result = run_vi(
-        rng_key=tiny_problem["key"],
-        loss_batch_fn=tiny_problem["loss_batch"],
-        loss_full_fn=tiny_problem["loss_full"],
-        initial_params=tiny_problem["params"],
+        key=tiny_problem["key"],
+        posterior=tiny_problem["posterior"],
         data=(tiny_problem["X"], tiny_problem["Y"]),
         config=mfa_config,
         num_chains=1,
-        beta=1.0,
-        gamma=0.001,
+        loss_minibatch_flat=tiny_problem["loss_minibatch_flat"],
+        grad_loss_minibatch=tiny_problem["grad_loss_minibatch"],
+        loss_full_flat=tiny_problem["loss_full_flat"],
+        n_data=tiny_problem["n_data"],
+        beta=tiny_problem["beta"],
+        gamma=tiny_problem["gamma"],
     )
 
     # Check MFA structure
@@ -118,15 +144,17 @@ def test_fge_calculation_correctness_mfa(tiny_problem, mfa_config):
     steps = mfa_config.steps
 
     result = run_vi(
-        rng_key=tiny_problem["key"],
-        loss_batch_fn=tiny_problem["loss_batch"],
-        loss_full_fn=tiny_problem["loss_full"],
-        initial_params=tiny_problem["params"],
+        key=tiny_problem["key"],
+        posterior=tiny_problem["posterior"],
         data=(tiny_problem["X"], tiny_problem["Y"]),
         config=mfa_config,
         num_chains=1,
-        beta=1.0,
-        gamma=0.001,
+        loss_minibatch_flat=tiny_problem["loss_minibatch_flat"],
+        grad_loss_minibatch=tiny_problem["grad_loss_minibatch"],
+        loss_full_flat=tiny_problem["loss_full_flat"],
+        n_data=n_data,
+        beta=tiny_problem["beta"],
+        gamma=tiny_problem["gamma"],
     )
 
     # Expected FGE per step
@@ -144,15 +172,17 @@ def test_whitener_integration_mfa(tiny_problem, mfa_config):
     """Test that MFA works with and without whitener (no crashes)."""
     # Test 1: Without whitener (whitening_mode='none')
     result_no_whitener = run_vi(
-        rng_key=tiny_problem["key"],
-        loss_batch_fn=tiny_problem["loss_batch"],
-        loss_full_fn=tiny_problem["loss_full"],
-        initial_params=tiny_problem["params"],
+        key=tiny_problem["key"],
+        posterior=tiny_problem["posterior"],
         data=(tiny_problem["X"], tiny_problem["Y"]),
         config=mfa_config,
         num_chains=1,
-        beta=1.0,
-        gamma=0.001,
+        loss_minibatch_flat=tiny_problem["loss_minibatch_flat"],
+        grad_loss_minibatch=tiny_problem["grad_loss_minibatch"],
+        loss_full_flat=tiny_problem["loss_full_flat"],
+        n_data=tiny_problem["n_data"],
+        beta=tiny_problem["beta"],
+        gamma=tiny_problem["gamma"],
     )
 
     assert jnp.isfinite(result_no_whitener.traces["llc"]).all(), (
@@ -162,15 +192,17 @@ def test_whitener_integration_mfa(tiny_problem, mfa_config):
     # Test 2: With whitener (adam)
     config_with_whitener = OmegaConf.create({**mfa_config, "whitening_mode": "adam"})
     result_with_whitener = run_vi(
-        rng_key=tiny_problem["key"],
-        loss_batch_fn=tiny_problem["loss_batch"],
-        loss_full_fn=tiny_problem["loss_full"],
-        initial_params=tiny_problem["params"],
+        key=tiny_problem["key"],
+        posterior=tiny_problem["posterior"],
         data=(tiny_problem["X"], tiny_problem["Y"]),
         config=config_with_whitener,
         num_chains=1,
-        beta=1.0,
-        gamma=0.001,
+        loss_minibatch_flat=tiny_problem["loss_minibatch_flat"],
+        grad_loss_minibatch=tiny_problem["grad_loss_minibatch"],
+        loss_full_flat=tiny_problem["loss_full_flat"],
+        n_data=tiny_problem["n_data"],
+        beta=tiny_problem["beta"],
+        gamma=tiny_problem["gamma"],
     )
 
     assert jnp.isfinite(result_with_whitener.traces["llc"]).all(), (
@@ -178,10 +210,6 @@ def test_whitener_integration_mfa(tiny_problem, mfa_config):
     )
 
     # Results should differ (whitener affects optimization)
-    llc_diff = abs(
-        float(result_no_whitener.traces["llc"][0, -1])
-        - float(result_with_whitener.traces["llc"][0, -1])
-    )
     # Note: We can't assert they're different because with such a simple problem
     # and random initialization, they might converge to similar values
     # Just verify both work without crashing
@@ -190,15 +218,17 @@ def test_whitener_integration_mfa(tiny_problem, mfa_config):
 def test_work_metrics_structure(tiny_problem, mfa_config):
     """Test that work dict has expected structure across algorithms."""
     result = run_vi(
-        rng_key=tiny_problem["key"],
-        loss_batch_fn=tiny_problem["loss_batch"],
-        loss_full_fn=tiny_problem["loss_full"],
-        initial_params=tiny_problem["params"],
+        key=tiny_problem["key"],
+        posterior=tiny_problem["posterior"],
         data=(tiny_problem["X"], tiny_problem["Y"]),
         config=mfa_config,
         num_chains=1,
-        beta=1.0,
-        gamma=0.001,
+        loss_minibatch_flat=tiny_problem["loss_minibatch_flat"],
+        grad_loss_minibatch=tiny_problem["grad_loss_minibatch"],
+        loss_full_flat=tiny_problem["loss_full_flat"],
+        n_data=tiny_problem["n_data"],
+        beta=tiny_problem["beta"],
+        gamma=tiny_problem["gamma"],
     )
 
     # Check work dict structure

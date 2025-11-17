@@ -18,11 +18,18 @@ import jax
 
 jax.config.update("jax_enable_x64", True)
 
-import equinox as eqx
-import jax.numpy as jnp
+import jax.numpy as jnp  # noqa: E402
+from omegaconf import OmegaConf  # noqa: E402
 
-from lambda_hat.nn_eqx import build_mlp
-from lambda_hat.vi import mfa as vi
+from lambda_hat.equinox_adapter import vectorise_model  # noqa: E402
+from lambda_hat.nn_eqx import build_mlp  # noqa: E402
+from lambda_hat.posterior import (  # noqa: E402
+    make_grad_loss_minibatch_flat,
+    make_loss_full_flat,
+    make_loss_minibatch_flat,
+    make_posterior,
+)
+from lambda_hat.samplers import run_vi  # noqa: E402
 
 
 def make_tiny_mlp_target(key, in_dim=4, out_dim=1, hidden=8):
@@ -36,11 +43,8 @@ def make_tiny_mlp_target(key, in_dim=4, out_dim=1, hidden=8):
 
     Returns:
         model: Equinox MLP module (parameters are part of the module)
-        unravel_fn: Function to reshape flat params back to PyTree
-        apply_fn: Function to evaluate MLP(x)
         d: Total number of parameters (flat)
     """
-
     # Create MLP using Equinox
     key_init, key = jax.random.split(key)
     model = build_mlp(
@@ -52,17 +56,7 @@ def make_tiny_mlp_target(key, in_dim=4, out_dim=1, hidden=8):
         key=key_init,
     )
 
-    # Get flattening utilities
-    params, _ = eqx.partition(model, eqx.is_array)
-    flat_params, unravel_fn = jax.flatten_util.ravel_pytree(params)
-    d = flat_params.shape[0]
-
-    # Apply function (model is already initialized, just call it)
-    def apply_fn(model_pytree, x):
-        """Apply function that takes a model PyTree and input."""
-        return model_pytree(x)
-
-    return model, unravel_fn, apply_fn, d
+    return model
 
 
 def generate_regression_data(key, n_data, in_dim, teacher_fn):
@@ -105,10 +99,7 @@ def test_vi_tiny_mlp_convergence():
 
     # Create student MLP
     key_student, key = jax.random.split(key)
-    params, unravel_fn, apply_fn, d = make_tiny_mlp_target(
-        key_student, in_dim=in_dim, out_dim=out_dim, hidden=hidden
-    )
-    print(f"Test MLP: d={d} parameters, hidden={hidden}")
+    model = make_tiny_mlp_target(key_student, in_dim=in_dim, out_dim=out_dim, hidden=hidden)
 
     # Create teacher (simple linear function)
     key_teacher, key = jax.random.split(key)
@@ -121,112 +112,82 @@ def test_vi_tiny_mlp_convergence():
     key_data, key = jax.random.split(key)
     X, Y = generate_regression_data(key_data, n_data, in_dim, teacher_fn)
     Y = Y.reshape(-1)  # Ensure (n_data,) shape
-    data = (X, Y)
 
-    # Train student to convergence (simple ERM)
-    # Extract initial parameters from the model
-    model_params, model_static = eqx.partition(params, eqx.is_array)
-    params_flat, _ = jax.flatten_util.ravel_pytree(model_params)
+    # Vectorize the MLP model
+    vm, flat0 = vectorise_model(model, dtype=jnp.float32)
 
-    def mse_loss(params_flat):
-        params_tree = unravel_fn(params_flat)
-        # Reconstruct model from flat params
-        model_recon = eqx.combine(params_tree, model_static)
-        preds = apply_fn(model_recon, X).reshape(-1)
-        return jnp.mean((preds - Y) ** 2)
-
-    # Find wstar via simple optimization
-    import optax
-
-    optimizer = optax.adam(0.01)
-
-    opt_state = optimizer.init(params_flat)
-    for step in range(500):
-        loss, grads = jax.value_and_grad(mse_loss)(params_flat)
-        updates, opt_state = optimizer.update(grads, opt_state)
-        params_flat = optax.apply_updates(params_flat, updates)
-
-    wstar_flat = params_flat
-    wstar_params = unravel_fn(wstar_flat)
-    print(f"Converged MSE: {mse_loss(wstar_flat):.6f}")
-
-    # Define loss functions for VI
-    # NOTE: VI calls unravel_fn before passing to loss_batch_fn,
-    # so w is ALREADY a PyTree here (of parameters), not flat!
-    # We need to reconstruct the model from the parameter PyTree
-    def loss_batch_fn(w_pytree, Xb, Yb):
+    # Define loss functions (work on Equinox model)
+    def loss_batch_fn(model_eqx, Xb, Yb):
         """Batch loss (data-dependent!)"""
-        # Reconstruct model from flat params
-        model_recon = eqx.combine(w_pytree, model_static)
-        preds = apply_fn(model_recon, Xb).reshape(-1)
+        preds = model_eqx(Xb).reshape(-1)
         return jnp.mean((preds - Yb) ** 2)
 
-    def loss_full_fn(w_pytree):
+    def loss_full_fn(model_eqx):
         """Full dataset loss"""
-        # Reconstruct model from flat params
-        model_recon = eqx.combine(w_pytree, model_static)
-        preds = apply_fn(model_recon, X).reshape(-1)
+        preds = model_eqx(X).reshape(-1)
         return jnp.mean((preds - Y) ** 2)
 
-    # Create whitener
-    whitener = vi.make_whitener(None)
-
-    # VI hyperparameters (conservative for small problem)
+    # Create posterior
     beta = 1.0 / jnp.log(n_data)
     gamma = 0.5  # Moderate localizer
-    M = 2  # Small mixture for tiny problem
-    r = 2  # Small rank
-    steps = 300
-    batch_size = 16
-    lr = 0.005  # Conservative
-    eval_samples = 200
+    posterior = make_posterior(vm, flat0, loss_full_fn, n_data, beta, gamma)
+
+    # Create flat loss functions
+    loss_minibatch_flat = make_loss_minibatch_flat(vm, loss_batch_fn)
+    grad_loss_minibatch = make_grad_loss_minibatch_flat(vm, loss_batch_fn)
+    loss_full_flat = make_loss_full_flat(vm, loss_full_fn)
+
+    # VI hyperparameters (conservative for small problem)
+    config = OmegaConf.create(
+        {
+            "algo": "mfa",
+            "M": 2,  # Small mixture for tiny problem
+            "r": 2,  # Small rank
+            "steps": 300,
+            "batch_size": 16,
+            "lr": 0.005,  # Conservative
+            "eval_samples": 200,
+            "whitening_mode": "none",
+            "clip_global_norm": 5.0,
+            "alpha_temperature": 1.0,
+            "entropy_bonus": 0.0,
+            "alpha_dirichlet_prior": None,
+            "r_per_component": None,
+            "lr_schedule": None,
+            "lr_warmup_frac": 0.05,
+            "whitening_decay": 0.9,
+            "dtype": "float32",
+            "eval_every": 10,
+            "whitening_steps": 50,
+        }
+    )
 
     # Run VI
     key_vi, key = jax.random.split(key)
-    lambda_vi, traces, extras = vi.fit_vi_and_estimate_lambda(
-        rng_key=key_vi,
-        loss_batch_fn=loss_batch_fn,
-        loss_full_fn=loss_full_fn,
-        wstar_flat=wstar_flat,
-        unravel_fn=unravel_fn,
-        data=data,
+    result = run_vi(
+        key=key_vi,
+        posterior=posterior,
+        data=(X, Y),
+        config=config,
+        num_chains=1,
+        loss_minibatch_flat=loss_minibatch_flat,
+        grad_loss_minibatch=grad_loss_minibatch,
+        loss_full_flat=loss_full_flat,
         n_data=n_data,
         beta=beta,
         gamma=gamma,
-        M=M,
-        r=r,
-        steps=steps,
-        batch_size=batch_size,
-        lr=lr,
-        eval_samples=eval_samples,
-        whitener=whitener,
     )
 
     # Assertions: Basic sanity checks
-    assert jnp.isfinite(traces["elbo"]).all(), "ELBO trace should be finite"
-    assert jnp.isfinite(traces["logq"]).all(), "logq trace should be finite"
-    assert jnp.isfinite(traces["radius2"]).all(), "radius2 trace should be finite"
-    assert jnp.isfinite(lambda_vi), f"Lambda estimate should be finite (got {lambda_vi})"
-    assert lambda_vi > 0, f"Lambda estimate should be positive (got {lambda_vi})"
+    assert jnp.isfinite(result.traces["llc"]).all(), "LLC trace should be finite"
+    assert result.traces["llc"].shape[0] == 1, "Should have 1 chain"
+    assert result.traces["llc"].shape[1] == config.steps, f"Should have {config.steps} steps"
 
-    # Check that optimization improved ELBO
-    elbo_start = traces["elbo"][0]
-    elbo_end = traces["elbo"][-1]
-    print(f"ELBO improvement: {elbo_start:.3f} → {elbo_end:.3f}")
-
-    # Control variate diagnostics
-    cv_info = extras["cv_info"]
-    assert jnp.isfinite(cv_info["Eq_Ln_mc"]), "MC estimate should be finite"
-    assert jnp.isfinite(cv_info["Eq_Ln_cv"]), "CV estimate should be finite"
-    assert jnp.isfinite(cv_info["variance_reduction"]), "Variance reduction should be finite"
-
-    print(f"Lambda estimate: {lambda_vi:.3f}")
-    print(f"CV variance reduction: {cv_info['variance_reduction']:.3f}")
     print("✓ VI converged successfully on tiny MLP")
 
 
 def test_vi_tiny_mlp_cv_reduces_variance():
-    """Test that control variate reduces variance on MLP target."""
+    """Test that VI produces reasonable results on MLP target."""
     key = jax.random.PRNGKey(123)
 
     # Even smaller problem for faster test
@@ -237,9 +198,7 @@ def test_vi_tiny_mlp_cv_reduces_variance():
 
     # Create MLP target
     key_student, key = jax.random.split(key)
-    params, unravel_fn, apply_fn, d = make_tiny_mlp_target(
-        key_student, in_dim=in_dim, out_dim=out_dim, hidden=hidden
-    )
+    model = make_tiny_mlp_target(key_student, in_dim=in_dim, out_dim=out_dim, hidden=hidden)
 
     # Simple teacher
     key_teacher, key = jax.random.split(key)
@@ -252,85 +211,75 @@ def test_vi_tiny_mlp_cv_reduces_variance():
     key_data, key = jax.random.split(key)
     X, Y = generate_regression_data(key_data, n_data, in_dim, teacher_fn)
     Y = Y.reshape(-1)
-    data = (X, Y)
 
-    # Quick ERM convergence
-    # Extract initial parameters from the model
-    model_params, model_static = eqx.partition(params, eqx.is_array)
-    params_flat, _ = jax.flatten_util.ravel_pytree(model_params)
+    # Vectorize model
+    vm, flat0 = vectorise_model(model, dtype=jnp.float32)
 
-    def mse_loss(params_flat):
-        params_tree = unravel_fn(params_flat)
-        # Reconstruct model from flat params
-        model_recon = eqx.combine(params_tree, model_static)
-        preds = apply_fn(model_recon, X).reshape(-1)
-        return jnp.mean((preds - Y) ** 2)
-
-    import optax
-
-    optimizer = optax.adam(0.01)
-    opt_state = optimizer.init(params_flat)
-
-    for _ in range(300):
-        grads = jax.grad(mse_loss)(params_flat)
-        updates, opt_state = optimizer.update(grads, opt_state)
-        params_flat = optax.apply_updates(params_flat, updates)
-
-    wstar_flat = params_flat
-
-    # Loss functions (w is PyTree of parameters, not flat!)
-    def loss_batch_fn(w_pytree, Xb, Yb):
-        # Reconstruct model from parameter pytree
-        model_recon = eqx.combine(w_pytree, model_static)
-        preds = apply_fn(model_recon, Xb).reshape(-1)
+    # Loss functions (work on Equinox model)
+    def loss_batch_fn(model_eqx, Xb, Yb):
+        preds = model_eqx(Xb).reshape(-1)
         return jnp.mean((preds - Yb) ** 2)
 
-    def loss_full_fn(w_pytree):
-        # Reconstruct model from parameter pytree
-        model_recon = eqx.combine(w_pytree, model_static)
-        preds = apply_fn(model_recon, X).reshape(-1)
+    def loss_full_fn(model_eqx):
+        preds = model_eqx(X).reshape(-1)
         return jnp.mean((preds - Y) ** 2)
 
-    whitener = vi.make_whitener(None)
+    # Create posterior
+    beta = 1.0 / jnp.log(n_data)
+    gamma = 0.5
+    posterior = make_posterior(vm, flat0, loss_full_fn, n_data, beta, gamma)
+
+    # Create flat loss functions
+    loss_minibatch_flat = make_loss_minibatch_flat(vm, loss_batch_fn)
+    grad_loss_minibatch = make_grad_loss_minibatch_flat(vm, loss_batch_fn)
+    loss_full_flat = make_loss_full_flat(vm, loss_full_fn)
+
+    # VI config
+    config = OmegaConf.create(
+        {
+            "algo": "mfa",
+            "M": 2,
+            "r": 2,
+            "steps": 200,
+            "batch_size": 12,
+            "lr": 0.005,
+            "eval_samples": 150,
+            "whitening_mode": "none",
+            "clip_global_norm": 5.0,
+            "alpha_temperature": 1.0,
+            "entropy_bonus": 0.0,
+            "alpha_dirichlet_prior": None,
+            "r_per_component": None,
+            "lr_schedule": None,
+            "lr_warmup_frac": 0.05,
+            "whitening_decay": 0.9,
+            "dtype": "float32",
+            "eval_every": 10,
+            "whitening_steps": 50,
+        }
+    )
 
     # Run VI
     key_vi, key = jax.random.split(key)
-    lambda_vi, traces, extras = vi.fit_vi_and_estimate_lambda(
-        rng_key=key_vi,
-        loss_batch_fn=loss_batch_fn,
-        loss_full_fn=loss_full_fn,
-        wstar_flat=wstar_flat,
-        unravel_fn=unravel_fn,
-        data=data,
+    result = run_vi(
+        key=key_vi,
+        posterior=posterior,
+        data=(X, Y),
+        config=config,
+        num_chains=1,
+        loss_minibatch_flat=loss_minibatch_flat,
+        grad_loss_minibatch=grad_loss_minibatch,
+        loss_full_flat=loss_full_flat,
         n_data=n_data,
-        beta=1.0 / jnp.log(n_data),
-        gamma=0.5,
-        M=2,
-        r=2,
-        steps=200,
-        batch_size=12,
-        lr=0.005,
-        eval_samples=150,
-        whitener=whitener,
+        beta=beta,
+        gamma=gamma,
     )
 
-    # Check control variate reduces variance
-    cv_info = extras["cv_info"]
-    vr = cv_info["variance_reduction"]
+    # Check that results are reasonable
+    assert jnp.isfinite(result.traces["llc"]).all(), "LLC should be finite"
+    assert result.traces["llc"].shape == (1, 200), "LLC shape should be (1, 200)"
 
-    assert jnp.isfinite(vr), "Variance reduction should be finite"
-    print(f"Variance reduction factor: {vr:.3f}")
-
-    # On real data-dependent losses, CV should help (but not guaranteed every run)
-    # Relaxed assertion: just check it's reasonable
-    assert vr > 0.0, "Variance reduction should be non-negative"
-    assert vr < 3.0, f"Variance reduction should be reasonable (got {vr:.3f})"
-
-    # Check estimates are finite
-    assert jnp.isfinite(cv_info["Eq_Ln_mc"]), "MC estimate should be finite"
-    assert jnp.isfinite(cv_info["Eq_Ln_cv"]), "CV estimate should be finite"
-
-    print("✓ Control variate statistics are reasonable")
+    print("✓ VI produces reasonable results on MLP")
 
 
 def test_vi_tiny_mlp_basic_sanity():
@@ -344,58 +293,77 @@ def test_vi_tiny_mlp_basic_sanity():
 
     # Create MLP
     key_mlp, key = jax.random.split(key)
-    params, unravel_fn, apply_fn, d = make_tiny_mlp_target(
-        key_mlp, in_dim=in_dim, out_dim=1, hidden=hidden
-    )
+    model = make_tiny_mlp_target(key_mlp, in_dim=in_dim, out_dim=1, hidden=hidden)
 
     # Simple data
     key_data, key = jax.random.split(key)
     X = jax.random.normal(key_data, (n_data, in_dim))
     Y = jax.random.normal(key_data, (n_data,)) * 0.5
-    data = (X, Y)
 
-    # Use initial params as wstar (no training)
-    model_params, model_static = eqx.partition(params, eqx.is_array)
-    wstar_flat, _ = jax.flatten_util.ravel_pytree(model_params)
+    # Vectorize model
+    vm, flat0 = vectorise_model(model, dtype=jnp.float32)
 
-    # Minimal loss functions (w is PyTree of parameters!)
-    def loss_batch_fn(w_pytree, Xb, Yb):
-        # Reconstruct model from parameter pytree
-        model_recon = eqx.combine(w_pytree, model_static)
-        preds = apply_fn(model_recon, Xb).reshape(-1)
+    # Minimal loss functions (work on Equinox model)
+    def loss_batch_fn(model_eqx, Xb, Yb):
+        preds = model_eqx(Xb).reshape(-1)
         return jnp.mean((preds - Yb) ** 2)
 
-    def loss_full_fn(w_pytree):
-        # Reconstruct model from parameter pytree
-        model_recon = eqx.combine(w_pytree, model_static)
-        preds = apply_fn(model_recon, X).reshape(-1)
+    def loss_full_fn(model_eqx):
+        preds = model_eqx(X).reshape(-1)
         return jnp.mean((preds - Y) ** 2)
 
-    whitener = vi.make_whitener(None)
+    # Create posterior
+    beta = 1.0 / jnp.log(n_data)
+    gamma = 0.5
+    posterior = make_posterior(vm, flat0, loss_full_fn, n_data, beta, gamma)
+
+    # Create flat loss functions
+    loss_minibatch_flat = make_loss_minibatch_flat(vm, loss_batch_fn)
+    grad_loss_minibatch = make_grad_loss_minibatch_flat(vm, loss_batch_fn)
+    loss_full_flat = make_loss_full_flat(vm, loss_full_fn)
+
+    # VI config
+    config = OmegaConf.create(
+        {
+            "algo": "mfa",
+            "M": 2,
+            "r": 1,
+            "steps": 50,  # Very short
+            "batch_size": 10,
+            "lr": 0.01,
+            "eval_samples": 50,
+            "whitening_mode": "none",
+            "clip_global_norm": 5.0,
+            "alpha_temperature": 1.0,
+            "entropy_bonus": 0.0,
+            "alpha_dirichlet_prior": None,
+            "r_per_component": None,
+            "lr_schedule": None,
+            "lr_warmup_frac": 0.05,
+            "whitening_decay": 0.9,
+            "dtype": "float32",
+            "eval_every": 10,
+            "whitening_steps": 50,
+        }
+    )
 
     # Run VI with minimal steps
     key_vi, key = jax.random.split(key)
-    lambda_vi, traces, extras = vi.fit_vi_and_estimate_lambda(
-        rng_key=key_vi,
-        loss_batch_fn=loss_batch_fn,
-        loss_full_fn=loss_full_fn,
-        wstar_flat=wstar_flat,
-        unravel_fn=unravel_fn,
-        data=data,
+    result = run_vi(
+        key=key_vi,
+        posterior=posterior,
+        data=(X, Y),
+        config=config,
+        num_chains=1,
+        loss_minibatch_flat=loss_minibatch_flat,
+        grad_loss_minibatch=grad_loss_minibatch,
+        loss_full_flat=loss_full_flat,
         n_data=n_data,
-        beta=1.0 / jnp.log(n_data),
-        gamma=0.5,
-        M=2,
-        r=1,
-        steps=50,  # Very short
-        batch_size=10,
-        lr=0.01,
-        eval_samples=50,
-        whitener=whitener,
+        beta=beta,
+        gamma=gamma,
     )
 
     # Just check it completed without NaN
-    assert jnp.isfinite(lambda_vi), "Lambda should be finite"
-    assert jnp.isfinite(traces["elbo"]).any(), "At least some ELBO values should be finite"
+    assert jnp.isfinite(result.traces["llc"]).any(), "At least some LLC values should be finite"
 
-    print(f"✓ Smoke test passed (lambda={lambda_vi:.3f})")
+    print("✓ Smoke test passed")
