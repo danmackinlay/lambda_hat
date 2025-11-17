@@ -138,6 +138,11 @@ def run_sgld(
     flat0 = posterior.flat0
     dtype = posterior.vm.dtype
 
+    # Guarantee sampler runs in its configured dtype (belt-and-suspenders cast)
+    # The runner already casts earlier, but this ensures correctness even if
+    # called directly from tests or other paths
+    flat0 = jnp.asarray(flat0, dtype=dtype)
+
     # Scale factors for SGLD drift
     beta_tilde = jnp.asarray(beta * n_data, dtype=dtype)  # n*beta for loss gradient
     gamma_val = jnp.asarray(gamma, dtype=dtype)  # gamma for prior/localization

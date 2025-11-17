@@ -68,20 +68,33 @@ def _deserialize_model(model_template: Any, path: Path) -> Any:
 
     Returns:
         Reconstructed Equinox module
+
+    Note:
+        Target artifacts are always saved as float32. We temporarily disable
+        x64 mode during deserialization to ensure template leaves match the
+        on-disk dtype, preventing Equinox dtype validation errors.
     """
-    # Split template into params and static
-    params, static = eqx.partition(model_template, eqx.is_array)
+    # Ensure template leaves are float32 during deserialization because
+    # target params are saved on disk as float32
+    x64_prev = jax.config.read("jax_enable_x64")
+    try:
+        jax.config.update("jax_enable_x64", False)
 
-    # Load parameters
-    with open(path / "params.eqx", "rb") as f:
-        params = eqx.tree_deserialise_leaves(f, params)
+        # Split template into params and static
+        params, static = eqx.partition(model_template, eqx.is_array)
 
-    # Load static structure
-    with open(path / "static.eqx", "rb") as f:
-        static = eqx.tree_deserialise_leaves(f, static)
+        # Load parameters
+        with open(path / "params.eqx", "rb") as f:
+            params = eqx.tree_deserialise_leaves(f, params)
 
-    # Combine and return
-    return eqx.combine(params, static)
+        # Load static structure
+        with open(path / "static.eqx", "rb") as f:
+            static = eqx.tree_deserialise_leaves(f, static)
+
+        # Combine and return
+        return eqx.combine(params, static)
+    finally:
+        jax.config.update("jax_enable_x64", x64_prev)
 
 
 def _check_legacy_format(path: Path) -> bool:

@@ -451,10 +451,12 @@ def build_elbo_step(
         z = aux["z"]
         eps = aux["eps"]
 
-        # 2) Draw minibatch
+        # 2) Draw minibatch (use JAX gather for JIT safety)
         key_batch = jax.random.split(key)[0]
         idx = jax.random.choice(key_batch, X.shape[0], shape=(batch_size,), replace=True)
-        Xb, Yb = X[idx], Y[idx]
+        idx = jnp.asarray(idx, dtype=jnp.int32)  # Backend-safe gather indices
+        Xb = jnp.take(X, idx, axis=0)
+        Yb = jnp.take(Y, idx, axis=0)
 
         # 3) ELBO objective: ℓ(w) = -nβ L_batch(w) - ½γ ||tilde_v||^2
         # (STL: no explicit -log q term in gradients for continuous params)
@@ -704,6 +706,10 @@ def fit_vi_and_estimate_lambda(
         traces: Dict of optimization traces (for analysis)
         extras: Dict with {π, D_sqrt, Eq_Ln, Ln_wstar, final_params}
     """
+    # Ensure data are JAX arrays (needed for JIT-safe indexed sampling)
+    X, Y = jnp.asarray(data[0]), jnp.asarray(data[1])
+    data = (X, Y)
+
     key_init, key_opt, key_eval = jax.random.split(rng_key, 3)
     ref_dtype = wstar_flat.dtype
 
