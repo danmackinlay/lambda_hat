@@ -72,7 +72,8 @@ def build_entry(config_yaml: str, target_id: str, experiment: Optional[str] = No
     assert "target" in cfg and "seed" in cfg.target, "cfg.target.seed missing"
     assert "jax" in cfg and "enable_x64" in cfg.jax, "cfg.jax.enable_x64 missing"
 
-    jax.config.update("jax_enable_x64", bool(cfg.jax.enable_x64))
+    # Note: JAX_ENABLE_X64 is set by executor's worker_init, not at runtime
+    # The config value is kept for compatibility and dtype casting logic
 
     # Configure logging at entrypoint
     configure_logging()

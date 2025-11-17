@@ -31,7 +31,7 @@ import parsl
 from omegaconf import OmegaConf
 
 from lambda_hat.id_utils import problem_id, trial_id
-from lambda_hat.parsl_cards import build_parsl_config_from_card, load_parsl_config_from_card
+from lambda_hat.parsl_cards import load_parsl_config_from_card
 from lambda_hat.runners.parsl_apps import compute_hmc_reference, run_method_trial
 
 
@@ -144,8 +144,11 @@ def run_optuna_workflow(
 
     # Load Parsl configuration
     if local and not parsl_card_path:
-        print("Using Parsl mode: local (ThreadPool)")
-        parsl_cfg = build_parsl_config_from_card(OmegaConf.create({"type": "local"}))
+        print("Using Parsl mode: local (dual HTEX)")
+        local_card_path = Path("config/parsl/local.yaml")
+        if not local_card_path.exists():
+            raise FileNotFoundError(f"Local card not found: {local_card_path}")
+        parsl_cfg = load_parsl_config_from_card(local_card_path, [])
     elif parsl_card_path:
         card_path = Path(parsl_card_path)
         if not card_path.is_absolute():
@@ -203,9 +206,9 @@ def run_optuna_workflow(
             print(f"    Reference exists, loading from {out_ref}")
             ref_meta[pid] = json.loads(out_ref.read_text())
         else:
-            print("    Submitting HMC reference computation...")
+            print("    Submitting HMC reference computation → htex64...")
             ref_futs[pid] = compute_hmc_reference(
-                problem_spec, str(out_ref), budget_sec=hmc_budget_sec
+                problem_spec, str(out_ref), budget_sec=hmc_budget_sec, executor="htex64"
             )
 
     # Wait for missing references to complete
@@ -248,6 +251,10 @@ def run_optuna_workflow(
         for method_name in methods:
             print(f"    Method: {method_name}")
 
+            # Determine executor based on method's typical precision
+            # MCLMC uses float64, SGLD/VI use float32
+            method_executor = "htex64" if method_name == "mclmc" else "htex32"
+
             # Create Optuna study
             study_name = f"{pid}:{method_name}"
             study = optuna.create_study(
@@ -286,7 +293,7 @@ def run_optuna_workflow(
                 # Build method config
                 method_cfg = {"name": method_name, **hp}
 
-                # Submit Parsl app
+                # Submit Parsl app with appropriate executor
                 fut = run_method_trial(
                     problem_spec,
                     method_cfg,
@@ -294,6 +301,7 @@ def run_optuna_workflow(
                     str(run_dir / "metrics.json"),
                     budget_sec=method_budget_sec,
                     seed=int(t.number),
+                    executor=method_executor,
                 )
 
                 inflight[fut] = (t, tid, run_dir)
@@ -302,9 +310,8 @@ def run_optuna_workflow(
                 return fut
 
             # Prime the pump: fill initial batch
-            print(
-                f"      Submitting initial batch of {min(batch_size, max_trials_per_method)} trials..."
-            )
+            initial_batch = min(batch_size, max_trials_per_method)
+            print(f"      Submitting initial batch of {initial_batch} trials...")
             while submitted < min(batch_size, max_trials_per_method):
                 submit_one()
 
@@ -422,7 +429,7 @@ def main():
     parser.add_argument(
         "--local",
         action="store_true",
-        help="Use local ThreadPool executor (equivalent to --parsl-card config/parsl/local.yaml)",
+        help="Use local HTEX executors (equivalent to --parsl-card config/parsl/local.yaml)",
     )
     parser.add_argument(
         "--max-trials",

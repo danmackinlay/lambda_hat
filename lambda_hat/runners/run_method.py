@@ -62,9 +62,9 @@ def run_method_trial(
 
     # Build target using existing workflow infrastructure
     # Precision: use f32 for SGLD/VI, f64 for MCLMC (following existing patterns)
+    # Note: JAX_ENABLE_X64 is set by executor's worker_init, not at runtime
     enable_x64 = method_name in ("mclmc",)  # MCLMC uses f64, others use f32
     build_cfg = compose_build_cfg(problem_spec, jax_enable_x64=enable_x64)
-    jax.config.update("jax_enable_x64", enable_x64)
 
     print(f"  Precision: {'float64' if enable_x64 else 'float32'}")
 

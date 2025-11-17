@@ -1,6 +1,18 @@
 type: local
-label: local_threads
-max_threads: null      # null -> auto: min(cpu_count, 8)
+executors:
+  - label: htex64
+    max_workers: null  # null -> auto: min(cpu_count, 8) // 2
+    cores_per_worker: 1
+    worker_init: |
+      export MPLBACKEND=Agg
+      export JAX_ENABLE_X64=1
+      export JAX_DEFAULT_PRNG_IMPL=threefry2x32
+  - label: htex32
+    max_workers: null  # null -> auto: min(cpu_count, 8) // 2
+    cores_per_worker: 1
+    worker_init: |
+      export MPLBACKEND=Agg
+      export JAX_ENABLE_X64=0
+      export JAX_DEFAULT_PRNG_IMPL=threefry2x32
 retries: 1
 run_dir: parsl_runinfo
-jax_default_prng_impl: threefry2x32

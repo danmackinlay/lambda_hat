@@ -268,7 +268,7 @@ def workflow_llc(config, experiment, parsl_card, parsl_sets, local, promote, pro
     from omegaconf import OmegaConf
 
     from lambda_hat.artifacts import Paths, RunContext
-    from lambda_hat.parsl_cards import build_parsl_config_from_card, load_parsl_config_from_card
+    from lambda_hat.parsl_cards import load_parsl_config_from_card
     from lambda_hat.workflows.parsl_llc import run_workflow
 
     # Initialize artifact system early to get RunContext for Parsl run_dir
@@ -280,11 +280,13 @@ def workflow_llc(config, experiment, parsl_card, parsl_sets, local, promote, pro
 
     # Resolve Parsl config
     if local and not parsl_card:
-        # Local mode: build config directly from card spec with RunContext run_dir
-        click.echo("Using Parsl mode: local (ThreadPool)")
-        parsl_cfg = build_parsl_config_from_card(
-            OmegaConf.create({"type": "local", "run_dir": str(ctx_early.parsl_dir)})
-        )
+        # Local mode: load local.yaml card with RunContext run_dir
+        click.echo("Using Parsl mode: local (dual HTEX)")
+        local_card_path = Path("config/parsl/local.yaml")
+        if not local_card_path.exists():
+            click.echo(f"Error: Local card not found: {local_card_path}", err=True)
+            sys.exit(1)
+        parsl_cfg = load_parsl_config_from_card(local_card_path, [f"run_dir={ctx_early.parsl_dir}"])
     elif parsl_card:
         # Card-based config with run_dir override
         card_path = Path(parsl_card)

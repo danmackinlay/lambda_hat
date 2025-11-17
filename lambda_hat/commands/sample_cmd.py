@@ -6,10 +6,10 @@ import logging
 import time
 from typing import Dict, Optional
 
-import jax
-from omegaconf import OmegaConf
-import jax.numpy as jnp
 import equinox as eqx
+import jax
+import jax.numpy as jnp
+from omegaconf import OmegaConf
 
 from lambda_hat.analysis import (
     analyze_traces,
@@ -71,6 +71,7 @@ def sample_entry(config_yaml: str, target_id: str, experiment: Optional[str] = N
     # Temporarily disable x64 for model template creation and target loading
     # (targets are always saved as float32, so template must be float32)
     # Save current x64 state to restore later
+    # Note: In multiprocessing mode, JAX_ENABLE_X64 is set by executor's worker_init
     current_x64 = jax.config.jax_enable_x64
     jax.config.update("jax_enable_x64", False)
 
@@ -134,15 +135,14 @@ def sample_entry(config_yaml: str, target_id: str, experiment: Optional[str] = N
         target_payload, model_template=model_template
     )
 
-    # NOW enable x64 if requested (after deserialization succeeded)
-    jax.config.update("jax_enable_x64", bool(cfg.jax.enable_x64))
+    # Restore x64 state (executor's worker_init set the correct value)
+    jax.config.update("jax_enable_x64", current_x64)
 
     # Cast loaded model and data to sampler's required dtype using equinox_adapter
     # Determine dtype from sampler config (default: float64 if x64, else float32)
     sampler_dtype_str = OmegaConf.select(cfg, f"sampler.{cfg.sampler.name}.dtype")
     if sampler_dtype_str is None:
         sampler_dtype_str = "float64" if cfg.jax.enable_x64 else "float32"
-
 
     target_dtype = jnp.float32 if sampler_dtype_str == "float32" else jnp.float64
 
