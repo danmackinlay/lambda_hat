@@ -7,7 +7,6 @@ import os
 from pathlib import Path
 
 from omegaconf import DictConfig, OmegaConf
-from parsl.addresses import address_by_hostname
 from parsl.config import Config
 from parsl.executors import HighThroughputExecutor
 from parsl.providers import LocalProvider, SlurmProvider
@@ -78,7 +77,7 @@ def build_parsl_config_from_card(card: DictConfig) -> Config:
 
             htex = HighThroughputExecutor(
                 label=exec_cfg.get("label", "htex_local"),
-                address="127.0.0.1",  # Force localhost for local execution (avoids VPN/tunnel interfaces)
+                address="127.0.0.1",  # Force localhost (avoids VPN/tunnel interfaces)
                 cores_per_worker=int(exec_cfg.get("cores_per_worker", 1)),
                 max_workers_per_node=int(max_workers),
                 provider=provider,
@@ -115,7 +114,7 @@ export JAX_DEFAULT_PRNG_IMPL=threefry2x32
         )
         htex = HighThroughputExecutor(
             label=card.get("label", "htex_slurm"),
-            address="127.0.0.1",  # Force localhost for local execution (avoids VPN/tunnel interfaces)
+            address="127.0.0.1",  # Force localhost (avoids VPN/tunnel interfaces)
             max_workers=int(card.get("max_workers", 1)),
             provider=provider,
         )

@@ -136,7 +136,7 @@ We use **Parsl** for the full pipeline. Parsl provides Python-native DAG executi
 ### Quickstart
 
 ```bash
-# Run locally (uses ThreadPoolExecutor)
+# Run locally (uses dual HTEX, multi-process)
 uv run lambda-hat workflow llc --local
 
 # Run locally with promotion (generates galleries)

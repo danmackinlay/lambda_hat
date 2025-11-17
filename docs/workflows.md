@@ -45,7 +45,7 @@ Parsl manages parallel execution through Python futures:
 
 ### Local Execution
 
-**Default profile**: ThreadPoolExecutor with up to 8 workers.
+**Default profile**: Dual HighThroughputExecutor (multi-process) with separate executors for float64 and float32 precision isolation.
 
 ```bash
 # Run locally (uses up to 8 CPU cores)

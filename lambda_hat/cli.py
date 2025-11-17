@@ -232,7 +232,7 @@ def workflow():
 @click.option(
     "--local",
     is_flag=True,
-    help="Use local ThreadPool executor (equivalent to --parsl-card config/parsl/local.yaml)",
+    help="Use local dual-HTEX executor (equivalent to --parsl-card config/parsl/local.yaml)",
 )
 @click.option(
     "--promote",
@@ -359,7 +359,7 @@ def workflow_llc(config, experiment, parsl_card, parsl_sets, local, promote, pro
 @click.option(
     "--local",
     is_flag=True,
-    help="Use local dual-executor mode (equivalent to --parsl-card config/parsl/local.yaml)",
+    help="Use local dual-HTEX mode (equivalent to --parsl-card config/parsl/local.yaml)",
 )
 @click.option(
     "--dry-run",
