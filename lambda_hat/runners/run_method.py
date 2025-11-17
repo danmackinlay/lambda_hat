@@ -134,7 +134,9 @@ def run_method_trial(
     student_df = data_cfg.get("student_df", 4.0)
 
     # Equinox models are called directly: model(x), not model.apply(params, None, x)
-    predict_fn = lambda m, x: m(x)
+    def predict_fn(m, x):
+        return m(x)
+
     loss_full, loss_minibatch = make_loss_fns(
         predict_fn,
         X_cast,
@@ -248,12 +250,8 @@ def run_method_trial(
     # Write to output JSON (idempotent)
     _write_metrics(out_metrics_json, trial_metrics)
 
-    log.info(
-        "[Method Trial] LLC_hat = %.4f ± %.4f", llc_hat, se_hat if se_hat else 0
-    )
-    log.info(
-        "[Method Trial] Error vs ref = %.4f (%.1f%%)", error, error / ref_llc * 100
-    )
+    log.info("[Method Trial] LLC_hat = %.4f ± %.4f", llc_hat, se_hat if se_hat else 0)
+    log.info("[Method Trial] Error vs ref = %.4f (%.1f%%)", error, error / ref_llc * 100)
     log.info("[Method Trial] Wrote metrics to %s", out_metrics_json)
 
     return trial_metrics

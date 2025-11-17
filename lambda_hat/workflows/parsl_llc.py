@@ -350,7 +350,9 @@ def run_workflow(
             target_id = record["target_id"]
             sampler = record["sampler"]
             run_id = record["run_id"]
-            log.error("  [%d/%d] ✗ FAILED: %s/%s/%s", i, len(run_futures), target_id, sampler, run_id)
+            log.error(
+                "  [%d/%d] ✗ FAILED: %s/%s/%s", i, len(run_futures), target_id, sampler, run_id
+            )
             log.error("    Error: %s", str(e))
             log.error("    Stderr:  %s", stderr_path)
             log.error("    Stdout:  %s", stdout_path)
@@ -429,7 +431,9 @@ def run_workflow(
                     }
                     rows.append(row)
                 except Exception as e:
-                    log.warning("  Warning: Failed to read %s or %s: %s", analysis_path, manifest_path, e)
+                    log.warning(
+                        "  Warning: Failed to read %s or %s: %s", analysis_path, manifest_path, e
+                    )
             elif not analysis_path.exists():
                 log.warning("  Warning: Missing analysis.json at %s", analysis_path)
 

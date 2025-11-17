@@ -70,10 +70,11 @@ target-version = "py312"
 extend-select = ["E", "F", "I", "T201"]  # T201: ban print() in library code
 ignore = []
 
-# Allow print() in tests and notebooks, but ban it in library code
+# Allow print() in tests, notebooks, and docs scripts, but ban it in library code
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["T201"]
 "notebooks/**" = ["T201"]
+"docs/**" = ["T201"]
 
 [tool.ruff.format]
 quote-style = "double"

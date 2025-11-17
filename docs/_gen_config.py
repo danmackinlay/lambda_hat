@@ -15,7 +15,8 @@ def generate_config_doc():
         "**Auto-generated from `lambda_hat/conf/**/*.yaml`** — do not edit by hand.",
         "",
         "Use this page to look up exact YAML defaults and schemas.",
-        "For a conceptual guide on composing experiments, see [Experiments Guide](./experiments.md).",
+        "For a conceptual guide on composing experiments, see "
+        "[Experiments Guide](./experiments.md).",
         "",
         "This page lists all configuration options with their default values.",
         "Configuration files use Hydra/OmegaConf for composition and interpolation.",

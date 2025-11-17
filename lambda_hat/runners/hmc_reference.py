@@ -128,7 +128,9 @@ def run_hmc_reference(problem_spec, out_ref_json, budget_sec=36000, seed=42):
     student_df = data_cfg.get("student_df", 4.0)
 
     # Equinox models are called directly: model(x), not model.apply(params, None, x)
-    predict_fn = lambda m, x: m(x)
+    def predict_fn(m, x):
+        return m(x)
+
     loss_full_f64, loss_minibatch_f64 = make_loss_fns(
         predict_fn,
         X_f64,
@@ -245,9 +247,7 @@ def run_hmc_reference(problem_spec, out_ref_json, budget_sec=36000, seed=42):
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(ref, indent=2))
 
-    log.info(
-        "[HMC Reference] LLC_ref = %.4f ± %.4f", llc_ref, se_ref if se_ref else 0
-    )
+    log.info("[HMC Reference] LLC_ref = %.4f ± %.4f", llc_ref, se_ref if se_ref else 0)
     log.info("[HMC Reference] Wrote reference to %s", out_ref_json)
 
     return ref

@@ -132,7 +132,8 @@ def load_parsl_config_from_card(card_path: Path, dot_overrides: list[str] | None
 
     Args:
         card_path: Path to YAML card file
-        dot_overrides: OmegaConf dotlist overrides (e.g., ["walltime=04:00:00", "run_dir=/path/to/rundir"])
+        dot_overrides: OmegaConf dotlist overrides
+            (e.g., ["walltime=04:00:00", "run_dir=/path/to/rundir"])
 
     Returns:
         Parsl Config object

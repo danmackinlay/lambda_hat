@@ -16,11 +16,11 @@ matplotlib.use("Agg")
 matplotlib.rcParams["text.usetex"] = False
 matplotlib.rcParams["mathtext.default"] = "regular"
 
-import arviz as az
-import jax.numpy as jnp
-import matplotlib.pyplot as plt
-import numpy as np
-import pandas as pd
+import arviz as az  # noqa: E402
+import jax.numpy as jnp  # noqa: E402
+import matplotlib.pyplot as plt  # noqa: E402
+import numpy as np  # noqa: E402
+import pandas as pd  # noqa: E402
 
 log = logging.getLogger(__name__)
 

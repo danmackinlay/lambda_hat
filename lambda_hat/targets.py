@@ -128,7 +128,9 @@ def build_target(key, cfg: Config) -> tuple[TargetBundle, list[int], list[int] |
 
         # Create F32 loss functions for training
         # Equinox models are called directly: model(x), not model.apply(params, None, x)
-        predict_fn = lambda m, x: m(x)
+        def predict_fn(m, x):
+            return m(x)
+
         loss_full_f32, loss_minibatch_f32 = make_loss_fns(
             predict_fn,
             X_f32,
