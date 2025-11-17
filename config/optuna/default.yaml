@@ -1,0 +1,143 @@
+# Default Optuna hyperparameter optimization configuration
+# This is the source of truth for study behavior, search spaces, and execution settings.
+
+# Problem specifications (reuse model/data/teacher configs from main workflow)
+problems:
+  - model: small
+    data: base
+    teacher: _null
+    seed: 42
+    overrides:
+      data.noise_scale: 0.05
+
+# Methods to optimize (supports: sgld, vi, mclmc)
+methods: [sgld, vi, mclmc]
+
+# Optuna study configuration
+optuna:
+  # Objective function configuration
+  objective:
+    type: abs  # or {type: huber, delta: 0.1}
+
+  # Trial limits
+  max_trials_per_method: 100
+
+  # Concurrency controls
+  concurrency:
+    batch_size: 16  # Total inflight trials per (problem, method)
+    per_executor:   # Optional caps per executor label; omit to disable
+      htex64: 8
+      htex32: 16
+
+  # Sampler configuration
+  sampler:
+    type: tpe  # Tree-structured Parzen Estimator
+    seed: 42
+    n_startup_trials: 20  # Random sampling before TPE
+
+  # Pruner configuration (early stopping)
+  pruner:
+    type: median
+    n_startup_trials: 10  # Don't prune first N trials
+    n_warmup_steps: 1     # Don't prune before this many steps
+
+# Search spaces (moved from Python to YAML)
+# Each method maps to hyperparameter specifications:
+#   dist: float|int|categorical
+#   float/int: {low, high, log?, step?}
+#   categorical: {choices}
+search_space:
+  sgld:
+    eta0:
+      dist: float
+      low: 1.0e-6
+      high: 1.0e-1
+      log: true
+    gamma:
+      dist: float
+      low: 0.3
+      high: 1.0
+    batch:
+      dist: categorical
+      choices: [32, 64, 128, 256]
+    precond_type:
+      dist: categorical
+      choices: [none, rmsprop, adam]
+    steps:
+      dist: int
+      low: 5000
+      high: 20000
+      step: 1000
+
+  vi:
+    lr:
+      dist: float
+      low: 1.0e-5
+      high: 5.0e-2
+      log: true
+    M:
+      dist: categorical
+      choices: [4, 8, 16]
+    r:
+      dist: categorical
+      choices: [1, 2, 4]
+    whitening_mode:
+      dist: categorical
+      choices: [none, rmsprop, adam]
+    steps:
+      dist: int
+      low: 2000
+      high: 20000
+      step: 1000
+    batch_size:
+      dist: categorical
+      choices: [32, 64, 128, 256]
+
+  mclmc:
+    step_size:
+      dist: float
+      low: 1.0e-4
+      high: 1.0e-1
+      log: true
+    target_accept:
+      dist: float
+      low: 0.6
+      high: 0.95
+    L:
+      dist: float
+      low: 0.5
+      high: 3.0
+    steps:
+      dist: int
+      low: 200
+      high: 2000
+      step: 50
+
+# Execution configuration
+execution:
+  # Parsl backend (can override via --local or --parsl-card)
+  parsl_card: config/parsl/local.yaml
+
+  # Time budgets (seconds)
+  budget:
+    hmc_sec: 7200   # HMC reference computation (2 hours)
+    trial_sec: 600  # Per-trial timeout (10 minutes)
+
+  # Executor routing (optional; AUTO rules apply if omitted)
+  # AUTO rules:
+  #   - If both htex64 and htex32 exist:
+  #     hmc → htex64, mclmc → htex64, sgld/vi → htex32
+  #   - If single executor exists: route all tasks there
+  executor_map:
+    hmc: htex64  # HMC reference always needs float64
+    methods:
+      mclmc: htex64  # MCLMC needs float64
+      sgld: htex32   # SGLD uses float32
+      vi: htex32     # VI uses float32
+
+# Artifact storage configuration
+store:
+  root: runs           # Base directory for runs
+  layout_version: v1   # Artifact layout version
+  namespace: optuna    # Namespace for Optuna runs
+  ttl_days: 30         # Time-to-live for artifacts (for GC)

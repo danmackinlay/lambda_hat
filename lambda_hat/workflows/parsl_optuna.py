@@ -9,33 +9,118 @@ Bayesian optimization workflow that:
 
 Usage:
   # Local testing
-  lambda-hat workflow optuna --config config/optuna_demo.yaml --local
+  lambda-hat workflow optuna --config config/optuna/default.yaml --local
 
   # SLURM cluster
-  lambda-hat workflow optuna --config config/optuna_demo.yaml \\
+  lambda-hat workflow optuna --config config/optuna/default.yaml \\
       --parsl-card config/parsl/slurm/cpu.yaml
 
 See plans/optuna.md for design details.
 """
 
-import argparse
 import json
 import logging
 import pickle
 import time
-from pathlib import Path
 
 import optuna
 import pandas as pd
 import parsl
-from omegaconf import OmegaConf
+from omegaconf import DictConfig, OmegaConf
 
+from lambda_hat.artifacts import Paths, RunContext
 from lambda_hat.id_utils import problem_id, trial_id
-from lambda_hat.logging_config import configure_logging
-from lambda_hat.parsl_cards import load_parsl_config_from_card
 from lambda_hat.runners.parsl_apps import compute_hmc_reference, run_method_trial
 
 log = logging.getLogger(__name__)
+
+
+def _available_labels() -> set[str]:
+    """Read executor labels from the loaded Parsl config.
+
+    Returns:
+        Set of executor labels (e.g., {"htex64", "htex32"})
+
+    Raises:
+        RuntimeError: If Parsl is not loaded yet
+    """
+    try:
+        return {ex.label for ex in parsl.dfk().config.executors}
+    except RuntimeError as e:
+        raise RuntimeError("Parsl must be loaded before calling _available_labels()") from e
+
+
+def _executor_for(role: str, method: str, cfg: DictConfig) -> str:
+    """Determine which executor to use for a task.
+
+    Args:
+        role: Task role ("hmc" for HMC reference, "method" for method trials)
+        method: Method name (used only when role="method")
+        cfg: Optuna configuration with executor routing
+
+    Returns:
+        Executor label string
+
+    Raises:
+        RuntimeError: If no suitable executor found
+    """
+    # Use pre-computed routing from config loader
+    routing = cfg.get("_executor_routing", {})
+
+    if role == "hmc":
+        if "hmc" in routing:
+            return routing["hmc"]
+    elif role == "method":
+        if method in routing:
+            return routing[method]
+
+    # Fallback: single executor case
+    labels = _available_labels()
+    if len(labels) == 1:
+        return next(iter(labels))
+
+    raise RuntimeError(
+        f"No executor routing for role={role}, method={method}. Available executors: {labels}"
+    )
+
+
+def _suggest(trial, name: str, spec: dict):
+    """Suggest a single hyperparameter from YAML spec.
+
+    Args:
+        trial: Optuna Trial object
+        name: Parameter name
+        spec: Parameter spec dict from YAML (dist, low, high, choices, etc.)
+
+    Returns:
+        Suggested value
+
+    Raises:
+        ValueError: If distribution type is unknown
+    """
+    dist = spec["dist"]
+
+    if dist == "float":
+        return trial.suggest_float(name, spec["low"], spec["high"], log=spec.get("log", False))
+    elif dist == "int":
+        return trial.suggest_int(name, spec["low"], spec["high"], step=spec.get("step"))
+    elif dist == "categorical":
+        return trial.suggest_categorical(name, list(spec["choices"]))
+    else:
+        raise ValueError(f"Unknown distribution type: {dist}")
+
+
+def suggest_params_from_yaml(trial, space_dict: dict) -> dict:
+    """Suggest all hyperparameters for a method from YAML search space.
+
+    Args:
+        trial: Optuna Trial object
+        space_dict: Search space dict from cfg.search_space[method_name]
+
+    Returns:
+        Dict of hyperparameter name -> suggested value
+    """
+    return {name: _suggest(trial, name, dict(spec)) for name, spec in space_dict.items()}
 
 
 def huber_loss(x, delta=0.1):
@@ -52,138 +137,79 @@ def huber_loss(x, delta=0.1):
     return 0.5 * x * x / delta if ax <= delta else ax - 0.5 * delta
 
 
-def objective_from_metrics(llc_hat, llc_ref, huber_delta=None):
+def objective_from_metrics(llc_hat, llc_ref, objective_cfg):
     """Compute objective for Optuna from LLC estimates.
 
     Args:
         llc_hat: Estimated LLC from method
         llc_ref: Reference LLC from HMC
-        huber_delta: Huber delta (None = absolute error)
+        objective_cfg: Objective config dict from cfg.optuna.objective
 
     Returns:
         float: Objective value to minimize
     """
     diff = llc_hat - llc_ref
-    return huber_loss(diff, huber_delta) if huber_delta else abs(diff)
+    obj_type = objective_cfg.get("type", "abs")
 
-
-def suggest_method_params(trial, method_name):
-    """Suggest hyperparameters for a method using Optuna trial.
-
-    Args:
-        trial: Optuna Trial object
-        method_name: Method name ("sgld", "vi", "mclmc")
-
-    Returns:
-        dict: Hyperparameters for the method
-    """
-    if method_name == "sgld":
-        return {
-            "eta0": trial.suggest_float("eta0", 1e-6, 1e-1, log=True),
-            "gamma": trial.suggest_float("gamma", 0.3, 1.0),
-            "batch": trial.suggest_categorical("batch", [32, 64, 128, 256]),
-            "precond_type": trial.suggest_categorical("precond_type", ["rmsprop", "adam"]),
-            "steps": trial.suggest_int("steps", 5000, 20000, step=1000),
-        }
-    elif method_name == "vi":
-        return {
-            "lr": trial.suggest_float("lr", 1e-5, 5e-2, log=True),
-            "M": trial.suggest_categorical("M", [4, 8, 16]),
-            "r": trial.suggest_categorical("r", [1, 2, 4]),
-            "whitening_mode": trial.suggest_categorical(
-                "whitening_mode", ["none", "rmsprop", "adam"]
-            ),
-            "steps": trial.suggest_int("steps", 3000, 10000, step=500),
-            "batch_size": trial.suggest_categorical("batch_size", [128, 256, 512]),
-        }
-    elif method_name == "mclmc":
-        return {
-            "step_size": trial.suggest_float("step_size", 1e-5, 1e-1, log=True),
-            "target_accept": trial.suggest_float("target_accept", 0.5, 0.9),
-            "L": trial.suggest_float("L", 0.5, 2.0),
-            "steps": trial.suggest_int("steps", 5000, 20000, step=1000),
-        }
+    if obj_type == "abs":
+        return abs(diff)
+    elif obj_type == "huber":
+        delta = objective_cfg.get("delta", 0.1)
+        return huber_loss(diff, delta)
     else:
-        raise ValueError(f"Unknown method: {method_name}")
+        raise ValueError(f"Unknown objective type: {obj_type}")
 
 
-def run_optuna_workflow(
-    config_path,
-    parsl_card_path=None,
-    parsl_overrides=None,
-    local=False,
-    max_trials_per_method=200,
-    batch_size=32,
-    hmc_budget_sec=36000,
-    method_budget_sec=6000,
-    artifacts_dir="artifacts",
-    results_dir="results",
-    study_name=None,
-    storage_url=None,
-):
+def run_optuna_workflow(cfg: DictConfig):
     """Execute Optuna hyperparameter optimization workflow.
 
     Args:
-        config_path: Path to Optuna config YAML (problem specs)
-        parsl_card_path: Path to Parsl YAML card (e.g., config/parsl/slurm/cpu.yaml)
-        parsl_overrides: List of OmegaConf dotlist overrides for Parsl card
-        local: Use local ThreadPool executor instead of card (default: False)
-        max_trials_per_method: Maximum trials per (problem, method) (default: 200)
-        batch_size: Concurrent trials per (problem, method) (default: 32)
-        hmc_budget_sec: HMC reference time budget (default: 36000 = 10h)
-        method_budget_sec: Method trial time budget (default: 6000 = 100min)
-        artifacts_dir: Directory for artifacts (default: "artifacts", relative to CWD)
-        results_dir: Directory for results (default: "results", relative to CWD)
-        study_name: Optuna study name (optional, for future multi-study support)
-        storage_url: Optuna storage URL (optional, defaults to in-memory)
+        cfg: Resolved Optuna configuration (from load_cfg)
 
     Returns:
         Path to results parquet file
+
+    Side effects:
+        - Creates RunContext directories under cfg.store.root
+        - Writes resolved config to meta/resolved_config.yaml
+        - Persists HMC references, trial manifests, metrics, study pickles
+        - Aggregates trials to tables/optuna_trials.parquet
     """
-    # Convert paths to Path objects
-    artifacts_dir = Path(artifacts_dir)
-    results_dir = Path(results_dir)
-    results_dir.mkdir(exist_ok=True, parents=True)
+    # Initialize artifact system with RunContext
+    paths = Paths.from_env()
+    paths.ensure()
 
-    # Load Parsl configuration
-    if local and not parsl_card_path:
-        log.info("Using Parsl mode: local (dual HTEX)")
-        local_card_path = Path("config/parsl/local.yaml")
-        if not local_card_path.exists():
-            raise FileNotFoundError(f"Local card not found: {local_card_path}")
-        parsl_cfg = load_parsl_config_from_card(local_card_path, [])
-    elif parsl_card_path:
-        card_path = Path(parsl_card_path)
-        if not card_path.is_absolute():
-            card_path = Path.cwd() / card_path
-        if not card_path.exists():
-            raise FileNotFoundError(f"Parsl card not found: {card_path}")
-        log.info("Using Parsl card: %s", card_path)
-        if parsl_overrides:
-            log.info("  Overrides: %s", parsl_overrides)
-        parsl_cfg = load_parsl_config_from_card(card_path, parsl_overrides or [])
-    else:
-        raise ValueError("Must specify either local=True or parsl_card_path")
+    experiment = cfg.store.get("namespace", "optuna")
+    ctx = RunContext.create(experiment=experiment, algo="optuna_workflow", paths=paths)
 
-    # Load Parsl
-    parsl.load(parsl_cfg)
+    log.info("Run dir: %s", ctx.run_dir)
+    log.info("Artifacts: %s", ctx.artifacts_dir)
+    log.info("Logs: %s", ctx.logs_dir)
 
-    # Load experiment configuration
-    log.info("Loading experiment config from %s...", config_path)
-    exp = OmegaConf.load(config_path)
+    # Persist resolved config
+    meta_dir = ctx.run_dir / "meta"
+    meta_dir.mkdir(exist_ok=True, parents=True)
+    resolved_cfg_path = meta_dir / "resolved_config.yaml"
+    resolved_cfg_path.write_text(OmegaConf.to_yaml(cfg))
+    log.info("Resolved config: %s", resolved_cfg_path)
 
-    # Extract problems and methods
-    problems = list(exp.get("problems", []))
-    methods = list(exp.get("methods", ["sgld", "vi", "mclmc"]))
+    # Extract configuration
+    problems = list(cfg.get("problems", []))
+    methods = list(cfg.get("methods", []))
+    max_trials_per_method = cfg.optuna.max_trials_per_method
+    batch_size = cfg.optuna.concurrency.batch_size
+    per_executor_caps = cfg.optuna.concurrency.get("per_executor", {})
+    hmc_budget_sec = cfg.execution.budget.hmc_sec
+    trial_budget_sec = cfg.execution.budget.trial_sec
 
     log.info("=== Optuna Workflow Configuration ===")
     log.info("Problems: %d", len(problems))
     log.info("Methods: %s", methods)
     log.info("Max trials per (problem, method): %d", max_trials_per_method)
     log.info("Batch size (concurrent trials): %d", batch_size)
+    log.info("Per-executor caps: %s", dict(per_executor_caps) if per_executor_caps else "None")
     log.info("HMC budget: %ds (%.1fh)", hmc_budget_sec, hmc_budget_sec / 3600)
-    log.info("Method budget: %ds (%.1fmin)", method_budget_sec, method_budget_sec / 60)
-    log.info("Artifacts: %s, Results: %s", artifacts_dir, results_dir)
+    log.info("Method budget: %ds (%.1fmin)", trial_budget_sec, trial_budget_sec / 60)
 
     # ========================================================================
     # Stage 1: Compute HMC References
@@ -193,11 +219,14 @@ def run_optuna_workflow(
     ref_futs = {}
     ref_meta = {}  # pid -> {llc_ref, se_ref, ...}
 
+    problems_dir = ctx.artifacts_dir / "problems"
+    problems_dir.mkdir(exist_ok=True, parents=True)
+
     for p in problems:
         # Normalize problem spec to dict
         problem_spec = OmegaConf.to_container(p, resolve=True)
         pid = problem_id(problem_spec)
-        out_ref = artifacts_dir / "problems" / pid / "ref.json"
+        out_ref = problems_dir / pid / "ref.json"
         out_ref.parent.mkdir(parents=True, exist_ok=True)
 
         log.info("  Problem %s:", pid)
@@ -208,9 +237,10 @@ def run_optuna_workflow(
             log.info("    Reference exists, loading from %s", out_ref)
             ref_meta[pid] = json.loads(out_ref.read_text())
         else:
-            log.info("    Submitting HMC reference computation → htex64")
+            executor = _executor_for("hmc", "", cfg)
+            log.info("    Submitting HMC reference computation → %s", executor)
             ref_futs[pid] = compute_hmc_reference(
-                problem_spec, str(out_ref), budget_sec=hmc_budget_sec, executor="htex64"
+                problem_spec, str(out_ref), budget_sec=hmc_budget_sec, executor=executor
             )
 
     # Wait for missing references to complete
@@ -232,7 +262,7 @@ def run_optuna_workflow(
     log.info("=== Stage 2: Hyperparameter Optimization ===")
 
     # Storage for Optuna studies (in-memory + periodic pickle)
-    study_dir = results_dir / "studies" / "optuna_llc"
+    study_dir = ctx.run_dir / "studies"
     study_dir.mkdir(parents=True, exist_ok=True)
 
     def save_study(study, path):
@@ -253,29 +283,66 @@ def run_optuna_workflow(
         for method_name in methods:
             log.info("    Method: %s", method_name)
 
-            # Determine executor based on method's typical precision
-            # MCLMC uses float64, SGLD/VI use float32
-            method_executor = "htex64" if method_name == "mclmc" else "htex32"
+            # Get executor for this method
+            executor = _executor_for("method", method_name, cfg)
+            log.info("      Executor: %s", executor)
+
+            # Get search space for this method
+            method_space = cfg.search_space[method_name]
 
             # Create Optuna study
             study_name = f"{pid}:{method_name}"
+
+            # Build sampler from config
+            sampler_cfg = cfg.optuna.get("sampler", {})
+            sampler_type = sampler_cfg.get("type", "tpe")
+            if sampler_type == "tpe":
+                sampler = optuna.samplers.TPESampler(
+                    seed=sampler_cfg.get("seed", 42),
+                    n_startup_trials=sampler_cfg.get("n_startup_trials", 20),
+                )
+            else:
+                raise ValueError(f"Unknown sampler type: {sampler_type}")
+
+            # Build pruner from config
+            pruner_cfg = cfg.optuna.get("pruner", {})
+            pruner_type = pruner_cfg.get("type", "median")
+            if pruner_type == "median":
+                pruner = optuna.pruners.MedianPruner(
+                    n_startup_trials=pruner_cfg.get("n_startup_trials", 10),
+                    n_warmup_steps=pruner_cfg.get("n_warmup_steps", 1),
+                )
+            elif pruner_type == "none":
+                pruner = optuna.pruners.NopPruner()
+            else:
+                raise ValueError(f"Unknown pruner type: {pruner_type}")
+
             study = optuna.create_study(
                 direction="minimize",
                 study_name=study_name,
-                sampler=optuna.samplers.TPESampler(seed=42),
+                sampler=sampler,
+                pruner=pruner,
             )
 
-            # In-flight trials tracking
+            # In-flight trials tracking (global and per-executor)
             inflight = {}  # future -> (trial, trial_id, run_dir)
+            inflight_per_executor = {}  # executor_label -> set of futures
             submitted = 0
 
             def submit_one():
                 """Submit one trial to Parsl."""
                 nonlocal submitted
 
+                # Check per-executor caps if specified
+                if executor in per_executor_caps:
+                    cap = per_executor_caps[executor]
+                    current_count = len(inflight_per_executor.get(executor, set()))
+                    if current_count >= cap:
+                        return None  # Cap reached for this executor
+
                 # Ask Optuna for hyperparameters
                 t = study.ask()
-                hp = suggest_method_params(t, method_name)
+                hp = suggest_params_from_yaml(t, method_space)
 
                 # Create trial manifest
                 manifest = {
@@ -283,12 +350,13 @@ def run_optuna_workflow(
                     "method": method_name,
                     "hyperparams": hp,
                     "seed": int(t.number),
-                    "budget_sec": method_budget_sec,
+                    "budget_sec": trial_budget_sec,
                 }
                 tid = trial_id(manifest)
 
                 # Prepare run directory
-                run_dir = artifacts_dir / "runs" / pid / method_name / tid
+                trials_dir = ctx.artifacts_dir / "trials"
+                run_dir = trials_dir / pid / method_name / tid
                 run_dir.mkdir(parents=True, exist_ok=True)
                 (run_dir / "manifest.json").write_text(json.dumps(manifest, indent=2))
 
@@ -301,12 +369,15 @@ def run_optuna_workflow(
                     method_cfg,
                     llc_ref,
                     str(run_dir / "metrics.json"),
-                    budget_sec=method_budget_sec,
+                    budget_sec=trial_budget_sec,
                     seed=int(t.number),
-                    executor=method_executor,
+                    executor=executor,
                 )
 
                 inflight[fut] = (t, tid, run_dir)
+                if executor not in inflight_per_executor:
+                    inflight_per_executor[executor] = set()
+                inflight_per_executor[executor].add(fut)
                 submitted += 1
 
                 return fut
@@ -314,8 +385,11 @@ def run_optuna_workflow(
             # Prime the pump: fill initial batch
             initial_batch = min(batch_size, max_trials_per_method)
             log.info("      Submitting initial batch of %d trials...", initial_batch)
-            while submitted < min(batch_size, max_trials_per_method):
-                submit_one()
+            while submitted < initial_batch:
+                fut = submit_one()
+                if fut is None:
+                    # Hit per-executor cap; wait for completions
+                    break
 
             # Main loop: process completions and refill batch
             log.info("      Running optimization loop (max %d trials)...", max_trials_per_method)
@@ -331,6 +405,10 @@ def run_optuna_workflow(
                 for f in done:
                     t, tid, run_dir = inflight.pop(f)
 
+                    # Remove from per-executor tracking
+                    for exec_label, futs in inflight_per_executor.items():
+                        futs.discard(f)
+
                     try:
                         result = f.result()  # dict: {llc_hat, se_hat, runtime_sec, ...}
                     except Exception as e:
@@ -341,7 +419,7 @@ def run_optuna_workflow(
 
                     # Extract LLC and compute objective
                     llc_hat = float(result["llc_hat"])
-                    obj = objective_from_metrics(llc_hat, llc_ref, huber_delta=None)
+                    obj = objective_from_metrics(llc_hat, llc_ref, cfg.optuna.objective)
 
                     # Persist metrics with objective
                     metrics = {
@@ -395,109 +473,15 @@ def run_optuna_workflow(
     # ========================================================================
 
     log.info("=== Stage 3: Aggregating Results ===")
+
+    tables_dir = ctx.run_dir / "tables"
+    tables_dir.mkdir(exist_ok=True, parents=True)
+
     df = pd.DataFrame(all_rows)
-    output_path = results_dir / "optuna_trials.parquet"
+    output_path = tables_dir / "optuna_trials.parquet"
     df.to_parquet(output_path, index=False)
 
     log.info("  Wrote %d trials to %s", len(df), output_path)
     log.info("✓ Optuna workflow complete!")
 
-    # Clean up Parsl
-    parsl.clear()
-
     return output_path
-
-
-def main():
-    """CLI entry point."""
-    parser = argparse.ArgumentParser(
-        description="Optuna hyperparameter optimization with Parsl",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog=__doc__,
-    )
-    parser.add_argument(
-        "--config",
-        default="config/optuna_demo.yaml",
-        help="Path to Optuna experiment config (default: config/optuna_demo.yaml)",
-    )
-    parser.add_argument(
-        "--parsl-card",
-        default=None,
-        help="Path to Parsl YAML card (e.g., config/parsl/slurm/cpu.yaml)",
-    )
-    parser.add_argument(
-        "--set",
-        dest="parsl_sets",
-        action="append",
-        default=[],
-        help="Override Parsl card values (OmegaConf dotlist), e.g.: --set walltime=04:00:00",
-    )
-    parser.add_argument(
-        "--local",
-        action="store_true",
-        help="Use local HTEX executors (equivalent to --parsl-card config/parsl/local.yaml)",
-    )
-    parser.add_argument(
-        "--max-trials",
-        type=int,
-        default=200,
-        help="Maximum trials per (problem, method) (default: 200)",
-    )
-    parser.add_argument(
-        "--batch-size",
-        type=int,
-        default=32,
-        help="Concurrent trials per (problem, method) (default: 32)",
-    )
-    parser.add_argument(
-        "--hmc-budget",
-        type=int,
-        default=36000,
-        help="HMC reference time budget in seconds (default: 36000 = 10h)",
-    )
-    parser.add_argument(
-        "--method-budget",
-        type=int,
-        default=6000,
-        help="Method trial time budget in seconds (default: 6000 = 100min)",
-    )
-    parser.add_argument(
-        "--artifacts-dir",
-        default="artifacts",
-        help="Directory for artifacts (default: artifacts, relative to CWD)",
-    )
-    parser.add_argument(
-        "--results-dir",
-        default="results",
-        help="Directory for results (default: results, relative to CWD)",
-    )
-
-    args = parser.parse_args()
-
-    # Configure logging at entrypoint
-    configure_logging()
-
-    # Run workflow
-    log.info("Using Optuna config: %s", args.config)
-
-    try:
-        output_path = run_optuna_workflow(
-            config_path=args.config,
-            parsl_card_path=args.parsl_card,
-            parsl_overrides=args.parsl_sets,
-            local=args.local,
-            max_trials_per_method=args.max_trials,
-            batch_size=args.batch_size,
-            hmc_budget_sec=args.hmc_budget,
-            method_budget_sec=args.method_budget,
-            artifacts_dir=args.artifacts_dir,
-            results_dir=args.results_dir,
-        )
-        log.info("✓ Results: %s", output_path)
-    except Exception as e:
-        log.error("✗ Workflow failed: %s", e)
-        raise
-
-
-if __name__ == "__main__":
-    main()

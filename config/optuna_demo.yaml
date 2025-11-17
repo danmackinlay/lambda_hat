@@ -1,7 +1,7 @@
 # Optuna hyperparameter optimization demo config
 #
-# This config defines problems for Optuna to optimize hyperparameters against.
-# Each problem gets an HMC reference, then methods are optimized to match it.
+# This config defines a small, quick test problem for Optuna to optimize.
+# See config/optuna/default.yaml for full schema documentation.
 
 # Problem specifications (similar to targets in experiments.yaml)
 problems:
@@ -23,9 +23,116 @@ methods:
   # - sgld                # Uncomment to add SGLD
   # - mclmc               # Uncomment to add MCLMC
 
-# Optuna configuration (optional, can override via CLI)
+# Optuna configuration (reduced for demo/testing)
 optuna:
-  max_trials: 50          # Max trials per (problem, method) - reduced for demo
-  batch_size: 8           # Concurrent trials - reduced for local testing
-  hmc_budget_sec: 3600    # 1 hour for HMC reference (reduced for demo)
-  method_budget_sec: 600  # 10 minutes per trial (reduced for demo)
+  objective:
+    type: abs             # Absolute error objective
+
+  max_trials_per_method: 50  # Reduced for quick demo
+
+  concurrency:
+    batch_size: 8         # Reduced for local testing
+    # per_executor:       # Optional per-executor caps
+    #   htex64: 4
+    #   htex32: 8
+
+  sampler:
+    type: tpe
+    seed: 42
+    n_startup_trials: 10  # Reduced for demo
+
+  pruner:
+    type: median
+    n_startup_trials: 5   # Reduced for demo
+    n_warmup_steps: 1
+
+# Search spaces (same as default.yaml, but documented here for reference)
+search_space:
+  sgld:
+    eta0:
+      dist: float
+      low: 1.0e-6
+      high: 1.0e-1
+      log: true
+    gamma:
+      dist: float
+      low: 0.3
+      high: 1.0
+    batch:
+      dist: categorical
+      choices: [32, 64, 128, 256]
+    precond_type:
+      dist: categorical
+      choices: [none, rmsprop, adam]
+    steps:
+      dist: int
+      low: 5000
+      high: 20000
+      step: 1000
+
+  vi:
+    lr:
+      dist: float
+      low: 1.0e-5
+      high: 5.0e-2
+      log: true
+    M:
+      dist: categorical
+      choices: [4, 8, 16]
+    r:
+      dist: categorical
+      choices: [1, 2, 4]
+    whitening_mode:
+      dist: categorical
+      choices: [none, rmsprop, adam]
+    steps:
+      dist: int
+      low: 2000
+      high: 20000
+      step: 1000
+    batch_size:
+      dist: categorical
+      choices: [32, 64, 128, 256]
+
+  mclmc:
+    step_size:
+      dist: float
+      low: 1.0e-4
+      high: 1.0e-1
+      log: true
+    target_accept:
+      dist: float
+      low: 0.6
+      high: 0.95
+    L:
+      dist: float
+      low: 0.5
+      high: 3.0
+    steps:
+      dist: int
+      low: 200
+      high: 2000
+      step: 50
+
+# Execution configuration
+execution:
+  parsl_card: config/parsl/local.yaml  # Default to local mode
+
+  budget:
+    hmc_sec: 3600   # 1 hour for HMC reference (reduced for demo)
+    trial_sec: 600  # 10 minutes per trial (reduced for demo)
+
+  # Executor routing: use AUTO rules (will map to htex64/htex32 based on method)
+  # executor_map:
+  #   hmc: htex64
+  #   methods:
+  #     mclmc: htex64
+  #     sgld: htex32
+  #     vi: htex32
+
+# Artifact storage configuration
+store:
+  root: runs
+  layout_version: v1
+  namespace: optuna
+  ttl_days: 30

@@ -340,105 +340,138 @@ def workflow_llc(config, experiment, parsl_card, parsl_sets, local, promote, pro
     "--config",
     required=True,
     type=click.Path(exists=True),
-    help="Path to Optuna experiments config",
+    help="Path to Optuna config YAML (defines problems, methods, search spaces, budgets, etc.)",
 )
 @click.option(
     "--parsl-card",
     type=click.Path(exists=True),
-    help="Path to Parsl YAML card (e.g., config/parsl/slurm/cpu.yaml)",
+    help=(
+        "Path to Parsl YAML card (e.g., config/parsl/slurm/cpu.yaml). "
+        "Mutually exclusive with --local."
+    ),
 )
 @click.option(
     "--set",
-    "parsl_sets",
+    "config_sets",
     multiple=True,
-    help="Override Parsl card values (OmegaConf dotlist), e.g.: --set walltime=04:00:00",
+    help="Override config values (OmegaConf dotlist), e.g.: --set optuna.max_trials_per_method=50",
 )
 @click.option(
     "--local",
     is_flag=True,
-    help="Use local ThreadPool executor (equivalent to --parsl-card config/parsl/local.yaml)",
+    help="Use local dual-executor mode (equivalent to --parsl-card config/parsl/local.yaml)",
 )
 @click.option(
-    "--max-trials",
-    type=int,
-    default=200,
-    help="Maximum trials per (problem, method) (default: 200)",
+    "--dry-run",
+    is_flag=True,
+    help="Print resolved config and executor routing without running workflow",
 )
-@click.option(
-    "--batch-size",
-    type=int,
-    default=32,
-    help="Concurrent trials per (problem, method) (default: 32)",
-)
-@click.option(
-    "--hmc-budget",
-    type=int,
-    default=36000,
-    help="HMC reference time budget in seconds (default: 36000 = 10h)",
-)
-@click.option(
-    "--method-budget",
-    type=int,
-    default=6000,
-    help="Method trial time budget in seconds (default: 6000 = 100min)",
-)
-@click.option(
-    "--artifacts-dir",
-    default="artifacts",
-    help="Directory for artifacts (default: artifacts, relative to CWD)",
-)
-@click.option(
-    "--results-dir",
-    default="results",
-    help="Directory for results (default: results, relative to CWD)",
-)
-@click.option(
-    "--study-name",
-    help="Optuna study name (optional, for future multi-study support)",
-)
-@click.option(
-    "--storage",
-    help="Optuna storage URL (optional, defaults to in-memory)",
-)
-def workflow_optuna(
-    config,
-    parsl_card,
-    parsl_sets,
-    local,
-    max_trials,
-    batch_size,
-    hmc_budget,
-    method_budget,
-    artifacts_dir,
-    results_dir,
-    study_name,
-    storage,
-):
-    """Run Bayesian hyperparameter optimization.
+def workflow_optuna(config, parsl_card, config_sets, local, dry_run):
+    """Run Bayesian hyperparameter optimization (YAML-first).
 
-    This uses Optuna + Parsl to optimize sampler hyperparameters.
+    This uses Optuna + Parsl to optimize sampler hyperparameters. All settings
+    (problems, methods, search spaces, budgets, concurrency) are defined in the
+    YAML config file. Use --set for quick overrides.
+
+    Examples:
+      # Local testing
+      lambda-hat workflow optuna --config config/optuna/default.yaml --local
+
+      # Override trials and batch size
+      lambda-hat workflow optuna --config config/optuna/default.yaml --local \\
+          --set optuna.max_trials_per_method=24 \\
+          --set optuna.concurrency.batch_size=6
+
+      # SLURM cluster
+      lambda-hat workflow optuna --config config/optuna/default.yaml \\
+          --parsl-card config/parsl/slurm/gpu-a100.yaml
+
+      # Dry-run to preview config
+      lambda-hat workflow optuna --config config/optuna/default.yaml \\
+          --local --dry-run
     """
+    import sys
+    from pathlib import Path
+
+    import parsl
+    from omegaconf import OmegaConf
+
+    from lambda_hat.artifacts import Paths, RunContext
+    from lambda_hat.config_optuna import load_cfg
+    from lambda_hat.logging_config import configure_logging
+    from lambda_hat.parsl_cards import load_parsl_config_from_card
     from lambda_hat.workflows.parsl_optuna import run_optuna_workflow
 
+    # Configure logging
+    configure_logging()
+
+    # Validate flags
+    if local and parsl_card:
+        click.echo("Error: --local and --parsl-card are mutually exclusive", err=True)
+        sys.exit(1)
+    if not local and not parsl_card:
+        click.echo("Error: Must specify either --local or --parsl-card", err=True)
+        sys.exit(1)
+
+    # Initialize artifact system early to get RunContext for Parsl run_dir override
+    paths = Paths.from_env()
+    paths.ensure()
+
+    # Load config to get namespace for RunContext
+    cfg_early = OmegaConf.load(config)
+    experiment = cfg_early.store.get("namespace", "optuna")
+    ctx = RunContext.create(experiment=experiment, algo="optuna_workflow", paths=paths)
+
+    # Resolve Parsl configuration with run_dir override
+    if local:
+        click.echo("Using Parsl mode: local (dual HTEX)")
+        local_card_path = Path("config/parsl/local.yaml")
+        if not local_card_path.exists():
+            click.echo(f"Error: Local card not found: {local_card_path}", err=True)
+            sys.exit(1)
+        parsl_cfg = load_parsl_config_from_card(local_card_path, [f"run_dir={ctx.parsl_dir}"])
+    else:
+        card_path = Path(parsl_card)
+        if not card_path.is_absolute():
+            card_path = Path.cwd() / card_path
+        if not card_path.exists():
+            click.echo(f"Error: Parsl card not found: {card_path}", err=True)
+            sys.exit(1)
+        click.echo(f"Using Parsl card: {card_path}")
+        # Add run_dir override to config sets
+        parsl_cfg = load_parsl_config_from_card(card_path, [f"run_dir={ctx.parsl_dir}"])
+
+    # Load Parsl before validating Optuna config (executor validation needs it)
+    parsl.load(parsl_cfg)
+
+    # Load and validate Optuna config (with executor validation)
+    cfg = load_cfg(config, dotlist_overrides=list(config_sets), validate_executors=True)
+
+    # Dry-run mode: print resolved config and exit
+    if dry_run:
+        click.echo("\n=== Resolved Optuna Configuration ===")
+        click.echo(OmegaConf.to_yaml(cfg))
+        click.echo("\n=== Executor Routing ===")
+        routing = cfg.get("_executor_routing", {})
+        for key, label in sorted(routing.items()):
+            click.echo(f"  {key} → {label}")
+        click.echo("\n✓ Dry-run complete (no workflow executed)")
+        parsl.clear()
+        return
+
+    # Run workflow
+    click.echo(f"Using Optuna config: {config}")
+    if config_sets:
+        click.echo(f"Config overrides: {list(config_sets)}")
+
     try:
-        output_path = run_optuna_workflow(
-            config_path=config,
-            parsl_card_path=parsl_card,
-            parsl_overrides=list(parsl_sets),
-            local=local,
-            max_trials_per_method=max_trials,
-            batch_size=batch_size,
-            hmc_budget_sec=hmc_budget,
-            method_budget_sec=method_budget,
-            artifacts_dir=artifacts_dir,
-            results_dir=results_dir,
-            study_name=study_name,
-            storage_url=storage,
-        )
+        output_path = run_optuna_workflow(cfg)
         click.echo(f"\n✓ Results: {output_path}")
     except Exception as e:
         click.echo(f"\n✗ Workflow failed: {e}", err=True)
         raise
+    finally:
+        parsl.clear()
 
 
 # =============================================================================
