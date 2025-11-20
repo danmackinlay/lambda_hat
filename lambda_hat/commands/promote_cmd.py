@@ -53,7 +53,7 @@ def promote_gallery_entry(
     outdir = Path(outdir)
     snippet_path = Path(snippet_out) if snippet_out else None
 
-    promote_gallery(runs_root, samplers, outdir, plot_name=plot_name, snippet_out=snippet_path)
+    promote_gallery(runs_root, samplers, outdir, plot_name=plot_name, md_snippet_out=snippet_path)
     log.info("[promote] gallery → %s", outdir)
     if snippet_path:
         log.info("[promote] HTML snippet → %s", snippet_path)

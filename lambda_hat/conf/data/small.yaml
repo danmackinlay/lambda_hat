@@ -1,5 +1,6 @@
 # @package _global_.data
 n_data: 100
+n_test: 100
 x_dist: gauss_iso
 cov_decay: 0.95
 mixture_k: 4

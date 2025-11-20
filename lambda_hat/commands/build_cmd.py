@@ -2,6 +2,7 @@
 """Build command - Stage A: Train neural network and create target artifact."""
 
 import logging
+import os
 import time
 from typing import Dict, Optional
 
@@ -9,6 +10,8 @@ import jax
 from omegaconf import OmegaConf
 
 from lambda_hat import omegaconf_support  # noqa: F401
+
+# Lazy import compute_target_diagnostics to avoid pulling matplotlib/arviz into worker at module load
 from lambda_hat.artifacts import ArtifactStore, Paths, RunContext, safe_symlink
 from lambda_hat.logging_config import configure_logging
 from lambda_hat.nn_eqx import count_params
@@ -95,6 +98,37 @@ def build_entry(config_yaml: str, target_id: str, experiment: Optional[str] = No
     theta = target_bundle.params0
     L0 = target_bundle.L0
 
+    # Generate target diagnostics (optional, can skip via env var for debugging)
+    diagnostics_dir = target_dir / "diagnostics"
+    diag_metrics = {}
+
+    if os.environ.get("LAMBDA_HAT_SKIP_DIAGNOSTICS", "0") != "1":
+        try:
+            t0_import = time.time()
+            from lambda_hat.analysis import compute_target_diagnostics
+
+            import_cost = time.time() - t0_import
+            log.info("[build-target] starting diagnostics (imported in %.2fs)", import_cost)
+
+            t0 = time.time()
+            diag_metrics = compute_target_diagnostics(
+                cfg=cfg,
+                X=X,
+                Y=Y,
+                model=theta,
+                outdir=diagnostics_dir,
+            )
+            log.info(
+                "[build-target] wrote diagnostics → %s (%.2fs)",
+                diagnostics_dir,
+                time.time() - t0,
+            )
+        except Exception as e:
+            log.warning("[build-target] failed to generate diagnostics: %s", e)
+            diag_metrics = {}
+    else:
+        log.info("[build-target] diagnostics skipped (LAMBDA_HAT_SKIP_DIAGNOSTICS=1)")
+
     # Log resolved widths for debugging
     log.debug("Resolved widths: model=%s, teacher=%s", used_model_widths, used_teacher_widths)
     if used_teacher_widths is not None:
@@ -143,7 +177,7 @@ def build_entry(config_yaml: str, target_id: str, experiment: Optional[str] = No
         teacher_cfg=teacher_cfg,
         dims=dims,
         hashes={"theta": theta_hash},
-        metrics={"L0": float(L0)},
+        metrics={"L0": float(L0), **diag_metrics},
         hostname=cfg.runtime.hostname,
     )
 

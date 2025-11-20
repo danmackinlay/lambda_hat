@@ -21,6 +21,9 @@ import jax.numpy as jnp  # noqa: E402
 import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
+from jax import random  # noqa: E402
+
+from .data import add_noise, build_teacher, sample_X  # noqa: E402
 
 log = logging.getLogger(__name__)
 
@@ -595,3 +598,136 @@ def create_summary_table(analysis_results: Dict[str, Dict], output_dir: Path) ->
     # Save summary text
     with open(output_dir / "summary.txt", "w") as f:
         f.write(summary_text)
+
+
+def compute_target_diagnostics(
+    cfg,
+    X: np.ndarray,
+    Y: np.ndarray,
+    model,
+    outdir: Path,
+) -> Dict[str, float]:
+    """Write simple problem-level diagnostics and return scalar metrics.
+
+    Args:
+        cfg: Full OmegaConf/Config object used for Stage A (must have .data, .teacher, .target.seed).
+        X, Y: Training data arrays from the target artifact.
+        model: Trained Equinox model (ERM solution).
+        outdir: Directory to write PNGs into (created if needed).
+
+    Returns:
+        Dict with scalar metrics (MSEs) to embed into meta.json.
+    """
+    import time
+
+    import jax
+
+    t0 = time.time()
+    log_local = logging.getLogger(__name__)
+    log_local.info("[diagnostics] starting; X=%s Y=%s", X.shape, Y.shape)
+
+    outdir = Path(outdir)
+    outdir.mkdir(parents=True, exist_ok=True)
+    log_local.info("[diagnostics] created outdir in %.3fs", time.time() - t0)
+    t0 = time.time()
+
+    # Rebuild teacher with the same RNG convention as make_dataset
+    seed = int(cfg.target.seed)
+    key = jax.random.PRNGKey(seed)
+    kx_train, k_teacher, k_noise = random.split(key, 3)
+
+    teacher_params, teacher_forward = build_teacher(k_teacher, cfg)
+    log_local.info("[diagnostics] built teacher in %.3fs", time.time() - t0)
+    t0 = time.time()
+
+    X_train = jnp.asarray(X)
+    Y_train = jnp.asarray(Y)
+
+    # Teacher predictions on training inputs (ignore dropout for smooth reference)
+    y_teacher_train = teacher_forward(X_train)
+    log_local.info("[diagnostics] teacher(train) in %.3fs", time.time() - t0)
+    t0 = time.time()
+
+    y_pred_train = model(X_train)
+    log_local.info("[diagnostics] student(train) in %.3fs", time.time() - t0)
+    t0 = time.time()
+
+    mse_train_noise = float(jnp.mean((y_pred_train - Y_train) ** 2))
+    mse_train_teacher = float(jnp.mean((y_pred_train - y_teacher_train) ** 2))
+
+    # Fresh test set from same x_dist + noise model
+    n_test = int(getattr(cfg.data, "n_test", min(int(X_train.shape[0]), 2000)))
+    kx_test, k_noise_test = random.split(k_noise)
+    X_test = sample_X(kx_test, cfg, n_test, cfg.model.in_dim)
+    log_local.info("[diagnostics] sample_X test in %.3fs (n_test=%d)", time.time() - t0, n_test)
+    t0 = time.time()
+
+    y_teacher_test = teacher_forward(X_test)
+    log_local.info("[diagnostics] teacher(test) in %.3fs", time.time() - t0)
+    t0 = time.time()
+
+    Y_test = add_noise(k_noise_test, y_teacher_test, cfg, X_test)
+    log_local.info("[diagnostics] add_noise in %.3fs", time.time() - t0)
+    t0 = time.time()
+
+    y_pred_test = model(X_test)
+    log_local.info("[diagnostics] student(test) in %.3fs", time.time() - t0)
+    t0 = time.time()
+
+    mse_test_noise = float(jnp.mean((y_pred_test - Y_test) ** 2))
+    mse_test_teacher = float(jnp.mean((y_pred_test - y_teacher_test) ** 2))
+
+    # 1) Train vs test bar plot
+    fig, ax = plt.subplots()
+    ax.bar(
+        ["train/noise", "test/noise", "train/teacher", "test/teacher"],
+        [mse_train_noise, mse_test_noise, mse_train_teacher, mse_test_teacher],
+    )
+    ax.set_ylabel("MSE")
+    ax.set_title("Train vs test MSE (student vs noisy labels / teacher)")
+    fig.tight_layout()
+    fig.savefig(outdir / "target_train_test_loss.png", dpi=150)
+    plt.close(fig)
+    log_local.info("[diagnostics] wrote bar plot in %.3fs", time.time() - t0)
+    t0 = time.time()
+
+    # 2-3) Pred vs teacher scatter plots
+    def _scatter(true_vals, pred_vals, fname: str, title: str):
+        true_np = np.asarray(true_vals).ravel()
+        pred_np = np.asarray(pred_vals).ravel()
+        fig, ax = plt.subplots()
+        ax.scatter(true_np, pred_np, s=5, alpha=0.4)
+        lo = float(min(true_np.min(), pred_np.min()))
+        hi = float(max(true_np.max(), pred_np.max()))
+        ax.plot([lo, hi], [lo, hi], linestyle="--")
+        ax.set_xlabel("teacher(x)")
+        ax.set_ylabel("student(x)")
+        ax.set_title(title)
+        fig.tight_layout()
+        fig.savefig(outdir / fname, dpi=150)
+        plt.close(fig)
+
+    _scatter(
+        y_teacher_train,
+        y_pred_train,
+        "target_pred_vs_teacher_train.png",
+        "Train: student vs teacher",
+    )
+    log_local.info("[diagnostics] wrote train scatter in %.3fs", time.time() - t0)
+    t0 = time.time()
+
+    _scatter(
+        y_teacher_test,
+        y_pred_test,
+        "target_pred_vs_teacher_test.png",
+        "Test: student vs teacher",
+    )
+    log_local.info("[diagnostics] wrote test scatter in %.3fs", time.time() - t0)
+    log_local.info("[diagnostics] COMPLETE")
+
+    return {
+        "train_mse_noise": mse_train_noise,
+        "test_mse_noise": mse_test_noise,
+        "train_mse_teacher": mse_train_teacher,
+        "test_mse_teacher": mse_test_teacher,
+    }

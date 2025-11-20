@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.11, <3.13"
 resolution-markers = [
     "python_full_version >= '3.12'",
@@ -811,7 +811,7 @@ requires-dist = [
     { name = "optax", specifier = ">=0.2.5" },
     { name = "optuna", specifier = ">=4.2.0" },
     { name = "pandas", specifier = ">=2.0.0" },
-    { name = "parsl", specifier = ">=2024.11.18" },
+    { name = "parsl", specifier = ">=2025.11.10" },
     { name = "pyarrow", specifier = ">=14.0.0" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "scipy", specifier = ">=1.11" },

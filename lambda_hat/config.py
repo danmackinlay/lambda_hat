@@ -29,6 +29,7 @@ class DataConfig:
     """Data generation configuration"""
 
     n_data: int = 20_000
+    n_test: int = 2_000
     x_dist: str = "gauss_iso"
     cov_decay: float = 0.95
     mixture_k: int = 4

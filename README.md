@@ -59,7 +59,8 @@ pip install .[cuda12]    # For CUDA 12 (Linux)
 
 ## Entrypoints
 
-Lambda-Hat provides three command-line tools that implement the two-stage workflow. Parsl orchestrates these automatically, but they can also be invoked directly for debugging or custom workflows.
+Lambda-Hat provides three command-line tools that implement the two-stage workflow.
+Parsl orchestrates these automatically, but they can also be invoked directly for debugging or custom workflows.
 
 ### `lambda-hat build` (Stage A)
 
@@ -106,7 +107,7 @@ uv run lambda-hat sample \
 ### `lambda-hat promote`
 
 Utility for copying plots from run directories into stable locations for documentation or galleries.
-It  searches under `runs/targets/**/run_{sampler}_*/diagnostics/`.
+It searches under `runs/targets/**/run_{sampler}_*/diagnostics/`.
 
 ```bash
 # Create an asset gallery with newest run per sampler
