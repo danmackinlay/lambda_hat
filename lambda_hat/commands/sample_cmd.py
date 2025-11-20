@@ -3,6 +3,7 @@
 
 import json
 import logging
+import os
 import time
 from typing import Dict, Optional
 
@@ -11,12 +12,7 @@ import jax
 import jax.numpy as jnp
 from omegaconf import OmegaConf
 
-from lambda_hat.analysis import (
-    analyze_traces,
-    create_arviz_diagnostics,
-    create_combined_convergence_plot,
-    create_work_normalized_variance_plot,
-)
+# Lazy import analysis to avoid matplotlib/arviz in Parsl workers when skipping offline diagnostics
 from lambda_hat.artifacts import Paths, RunContext
 from lambda_hat.config import validate_teacher_cfg
 from lambda_hat.equinox_adapter import ensure_dtype
@@ -224,21 +220,44 @@ def sample_entry(config_yaml: str, target_id: str, experiment: Optional[str] = N
     if work is not None:
         sampler_flavour = work.get("sampler_flavour")
 
-    metrics, idata = analyze_traces(
-        traces,
-        L0=L0,
-        n_data=n_data,
-        beta=beta,
-        warmup=0,
-        timings=timings,
-        work=work,
-        sampler_flavour=sampler_flavour,
-    )
-
-    # Write artifacts
+    # Determine analysis mode
+    analysis_mode = os.environ.get("LAMBDA_HAT_ANALYSIS_MODE", "full")
     run_dir.mkdir(parents=True, exist_ok=True)
-    idata.to_netcdf(run_dir / "trace.nc")
-    (run_dir / "analysis.json").write_text(json.dumps(metrics, indent=2, sort_keys=True))
+
+    if analysis_mode in ("light", "full"):
+        # Lazy import analyze_traces (uses arviz for InferenceData)
+        from lambda_hat.analysis import analyze_traces
+
+        metrics, idata = analyze_traces(
+            traces,
+            L0=L0,
+            n_data=n_data,
+            beta=beta,
+            warmup=0,
+            timings=timings,
+            work=work,
+            sampler_flavour=sampler_flavour,
+        )
+
+        # Write artifacts with full analysis
+        idata.to_netcdf(run_dir / "trace.nc")
+        (run_dir / "analysis.json").write_text(json.dumps(metrics, indent=2, sort_keys=True))
+        log.info("[sample] Wrote trace.nc and analysis.json (mode=%s)", analysis_mode)
+    else:
+        # Mode "none": save only raw traces as JSON, skip arviz InferenceData
+        import numpy as np
+
+        # Convert all array-like values (including JAX arrays) to lists
+        traces_serializable = {}
+        for k, v in traces.items():
+            if hasattr(v, "__array__") or hasattr(v, "tolist"):
+                # Convert JAX arrays and numpy arrays to lists
+                traces_serializable[k] = np.asarray(v).tolist()
+            else:
+                traces_serializable[k] = v
+        (run_dir / "traces_raw.json").write_text(json.dumps(traces_serializable, indent=2))
+        log.info("[sample] Wrote traces_raw.json only (mode=%s)", analysis_mode)
+        metrics = {}  # No metrics in "none" mode
 
     # TensorBoard logging (Stage 2) - VI only for now
     if (
@@ -248,10 +267,23 @@ def sample_entry(config_yaml: str, target_id: str, experiment: Optional[str] = N
     ):
         _write_tensorboard_logs(ctx, traces, metrics, work)
 
-    # Create diagnostic plots
-    create_arviz_diagnostics({sampler_name: idata}, run_dir)
-    create_combined_convergence_plot({sampler_name: idata}, run_dir)
-    create_work_normalized_variance_plot({sampler_name: idata}, run_dir)
+    # Create diagnostic plots (skip in workflows unless explicitly enabled)
+    if analysis_mode in ("light", "full"):
+        # Lazy import to avoid matplotlib/arviz in Parsl workers when skipping
+        from lambda_hat.analysis import (
+            create_arviz_diagnostics,
+            create_combined_convergence_plot,
+            create_work_normalized_variance_plot,
+        )
+
+        log.info("[sample] Running offline diagnostics (mode=%s)", analysis_mode)
+        create_arviz_diagnostics({sampler_name: idata}, run_dir)
+        create_combined_convergence_plot({sampler_name: idata}, run_dir)
+
+        if analysis_mode == "full":
+            create_work_normalized_variance_plot({sampler_name: idata}, run_dir)
+    else:
+        log.info("[sample] Skipping offline diagnostics (mode=%s)", analysis_mode)
 
     # Write run manifest (replaces legacy append_sample_manifest)
     sp = OmegaConf.to_container(cfg.sampler, resolve=True)

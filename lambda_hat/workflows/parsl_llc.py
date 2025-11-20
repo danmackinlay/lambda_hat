@@ -39,6 +39,45 @@ from lambda_hat.workflow_utils import (
 log = logging.getLogger(__name__)
 
 # ============================================================================
+# Parsl Error Extraction
+# ============================================================================
+
+
+def unwrap_parsl_future(future, name: str):
+    """Extract and surface exceptions from Parsl futures with full diagnostics.
+
+    Args:
+        future: Parsl AppFuture to unwrap
+        name: Descriptive name for logging (e.g., "build_tgt_abc123")
+
+    Returns:
+        Future result if successful
+
+    Raises:
+        Original exception with enhanced logging of remote stdout/stderr
+    """
+    try:
+        return future.result()
+    except Exception as e:
+        import traceback
+
+        log.error(f"[{name}] FAILED in worker:")
+        log.error("".join(traceback.format_exception(type(e), e, e.__traceback__)))
+
+        # Dump remote debug info if available
+        if hasattr(e, "stdout") and e.stdout:
+            log.error("---- WORKER STDOUT ----\n%s", e.stdout)
+        if hasattr(e, "stderr") and e.stderr:
+            log.error("---- WORKER STDERR ----\n%s", e.stderr)
+
+        # Log exception attributes for debugging Parsl wrappers
+        log.error("Exception type: %s", type(e).__name__)
+        log.error("Exception attributes: %s", dir(e))
+
+        raise
+
+
+# ============================================================================
 # Helper Functions
 # ============================================================================
 
@@ -190,6 +229,12 @@ def run_workflow(
     if promote_plots is None:
         promote_plots = ["trace.png", "llc_convergence_combined.png"]
 
+    # Default workflows to skip expensive offline diagnostics (can be overridden)
+    import os
+
+    os.environ.setdefault("LAMBDA_HAT_SKIP_DIAGNOSTICS", "1")  # Build-time diagnostics
+    os.environ.setdefault("LAMBDA_HAT_ANALYSIS_MODE", "none")  # Offline sampling diagnostics
+
     # Initialize artifact system
     paths = Paths.from_env()
     paths.ensure()
@@ -244,18 +289,17 @@ def run_workflow(
         cfg_yaml_path.write_text(OmegaConf.to_yaml(build_cfg))
 
         # Submit build job (uses artifact system via command modules)
+        # Note: executor routing disabled for now - both executors support all dtypes
         log.info(
-            "  Submitting build for %s (model=%s, data=%s) → %s",
+            "  Submitting build for %s (model=%s, data=%s)",
             tid,
             t["model"],
             t["data"],
-            build_executor,
         )
         future = build_target_app(
             cfg_yaml=str(cfg_yaml_path),
             target_id=tid,
             experiment=experiment,
-            executor=build_executor,
         )
         target_futures[tid] = future
 
@@ -287,20 +331,19 @@ def run_workflow(
             cfg_yaml_path.write_text(OmegaConf.to_yaml(sample_cfg))
 
             # Submit sampling job (uses artifact system via command modules)
+            # Note: executor routing disabled for now - both executors support all dtypes
             log.info(
-                "  Submitting %s for %s (run_id=%s, dtype=%s) → %s",
+                "  Submitting %s for %s (run_id=%s, dtype=%s)",
                 sampler_name,
                 tid,
                 rid,
                 dtype,
-                executor,
             )
             future = run_sampler_app(
                 cfg_yaml=str(cfg_yaml_path),
                 target_id=tid,
                 experiment=experiment,
                 inputs=[target_futures[tid]],  # Dependency: wait for target build
-                executor=executor,
             )
             run_futures.append(future)
 
@@ -323,7 +366,8 @@ def run_workflow(
 
     for i, (future, record) in enumerate(zip(run_futures, run_records), 1):
         try:
-            future.result()
+            name = f"{record['target_id']}_{record['sampler']}_{record['run_id']}"
+            unwrap_parsl_future(future, name)
             target_id = record["target_id"]
             sampler = record["sampler"]
             run_id = record["run_id"]
@@ -394,7 +438,7 @@ def run_workflow(
                 inputs=run_futures,  # Wait for all runs
             )
             try:
-                md_path = promote_future.result()
+                md_path = unwrap_parsl_future(promote_future, f"promote_{plot_name}")
                 log.info("    → Gallery written to %s", md_path)
             except Exception as e:
                 log.error("    → Promotion FAILED: %s", e)
