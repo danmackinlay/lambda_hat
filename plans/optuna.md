@@ -1,323 +1,418 @@
-Here’s a tight, repo‑aligned **update of the Optuna modernization plan** that **adapts to the new executor model** (dtype‑aware executors, Parsl cards, and the artifact `RunContext`) while keeping the YAML‑first posture from the earlier brief.
+Short version: you should treat Optuna as “just another workflow” sitting on top of your *already simplified* execution model (Option D: one executor per card, dtype handled inside tasks). That means:
+
+* **No executor routing in Optuna.**
+* **No per‑executor concurrency.**
+* **One knob for concurrency (`batch_size`) and one knob for trial budget (`trial_sec`).**
+* Slurm + GPU is “just” a different Parsl card.
+
+Below is a replacement plan that assumes that worldview, and tells your agent exactly what to change.
 
 ---
 
-## 0) What drifted (and what we must honor now)
+## 1. Design decisions (what we’re committing to)
 
-* **Executor model changed**: workflows now route tasks to specific **executor labels** (e.g., `"htex64"` vs `"htex32"`) based on precision or method, and pass that label at **app call time** (`executor=...`) — see dtype→executor helpers and per‑call executor selection in the LLC workflow, and the same pattern already copy/pasted into the Optuna implementation. We need to integrate that cleanly rather than hard‑coding labels in the workflow.
-* **Parsl cards** are now the way to configure backends. Local cards define **multiple HTEX executors** (dual x64/x32) via an `executors` list, while SLURM cards usually define a **single** HTEX executor (`label: htex_slurm`). Our plan must work when the label set is {`htex64`,`htex32`} **or** just one label.
-* **Optuna CLI still exposes redundant flags** (`--max-trials`, `--batch-size`, `--hmc-budget`, `--method-budget`, etc.) we wanted to delete in favor of YAML/dot‑list overrides. Let’s finish that migration.
-* **Current Optuna code** calls apps with `executor="htex64"/"htex32"` and still hard‑codes search spaces in `suggest_method_params()` — both misalign with the YAML‑first goal.
+### 1.1 Execution model for Optuna
 
----
+**Decision:** Optuna uses exactly the same execution model as `workflow llc`:
 
-## 1) Top‑line design (unchanged principles, executor‑aware)
+* One Parsl config (card) ⇒ one HTEX executor.
+* JAX precision (float32 vs float64) is controlled **inside the worker** based on the sampler config, *not* by choosing a different executor.
 
-* **YAML is the source of truth** (OmegaConf). CLI = file pointer + `--set` overrides.
-* **One place per concern**:
+**Rationale:**
 
-  * Study behavior & search spaces → **optuna config (YAML)**.
-  * Execution resources & routing → **Parsl card** (+ a tiny mapping section in the optuna YAML).
-* **Executors are declarative**:
+* You already went all‑in on Option D for the main workflow to kill the “two executors + routing” complexity.
+* Keeping a special multi‑executor model just for Optuna is extra surface area for no real benefit.
+* On Slurm+GPU, you’ll be constrained by **one GPU per node** anyway; per‑executor routing doesn’t buy you much.
 
-  * Choose executors via a small **`executor_map`** in YAML; default to dtype‑based **auto** mapping when possible; gracefully **fallback** to “the only executor we have”.
-* **Ids & artifacts**:
+### 1.2 How “interactive” Optuna loops should feel
 
-  * Use the same content‑addressed ids and persist a **resolved config snapshot**.
-  * Switch the Optuna workflow to the shared **`Paths`/`RunContext`** used by the main workflow so run dirs, logs and `parsl_runinfo` are consistent.
-
----
-
-## 2) Updated Optuna YAML schema (executor‑aware)
-
-```yaml
-# config/optuna/default.yaml
-problems:
-  - model: small
-    data: base
-    teacher: _null
-    seed: 42
-    overrides:
-      data.noise_scale: 0.05
-
-methods: [sgld, vi, mclmc]
-
-optuna:
-  objective: {type: abs}                  # or {type: huber, delta: 0.1}
-  max_trials_per_method: 100
-  concurrency:
-    batch_size: 16                        # total inflight per (problem, method)
-    per_executor:                         # optional caps; omit to disable
-      htex64: 8
-      htex32: 16
-  sampler:
-    type: tpe
-    seed: 42
-    n_startup_trials: 20
-  pruner:
-    type: median
-    n_startup_trials: 10
-    n_warmup_steps: 1
-
-search_space:                              # moved from Python into YAML
-  sgld:
-    eta0:  {dist: float, low: 1e-6, high: 1e-1, log: true}
-    gamma: {dist: float, low: 0.3, high: 1.0}
-    batch: {dist: categorical, choices: [32, 64, 128, 256]}
-    precond_type: {dist: categorical, choices: [none, rmsprop, adam]}
-    steps: {dist: int, low: 5_000, high: 20_000, step: 1_000}
-  vi:
-    lr: {dist: float, low: 1e-5, high: 5e-2, log: true}
-    M:  {dist: categorical, choices: [4, 8, 16]}
-    r:  {dist: categorical, choices: [1, 2, 4]}
-    whitening_mode: {dist: categorical, choices: [none, rmsprop, adam]}
-    steps: {dist: int, low: 2_000, high: 20_000, step: 1_000}
-    batch_size: {dist: categorical, choices: [32, 64, 128, 256]}
-  mclmc:
-    step_size:    {dist: float, low: 1e-4, high: 1e-1, log: true}
-    target_accept:{dist: float, low: 0.6, high: 0.95}
-    L:            {dist: float, low: 0.5, high: 3.0}
-    steps:        {dist: int, low: 200, high: 2000, step: 50}
-
-execution:
-  parsl_card: config/parsl/local.yaml     # or slurm/gpu-a100.yaml, etc.
-  budget:
-    hmc_sec: 7200                         # replaces --hmc-budget
-    trial_sec: 600                        # replaces --method-budget
-  executor_map:
-    # Optional. If omitted, use AUTO rules below.
-    # You can set per-role or per-method labels:
-    hmc: htex64
-    methods:
-      mclmc: htex64
-      sgld:  htex32
-      vi:    htex32
-
-store:
-  # Uses Paths/RunContext; keep root here for consistency
-  root: runs
-  layout_version: v1
-  namespace: optuna
-  ttl_days: 30
-```
-
-**AUTO executor rules (when `executor_map` is omitted):**
-
-1. If **both** `htex64` and `htex32` exist in the loaded Parsl config, route: `hmc→htex64`, `mclmc→htex64`, `sgld/vi→htex32`. 2) If only **one** executor exists, route **all** tasks to that label (warn once). We’ll validate labels against the loaded Parsl config. This mirrors how LLC already selects executors by dtype and calls apps with `executor=...`.
-
----
-
-## 3) CLI policy (finish the clean‑up)
-
-Replace the current, flag‑heavy Optuna command with a YAML‑first CLI:
-
-```
-lambda-hat workflow optuna \
-  --config config/optuna/default.yaml \
-  [--local | --parsl-card config/parsl/slurm/gpu-a100.yaml] \
-  [--set key=val ...] [--resume] [--dry-run]
-```
-
-**Delete** (in `cli.py`): `--max-trials`, `--batch-size`, `--hmc-budget`, `--method-budget`, `--artifacts-dir`, `--results-dir`, `--study-name`, `--storage`. These are declared in YAML or inferred by `RunContext`. The current CLI shows these flags are still present; this removes the duplication.
-
-Keep: `--config`, `--local`/`--parsl-card` + `--set` (passes dot‑list overrides to the **card**, just like LLC), `--resume`, `--dry-run`. The LLC wiring already demonstrates card loading and early `RunContext` setup; we reuse that for Optuna.
-
----
-
-## 4) Code changes (executor‑aware + YAML spaces + artifacts unification)
-
-### 4.1 `lambda_hat/cli.py` (optuna command)
-
-* Collapse options to YAML + `--set`. Route Parsl config resolution the same way LLC does (`load_parsl_config_from_card` and `RunContext` to carry `run_dir` override into the card), then `parsl.load(...)`. This mirrors the LLC path that writes the resolved card to `parsl_runinfo/selected_parsl_card.yaml`.
-* Add `--dry-run` to dump the resolved Optuna YAML (merged with dot‑list overrides).
-
-### 4.2 `lambda_hat/workflows/parsl_optuna.py`
-
-* **Accept a single `cfg: DictConfig`** (resolved from the YAML), not a forest of parameters.
-
-* **Executor routing**:
-
-  ```python
-  def _available_labels() -> set[str]:
-      # Read from the loaded Parsl config (parsl.dfk().config.executors)
-      return {ex.label for ex in parsl.dfk().config.executors}
-
-  def _executor_for(role: str, method: str, cfg) -> str:
-      # 1) explicit map wins
-      m = cfg.execution.get("executor_map", {})
-      if role == "hmc" and "hmc" in m: return m["hmc"]
-      if role == "method" and "methods" in m and method in m["methods"]:
-          return m["methods"][method]
-      # 2) AUTO rules
-      labels = _available_labels()
-      both = {"htex64","htex32"}.issubset(labels)
-      if role == "hmc" and ("htex64" in labels): return "htex64"
-      if role == "method":
-          if both and method in ("mclmc",): return "htex64"
-          if both: return "htex32"
-      # 3) Single executor fallback
-      if len(labels) == 1:
-          return next(iter(labels))
-      raise RuntimeError(f"No suitable executor for role={role}, method={method}.")
-  ```
-
-  *This matches the new pattern of passing `executor=...` on each app call.*
-
-* **Budgets & concurrency**:
-
-  * Pull from `cfg.execution.budget.{hmc_sec, trial_sec}` and `cfg.optuna.concurrency.*`.
-  * If the Parsl **card walltime** is known (e.g., SLURM cards), assert `trial_sec ≤ walltime_sec`; fail early with a helpful message. (Card walltime lives in the card YAML; resolved card is saved to `parsl_runinfo/selected_parsl_card.yaml` by `load_parsl_config_from_card`.)
-  * Honor optional `per_executor` caps by tracking inflight futures **per label**, in addition to the global `batch_size`.
-
-* **Search‑space interpreter (delete hard‑coded ranges)**:
-
-  ```python
-  def _suggest(trial, name, spec):
-      if spec["dist"] == "float":
-          return trial.suggest_float(name, spec["low"], spec["high"], log=spec.get("log", False))
-      if spec["dist"] == "int":
-          return trial.suggest_int(name, spec["low"], spec["high"], step=spec.get("step"))
-      if spec["dist"] == "categorical":
-          return trial.suggest_categorical(name, list(spec["choices"]))
-      raise ValueError(f"Unknown dist: {spec['dist']}")
-
-  def suggest_params_from_yaml(trial, space_dict):
-      return {k: _suggest(trial, k, dict(v)) for k, v in space_dict.items()}
-  ```
-
-  Replace calls to the current `suggest_method_params()` (documented as the source of truth for ranges) with the YAML interpreter.
-
-* **HMC stage**: submit `compute_hmc_reference(..., executor=_executor_for('hmc', '', cfg))` instead of the current hard‑coded `"htex64"` string. This removes the mismatch with SLURM cards that label their single executor `htex_slurm`.
-
-* **Method trials**: compute the label via `_executor_for('method', method_name, cfg)`; submit the `python_app` with `executor=label`, as LLC does.
-
-* **Artifacts**: switch to the shared `Paths`/`RunContext` to compute:
-
-  ```
-  runs/optuna/v1/
-    problems/p_<hash>/ref.json
-    trials/p_<hash>/<method>/r_<hash>/{manifest.json, metrics.json}
-    studies/<pid>:<method>.pkl
-    tables/optuna_trials.parquet
-    meta/resolved_config.yaml
-  ```
-
-  (This retains current ids and study pickles, just relocates under a single root with the same rules used elsewhere.) The LLC workflow already constructs `RunContext` up front and injects its `run_dir` into the card; we mirror that.
-
-### 4.3 `lambda_hat/parsl_cards.py` & cards
-
-* **No code change required**. Just ensure **local** cards define **two executors** with `label: htex64` and `label: htex32` so AUTO routing can use them; SLURM cards can keep a single `label: htex_slurm`. The builder already supports multi‑executor local configs and single‑executor SLURM configs.
-
----
-
-## 5) Example card (local, dual executors)
-
-```yaml
-# config/parsl/local.yaml
-type: local
-run_dir: parsl_runinfo
-retries: 1
-executors:
-  - label: htex64
-    max_workers: 2
-    cores_per_worker: 1
-    worker_init: |
-      export MPLBACKEND=agg
-      export JAX_ENABLE_X64=true
-  - label: htex32
-    max_workers: 6
-    cores_per_worker: 1
-    worker_init: |
-      export MPLBACKEND=agg
-      export JAX_ENABLE_X64=false
-```
-
-AUTO mapping will now route HMC/MCLMC to `htex64`, SGLD/VI to `htex32`.
-
----
-
-## 6) Migration plan (minimal, one‑way)
-
-1. **Schema + loader**
-
-   * Add `lambda_hat/config_optuna.py` with `load_cfg(path, dotlist) -> DictConfig`:
-
-     * loads YAML, merges `--set` overrides, fills defaults, validates invariants (budgets > 0, `batch_size ≥ 1`, executor labels exist), and returns a **resolved** DictConfig.
-     * On load, log detected executor labels from the active Parsl config and the effective mapping (AUTO or explicit).
-
-2. **Workflow rewrite (parsl_optuna.py)**
-
-   * Thread a single `cfg` everywhere; drop CLI‑injected numbers; compute executor routing via `_executor_for(...)` as above.
-   * Replace `suggest_method_params()` with the YAML interpreter.
-   * Write `meta/resolved_config.yaml` and aggregate to `tables/optuna_trials.parquet` under the `RunContext` root.
-
-3. **CLI simplification**
-
-   * In `lambda_hat/cli.py`, delete redundant flags for Optuna (`--max-trials`, `--batch-size`, budgets, dirs…). Keep `--config`, `--set`, `--local`/`--parsl-card`, `--resume`, `--dry-run`. The code for LLC already shows the card selection + run_dir override.
-
-4. **Cards + docs**
-
-   * Ensure `config/parsl/local.yaml` includes `htex64`/`htex32` labels as above.
-   * In docs, stop recommending CLI budget overrides; show YAML + `--set` instead. Current docs still advertise `--max-trials/--batch-size/--hmc-budget/--method-budget`; update those pages.
-
-5. **Safety rails**
-
-   * Validate: if `trial_sec` exceeds parsed walltime in the **resolved card**, error with a suggestion to increase card `walltime` or reduce `trial_sec`. (The resolved card is persisted automatically by `load_parsl_config_from_card`.)
-
----
-
-## 7) End‑to‑end usage (post‑migration)
-
-**Local test:**
+**Decision:** Interactive loops look like:
 
 ```bash
+# Local smoke test
 uv run lambda-hat workflow optuna \
   --config config/optuna/default.yaml \
   --local \
-  --dry-run  # prints resolved config & inferred executor map
-```
+  --set optuna.max_trials_per_method=8 \
+  --set execution.budget.trial_sec=120
 
-**Quick override without editing files:**
-
-```bash
-uv run lambda-hat workflow optuna \
-  --config config/optuna/default.yaml \
-  --set optuna.max_trials_per_method=24 \
-  --set optuna.concurrency.batch_size=6 \
-  --set execution.budget.trial_sec=300
-```
-
-**SLURM (single‑executor card):**
-
-```bash
+# HPC GPU run
 uv run lambda-hat workflow optuna \
   --config config/optuna/default.yaml \
   --parsl-card config/parsl/slurm/gpu-a100.yaml \
-  --set walltime=04:00:00  # override the card if needed
+  --set optuna.max_trials_per_method=64 \
+  --set optuna.concurrency.batch_size=16 \
+  --set execution.budget.trial_sec=600
 ```
 
-The AUTO routing will detect only `htex_slurm` and route everything there (with a one‑time warning).
+All the “interesting” choices (max trials, batch size, budgets) live in YAML; CLI only gives you `--config`, `--local/--parsl-card` and `--set`.
+
+**Rationale:** You don’t want to agonise at the CLI. This is consistent with `config_optuna.py`: YAML is the source of truth; `--set` is just a low‑friction override path.
+
+### 1.3 Slurm + GPU model
+
+**Decision:** Slurm GPU cards define *one* HTEX executor that owns exactly one GPU per block:
+
+```yaml
+# config/parsl/slurm/gpu-a100.yaml (intent)
+type: slurm
+label: htex_slurm
+nodes_per_block: 1
+gpus_per_node: 1
+max_blocks: 64            # upper bound on parallel trials
+max_workers: 1            # one worker per GPU
+walltime: "00:30:00"      # trials must be <= this
+...
+```
+
+Optuna’s `batch_size` is used **in addition** to this; effective parallelism is:
+
+```
+concurrency = min(batch_size, max_blocks * max_workers)
+```
+
+**Rationale:**
+
+* You said you’re penalised for long jobs; the obvious pattern is many short blocks with `nodes_per_block=1` and small walltime, not huge multi‑hour pilots.
+* With `gpus_per_node=1` and `max_workers=1`, every trial sees exactly one GPU, no oversubscription games.
 
 ---
 
-## 8) Notes on robustness (what you get)
+## 2. What needs changing (high‑level)
 
-* **Resume**: keep pickled studies (`studies/<pid>:<method>.pkl`) and content‑addressed trial ids; re‑runs skip completed trials. (Documented today and preserved.)
-* **Precision correctness**: you can still enforce dtype in sampler presets; AUTO routing follows the intended precision split by default. (HMC/MCLMC presets default to float64; SGLD defaults to float32.)
-* **Ask/tell concurrency**: global `batch_size` plus optional `per_executor` caps prevent starving the x64 pool when a mixed workload runs.
+Given Option D, the Optuna stack has three pieces that are now over‑engineered:
+
+1. **Config** still talks about multi‑executor routing and per‑executor caps.
+   Files: `config/optuna/default.yaml`, `config/optuna_demo.yaml`.
+
+2. **Config loader** builds `_executor_routing` and validates labels against the currently loaded Parsl config.
+
+3. **Workflow** uses `_executor_for(...)` and keeps per‑executor inflight caps.
+
+You want all of that gone. Optuna should know nothing about executor labels; it should just:
+
+* Submit HMC references.
+* Submit trials with a global `batch_size` cap.
+* Let the *card* decide how that maps to real jobs.
 
 ---
 
-## 9) Minimal diffs (summary)
+## 3. Concrete changes, file by file
 
-* **Delete** redundant Optuna flags in `cli.py`.
-* **Add** YAML search‑space interpreter; **delete** `suggest_method_params()` usage.
-* **Replace** hard‑coded executor strings with `_executor_for(...)`.
-* **Adopt** `Paths`/`RunContext` in Optuna for storage/run dirs to match LLC.
-* **Document** the local dual‑executor card and SLURM single‑executor fallback.
+### 3.1 `config/optuna/default.yaml` (and `config/optuna_demo.yaml`)
+
+**Goal:** Remove executor routing / per‑executor concurrency from the schema. Keep budgets and a *single* concurrency knob.
+
+**Edits:**
+
+1. Under `optuna.concurrency`, delete `per_executor`:
+
+```yaml
+optuna:
+  concurrency:
+    batch_size: 16    # Total inflight trials per (problem, method)
+    # per_executor:   # ← delete this block
+    #   htex64: 8
+    #   htex32: 16
+```
+
+2. Under `execution`, delete `executor_map` and its comment:
+
+```yaml
+execution:
+  parsl_card: config/parsl/local.yaml
+
+  budget:
+    hmc_sec: 7200
+    trial_sec: 600
+
+  # executor_map: ...   # ← delete entire executor_map block & AUTO rules comment
+```
+
+3. In the demo config, do the same (the demo currently comments out `executor_map`; just ensure there is no mention of per‑executor concurrency).
+
+4. If you want to bake in “interactive defaults” for dev, you can make the demo config more aggressive:
+
+```yaml
+optuna:
+  max_trials_per_method: 16
+  concurrency:
+    batch_size: 4
+execution:
+  budget:
+    hmc_sec: 1800
+    trial_sec: 300
+```
+
+### 3.2 `lambda_hat/config_optuna.py`
+
+**Goal:** Strip out all executor‑aware logic; make the loader purely about YAML + basic validation.
+
+Right now you have:
+
+* `_available_executor_labels()`
+* `_resolve_executor_map(...)`
+* `_validate_executor_labels(...)`
+* `load_cfg(..., validate_executors=True)` that pokes at `parsl.dfk().config`.
+
+**Edits:**
+
+1. **Delete** `_available_executor_labels`, `_resolve_executor_map`, `_validate_executor_labels`. They are dead in the new model.
+
+2. In `_validate_budgets`, drop the per‑executor section:
+
+```python
+def _validate_budgets(cfg: DictConfig):
+    hmc_sec = cfg.execution.budget.hmc_sec
+    trial_sec = cfg.execution.budget.trial_sec
+    batch_size = cfg.optuna.concurrency.batch_size
+
+    if hmc_sec <= 0: ...
+    if trial_sec <= 0: ...
+    if batch_size < 1: ...
+
+    # Remove per_executor validation entirely
+```
+
+3. In `load_cfg(...)`:
+
+* Drop the `validate_executors` argument altogether; it’s meaningless now.
+* Remove the block that calls `_available_executor_labels`, `_resolve_executor_map`, `_validate_executor_labels` and stuffs `_executor_routing` into `cfg`.
+
+Leaving something like:
+
+```python
+def load_cfg(config_path, dotlist_overrides=None) -> DictConfig:
+    cfg = OmegaConf.load(...)
+    # apply overrides; set defaults for optuna.concurrency.batch_size,
+    # execution.budget.hmc_sec / trial_sec
+    _validate_budgets(cfg)
+    _validate_search_spaces(cfg)
+    return cfg
+```
+
+4. `lambda_hat/cli.py` currently passes `validate_executors=True` when calling `load_cfg` from `workflow_optuna`. Remove that argument.
+
+Result: the Optuna config loader doesn’t care how many executors exist or what they’re called.
+
+### 3.3 `lambda_hat/workflows/parsl_optuna.py`
+
+**Goal:** Make the Optuna workflow oblivious to executor labels and routing; concurrency solely via `batch_size`.
+
+You currently have:
+
+* `_available_labels()`
+* `_executor_for(role, method, cfg)` that consults `cfg._executor_routing` and falls back to querying the DFK again.
+* A log line that prints “Per-executor caps”.
+* HMC stage: `executor = _executor_for("hmc"...); compute_hmc_reference(..., executor=executor)`.
+* Trial loop: tracks `per_executor_caps` and inflight counts per executor.
+
+**Edits:**
+
+1. **Delete** `_available_labels()` and `_executor_for()`. They have no role in a single‑executor world.
+
+2. In `run_optuna_workflow`:
+
+   * Drop all references to `per_executor_caps` and `cfg._executor_routing`. Simplify the initial logging:
+
+   ```python
+   log.info("=== Optuna Workflow Configuration ===")
+   log.info("Problems: %d", len(problems))
+   log.info("Methods: %s", methods)
+   log.info("Max trials per (problem, method): %d", max_trials_per_method)
+   log.info("Batch size (concurrent trials): %d", batch_size)
+   log.info("HMC budget: %ds (%.1fh)", hmc_budget_sec, hmc_budget_sec / 3600)
+   log.info("Method budget: %ds (%.1fmin)", trial_budget_sec, trial_budget_sec / 60)
+   ```
+
+   (No per‑executor caps, no routing log.)
+
+3. **Stage 1 – HMC references:**
+
+   Replace:
+
+   ```python
+   executor = _executor_for("hmc", "", cfg)
+   log.info("    Submitting HMC reference computation → %s", executor)
+   ref_futs[pid] = compute_hmc_reference(
+       problem_spec, str(out_ref), budget_sec=hmc_budget_sec, executor=executor
+   )
+   ```
+
+   with:
+
+   ```python
+   log.info("    Submitting HMC reference computation")
+   ref_futs[pid] = compute_hmc_reference(
+       problem_spec, str(out_ref), budget_sec=hmc_budget_sec
+   )
+   ```
+
+   (Let Parsl dispatch to the single configured executor.)
+
+4. **Stage 2 – Optuna ask/tell loop:**
+
+   The structure is roughly:
+
+   * Keep `inflight: dict[trial_number, Future]`.
+   * While `len(inflight) < batch_size` and `completed < max_trials_per_method`: `ask` a new trial, generate hyperparams, submit `run_method_trial(...)` with `executor=_executor_for(...)` and bookkeep.
+
+   You want to:
+
+   * Drop per‑executor accounting entirely.
+   * Drop `executor=_executor_for("method", method_name, cfg)` from the `run_method_trial` call.
+
+   So submission becomes:
+
+   ```python
+   fut = run_method_trial(
+       problem_spec=problem_spec,
+       method_name=method_name,
+       method_params=method_params,
+       ref_llc=llc_ref,
+       out_dir=str(trial_dir),
+       budget_sec=trial_budget_sec,
+   )
+   inflight[trial.number] = fut
+   ```
+
+   And the refill logic is simply:
+
+   ```python
+   while len(inflight) < batch_size and n_submitted < max_trials_per_method:
+       trial = study.ask()
+       params = suggest_params_from_yaml(trial, search_space[method_name])
+       # submit as above
+   ```
+
+   No `per_executor_caps`, no label bookkeeping.
+
+5. **Optional:** Log which executor label is actually being used, purely for debugging:
+
+   ```python
+   import parsl
+   labels = [ex.label for ex in parsl.dfk().config.executors]
+   log.info("Parsl executors: %s", labels)
+   ```
+
+   But don’t use those labels for routing.
 
 ---
 
-### Why this fixes the drift
+## 4. Slurm + GPU card sanity
 
-It keeps the original “YAML is the source of truth” promise while aligning with the **executor‑label model** you use elsewhere: you still choose resources via Cards, the workflow selects the right **label per task**, and there’s no more duplication between YAML, code, and CLI. The plan also removes the two‑root (“artifacts/… + results/…”) oddity by adopting the existing artifact context used by the standard workflow, but without changing your content‑addressed ids or Optuna resumability.
+Your `config/parsl/slurm/gpu-a100.yaml` already looks roughly like this:
+
+```yaml
+type: slurm
+label: htex_slurm
+partition: gpu
+nodes_per_block: 1
+init_blocks: 0
+min_blocks: 0
+max_blocks: 50
+walltime: "01:59:00"
+cores_per_node: 16
+mem_per_node: 64
+gpus_per_node: 1
+...
+max_workers: 1
+worker_init: |
+  module load python || true
+  ...
+  export JAX_DEFAULT_PRNG_IMPL=threefry2x32
+```
+
+For GPU Optuna runs this is fine; just make sure:
+
+* `max_workers: 1` (one worker per GPU).
+* Walltime isn’t smaller than `execution.budget.trial_sec` in Optuna configs.
+* If you want more parallelism, bump `max_blocks` and `optuna.concurrency.batch_size` together; concurrency is capped by both.
+
+If you later want CPU optuna runs, define `config/parsl/slurm/cpu.yaml` similarly (no GPU, maybe `max_workers>1`).
+
+---
+
+## 5. CLI & UX tweaks
+
+The `workflow optuna` command in `lambda_hat/cli.py` already looks close to what you want: it loads a Parsl card, then calls `load_cfg`, then `run_optuna_workflow`.
+
+Given the simplifications above:
+
+1. **Keep**:
+
+   * `--config`
+   * `--local` / `--parsl-card`
+   * `--set`
+   * `--dry-run`
+   * `--resume` (if present)
+
+2. **Do not re‑introduce** any “max‑trials / batch‑size / budget” CLI flags. Those belong in YAML and `--set`.
+
+3. **Dry run:** Already prints the resolved cfg and executor routing; after you remove routing, adjust it to just print the resolved cfg (and maybe the loaded executor labels for sanity):
+
+   ```python
+   if dry_run:
+       click.echo(OmegaConf.to_yaml(cfg))
+       labels = [ex.label for ex in parsl_cfg.executors]
+       click.echo(f"Executors: {labels}")
+       ...
+   ```
+
+---
+
+## 6. How this enables interactive loops in practice
+
+Once you apply the changes above, your interactive Optuna workflow degenerates to:
+
+* **On laptop:**
+
+  ```bash
+  uv run lambda-hat workflow optuna \
+    --config config/optuna_demo.yaml \
+    --local \
+    --set optuna.max_trials_per_method=8 \
+    --set optuna.concurrency.batch_size=2 \
+    --set execution.budget.trial_sec=120 \
+    --dry-run  # sanity check
+  ```
+
+  If the dry run prints the config you expect, drop `--dry-run` and run for real. You can iterate by nudging search spaces and budgets in YAML.
+
+* **On Slurm+GPU:**
+
+  ```bash
+  uv run lambda-hat workflow optuna \
+    --config config/optuna/default.yaml \
+    --parsl-card config/parsl/slurm/gpu-a100.yaml \
+    --set optuna.max_trials_per_method=64 \
+    --set optuna.concurrency.batch_size=16 \
+    --set execution.budget.trial_sec=600
+  ```
+
+  The cluster sees a stream of short jobs (blocks) each using one GPU; Optuna keeps `<=batch_size` trials inflight; you can stop and restart with the same config to resume from the study pickle.
+
+There is no mental overhead about “which executor label is my SGLD going to?” and no code that needs to know those labels.
+
+---
+
+## 7. Sanity/consistency checks after refactor
+
+Have the agent add / update tests:
+
+1. **Config loader tests**:
+
+   * `load_cfg` no longer touches Parsl.
+   * `_executor_routing` field no longer exists on cfg.
+   * `per_executor` in YAML is ignored or rejected (I’d prefer `KeyError` if someone adds it).
+
+2. **Integration test**: `tests/test_optuna_workflow.py` still passes with:
+
+   * Single executor local card.
+   * Single executor Slurm CPU/GPU cards (if you can exercise them in CI or a local cluster).
+
+3. **Docs**: Update `docs/optuna_workflow.md` to remove references to `executor_map`, per‑executor caps and the old `suggest_method_params()`; point to YAML search space instead. Some of this doc text is stale and still references CLI flags you’ve since deleted.
+
+---
+
+If you stick to this plan, Optuna becomes “just another user” of your simplified execution stack: it doesn’t know about executors, it only knows “I can submit a bounded number of trials at a time and each one has a time budget”. That’s exactly what you want for interactive tuning on both laptop and Slurm.
