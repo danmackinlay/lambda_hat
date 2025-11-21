@@ -8,23 +8,23 @@ Orchestrating experiments with Parsl, parameter sweeps, and artifact management.
 
 **At a glance**:
 - Parsl orchestrates N targets × M samplers in parallel
-- Run locally with `--local` or on SLURM clusters with `--parsl-card`
+- Run locally with `--backend local` or on SLURM clusters with `--backend slurm-cpu|slurm-gpu`
 - Optional promotion creates asset galleries
 - Artifacts stored in content-addressed system with automatic deduplication
 
 **Local execution**:
 ```bash
 # Basic workflow
-uv run lambda-hat workflow llc --local
+uv run lambda-hat workflow llc --backend local
 
 # With promotion (galleries)
-uv run lambda-hat workflow llc --local --promote
+uv run lambda-hat workflow llc --backend local --promote
 ```
 
 **HPC execution**:
 ```bash
 # SLURM cluster with A100 GPUs
-uv run lambda-hat workflow llc --parsl-card config/parsl/slurm/gpu-a100.yaml
+uv run lambda-hat workflow llc --backend slurm-gpu
 ```
 
 ---
@@ -54,10 +54,10 @@ Parsl manages parallel execution through Python futures:
 
 ```bash
 # Run locally (uses up to 8 CPU cores)
-uv run lambda-hat workflow llc --local
+uv run lambda-hat workflow llc --backend local
 
 # With promotion
-uv run lambda-hat workflow llc --local --promote
+uv run lambda-hat workflow llc --backend local --promote
 ```
 
 **Control parallelism**: Edit `config/parsl/local.yaml`:
@@ -98,12 +98,12 @@ logs/
 
 **Run on SLURM**:
 ```bash
-# Use A100 GPU profile
-uv run lambda-hat workflow llc --parsl-card config/parsl/slurm/gpu-a100.yaml
+# Use A100 GPU backend
+uv run lambda-hat workflow llc --backend slurm-gpu
 
-# Customize with overrides
-uv run lambda-hat workflow llc --parsl-card config/parsl/slurm/cpu.yaml \
-    --set walltime=04:00:00 --set gpus_per_node=2
+# Use CPU backend with card overrides
+uv run lambda-hat workflow llc --backend slurm-cpu \
+    --set walltime=04:00:00 --set max_blocks=300
 ```
 
 **Parsl card structure** (`config/parsl/slurm/gpu-a100.yaml`):
@@ -136,7 +136,7 @@ Target diagnostics have **conditional defaults** to balance dev visibility with 
 
 | Mode | `LAMBDA_HAT_SKIP_DIAGNOSTICS` | Behavior |
 |------|-------------------------------|----------|
-| **Local builds** (`--local`) | `0` (enabled) | Teacher plots generated during Stage A |
+| **Local builds** (`--backend local`) | `0` (enabled) | Teacher plots generated during Stage A |
 | **Parsl workflows** (cluster) | `1` (disabled) | No plots in workers (keeps executors lightweight) |
 | **Standalone `build` command** | `0` (enabled) | Always generate for dev debugging |
 
@@ -173,7 +173,7 @@ uv run lambda-hat diagnose-targets \
 Target diagnostics are automatically promoted to galleries when using `--promote`:
 
 ```bash
-uv run lambda-hat workflow llc --local --promote
+uv run lambda-hat workflow llc --backend local --promote
 ```
 
 Promoted plots appear in:
@@ -189,12 +189,12 @@ artifacts/experiments/dev/promotion/targets/
 
 **Force enable** (even in Parsl workflows):
 ```bash
-LAMBDA_HAT_SKIP_DIAGNOSTICS=0 uv run lambda-hat workflow llc --local
+LAMBDA_HAT_SKIP_DIAGNOSTICS=0 uv run lambda-hat workflow llc --backend local
 ```
 
 **Force disable** (even in local builds):
 ```bash
-LAMBDA_HAT_SKIP_DIAGNOSTICS=1 uv run lambda-hat workflow llc --local
+LAMBDA_HAT_SKIP_DIAGNOSTICS=1 uv run lambda-hat workflow llc --backend local
 ```
 
 ---
@@ -223,7 +223,7 @@ samplers:
 
 **Execute**:
 ```bash
-uv run lambda-hat workflow llc --local
+uv run lambda-hat workflow llc --backend local
 ```
 
 ---
@@ -284,8 +284,8 @@ targets: [...]
 
 Run separately:
 ```bash
-uv run lambda-hat workflow llc --local --config config/exp_f32.yaml
-uv run lambda-hat workflow llc --local --config config/exp_f64.yaml
+uv run lambda-hat workflow llc --backend local --config config/exp_f32.yaml
+uv run lambda-hat workflow llc --backend local --config config/exp_f64.yaml
 ```
 
 ---
@@ -296,11 +296,11 @@ uv run lambda-hat workflow llc --local --config config/exp_f64.yaml
 
 ```bash
 # Optimize locally
-uv run lambda-hat workflow optuna --config config/optuna_demo.yaml --local
+uv run lambda-hat workflow optuna --config config/optuna_demo.yaml --backend local
 
 # Optimize on SLURM
 uv run lambda-hat workflow optuna --config config/optuna_demo.yaml \
-    --parsl-card config/parsl/slurm/cpu.yaml
+    --backend slurm-cpu
 ```
 
 **How it works**:
@@ -419,12 +419,12 @@ lambda-hat diagnose-experiment \
 
 **Enable promotion (runs diagnostics first)**:
 ```bash
-uv run lambda-hat workflow llc --local --promote
+uv run lambda-hat workflow llc --backend local --promote
 ```
 
 **Specify which plots**:
 ```bash
-uv run lambda-hat workflow llc --local --promote \
+uv run lambda-hat workflow llc --backend local --promote \
     --promote-plots trace.png,llc_convergence_combined.png
 ```
 

@@ -324,21 +324,17 @@ def workflow():
     help="Experiment name (default: from config or env)",
 )
 @click.option(
-    "--parsl-card",
-    default=None,
-    type=click.Path(exists=True),
-    help="Path to Parsl YAML card (e.g., config/parsl/slurm/cpu.yaml)",
+    "--backend",
+    type=click.Choice(["local", "slurm-cpu", "slurm-gpu"]),
+    default=lambda: os.environ.get("LAMBDA_HAT_BACKEND", "local"),
+    show_default="local (or LAMBDA_HAT_BACKEND env var)",
+    help="Execution backend: local HTEX, SLURM CPU nodes, or SLURM GPU nodes",
 )
 @click.option(
     "--set",
     "parsl_sets",
     multiple=True,
     help="Override Parsl card values (e.g., --set walltime=04:00:00)",
-)
-@click.option(
-    "--local",
-    is_flag=True,
-    help="Use local dual-HTEX executor (equivalent to --parsl-card config/parsl/local.yaml)",
 )
 @click.option(
     "--promote",
@@ -351,7 +347,7 @@ def workflow():
     show_default=True,
     help="Comma-separated plots to promote when --promote is used",
 )
-def workflow_llc(config, experiment, parsl_card, parsl_sets, local, promote, promote_plots):
+def workflow_llc(config, experiment, backend, parsl_sets, promote, promote_plots):
     """Run N×M targets×samplers workflow.
 
     This orchestrates the full pipeline:
@@ -363,11 +359,14 @@ def workflow_llc(config, experiment, parsl_card, parsl_sets, local, promote, pro
     Examples:
 
       # Local testing (no promotion, fast)
-      lambda-hat workflow llc --config config/experiments.yaml --local
+      lambda-hat workflow llc --config config/experiments.yaml --backend local
 
-      # SLURM cluster with promotion (includes diagnostics)
+      # SLURM GPU cluster with promotion (includes diagnostics)
       lambda-hat workflow llc --config config/experiments.yaml \\
-          --parsl-card config/parsl/slurm/gpu-a100.yaml --promote
+          --backend slurm-gpu --promote
+
+      # SLURM CPU cluster
+      lambda-hat workflow llc --config config/experiments.yaml --backend slurm-cpu
     """
     # Import main workflow logic from parsl_llc entrypoint
     # We'll delegate to the existing run_workflow function
@@ -385,32 +384,27 @@ def workflow_llc(config, experiment, parsl_card, parsl_sets, local, promote, pro
     experiment_name = experiment or exp_config.get("experiment") or "dev"
     ctx_early = RunContext.create(experiment=experiment_name, algo="parsl_llc", paths=paths_early)
 
-    # Resolve Parsl config
-    if local and not parsl_card:
-        # Local mode: load local.yaml card with RunContext run_dir
-        click.echo("Using Parsl mode: local (single HTEX)")
-        local_card_path = Path("config/parsl/local.yaml")
-        if not local_card_path.exists():
-            click.echo(f"Error: Local card not found: {local_card_path}", err=True)
-            sys.exit(1)
-        parsl_cfg = load_parsl_config_from_card(local_card_path, [f"run_dir={ctx_early.parsl_dir}"])
-    elif parsl_card:
-        # Card-based config with run_dir override
-        card_path = Path(parsl_card)
-        if not card_path.is_absolute():
-            card_path = Path.cwd() / card_path
-        if not card_path.exists():
-            click.echo(f"Error: Parsl card not found: {card_path}", err=True)
-            sys.exit(1)
-        click.echo(f"Using Parsl card: {card_path}")
-        # Add run_dir override to parsl_sets
-        parsl_sets_list = list(parsl_sets) + [f"run_dir={ctx_early.parsl_dir}"]
-        if parsl_sets:
-            click.echo(f"  Overrides: {list(parsl_sets)}")
-        parsl_cfg = load_parsl_config_from_card(card_path, parsl_sets_list)
-    else:
-        click.echo("Error: Must specify either --local or --parsl-card", err=True)
+    # Map backend to Parsl card path
+    backend_cards = {
+        "local": "config/parsl/local.yaml",
+        "slurm-cpu": "config/parsl/slurm/cpu.yaml",
+        "slurm-gpu": "config/parsl/slurm/gpu-a100.yaml",
+    }
+
+    card_path = Path(backend_cards[backend])
+    if not card_path.exists():
+        click.echo(f"Error: Parsl card not found: {card_path}", err=True)
         sys.exit(1)
+
+    click.echo(f"Using backend: {backend}")
+    click.echo(f"  Parsl card: {card_path}")
+
+    # Add run_dir override to parsl_sets
+    parsl_sets_list = list(parsl_sets) + [f"run_dir={ctx_early.parsl_dir}"]
+    if parsl_sets:
+        click.echo(f"  Overrides: {list(parsl_sets)}")
+
+    parsl_cfg = load_parsl_config_from_card(card_path, parsl_sets_list)
 
     # Parse promote plots
     promote_plots_list = [p.strip() for p in promote_plots.split(",") if p.strip()]
@@ -433,7 +427,7 @@ def workflow_llc(config, experiment, parsl_card, parsl_sets, local, promote, pro
             experiment=experiment,
             enable_promotion=promote,
             promote_plots=promote_plots_list,
-            is_local=local,  # Enable target diagnostics for local dev
+            is_local=(backend == "local"),  # Enable target diagnostics for local dev
         )
         click.echo(f"\n✓ Workflow complete! Results: {output_path}")
     except Exception as e:
@@ -451,12 +445,11 @@ def workflow_llc(config, experiment, parsl_card, parsl_sets, local, promote, pro
     help="Path to Optuna config YAML (defines problems, methods, search spaces, budgets, etc.)",
 )
 @click.option(
-    "--parsl-card",
-    type=click.Path(exists=True),
-    help=(
-        "Path to Parsl YAML card (e.g., config/parsl/slurm/cpu.yaml). "
-        "Mutually exclusive with --local."
-    ),
+    "--backend",
+    type=click.Choice(["local", "slurm-cpu", "slurm-gpu"]),
+    default=lambda: os.environ.get("LAMBDA_HAT_BACKEND", "local"),
+    show_default="local (or LAMBDA_HAT_BACKEND env var)",
+    help="Execution backend: local HTEX, SLURM CPU nodes, or SLURM GPU nodes",
 )
 @click.option(
     "--set",
@@ -465,16 +458,11 @@ def workflow_llc(config, experiment, parsl_card, parsl_sets, local, promote, pro
     help="Override config values (OmegaConf dotlist), e.g.: --set optuna.max_trials_per_method=50",
 )
 @click.option(
-    "--local",
-    is_flag=True,
-    help="Use local dual-HTEX mode (equivalent to --parsl-card config/parsl/local.yaml)",
-)
-@click.option(
     "--dry-run",
     is_flag=True,
     help="Print resolved config and executor routing without running workflow",
 )
-def workflow_optuna(config, parsl_card, config_sets, local, dry_run):
+def workflow_optuna(config, backend, config_sets, dry_run):
     """Run Bayesian hyperparameter optimization (YAML-first).
 
     This uses Optuna + Parsl to optimize sampler hyperparameters. All settings
@@ -483,20 +471,20 @@ def workflow_optuna(config, parsl_card, config_sets, local, dry_run):
 
     Examples:
       # Local testing
-      lambda-hat workflow optuna --config config/optuna/default.yaml --local
+      lambda-hat workflow optuna --config config/optuna/default.yaml --backend local
 
       # Override trials and batch size
-      lambda-hat workflow optuna --config config/optuna/default.yaml --local \\
+      lambda-hat workflow optuna --config config/optuna/default.yaml --backend local \\
           --set optuna.max_trials_per_method=24 \\
           --set optuna.concurrency.batch_size=6
 
-      # SLURM cluster
+      # SLURM GPU cluster
       lambda-hat workflow optuna --config config/optuna/default.yaml \\
-          --parsl-card config/parsl/slurm/gpu-a100.yaml
+          --backend slurm-gpu
 
       # Dry-run to preview config
       lambda-hat workflow optuna --config config/optuna/default.yaml \\
-          --local --dry-run
+          --backend local --dry-run
     """
     import sys
     from pathlib import Path
@@ -513,14 +501,6 @@ def workflow_optuna(config, parsl_card, config_sets, local, dry_run):
     # Configure logging
     configure_logging()
 
-    # Validate flags
-    if local and parsl_card:
-        click.echo("Error: --local and --parsl-card are mutually exclusive", err=True)
-        sys.exit(1)
-    if not local and not parsl_card:
-        click.echo("Error: Must specify either --local or --parsl-card", err=True)
-        sys.exit(1)
-
     # Initialize artifact system early to get RunContext for Parsl run_dir override
     paths = Paths.from_env()
     paths.ensure()
@@ -530,24 +510,22 @@ def workflow_optuna(config, parsl_card, config_sets, local, dry_run):
     experiment = cfg_early.store.get("namespace", "optuna")
     ctx = RunContext.create(experiment=experiment, algo="optuna_workflow", paths=paths)
 
-    # Resolve Parsl configuration with run_dir override
-    if local:
-        click.echo("Using Parsl mode: local (single HTEX)")
-        local_card_path = Path("config/parsl/local.yaml")
-        if not local_card_path.exists():
-            click.echo(f"Error: Local card not found: {local_card_path}", err=True)
-            sys.exit(1)
-        parsl_cfg = load_parsl_config_from_card(local_card_path, [f"run_dir={ctx.parsl_dir}"])
-    else:
-        card_path = Path(parsl_card)
-        if not card_path.is_absolute():
-            card_path = Path.cwd() / card_path
-        if not card_path.exists():
-            click.echo(f"Error: Parsl card not found: {card_path}", err=True)
-            sys.exit(1)
-        click.echo(f"Using Parsl card: {card_path}")
-        # Add run_dir override to config sets
-        parsl_cfg = load_parsl_config_from_card(card_path, [f"run_dir={ctx.parsl_dir}"])
+    # Map backend to Parsl card path
+    backend_cards = {
+        "local": "config/parsl/local.yaml",
+        "slurm-cpu": "config/parsl/slurm/cpu.yaml",
+        "slurm-gpu": "config/parsl/slurm/gpu-a100.yaml",
+    }
+
+    card_path = Path(backend_cards[backend])
+    if not card_path.exists():
+        click.echo(f"Error: Parsl card not found: {card_path}", err=True)
+        sys.exit(1)
+
+    click.echo(f"Using backend: {backend}")
+    click.echo(f"  Parsl card: {card_path}")
+
+    parsl_cfg = load_parsl_config_from_card(card_path, [f"run_dir={ctx.parsl_dir}"])
 
     # Load Parsl before validating Optuna config (executor validation needs it)
     parsl.load(parsl_cfg)

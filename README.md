@@ -184,10 +184,10 @@ We use **Parsl** for the full pipeline. Parsl provides Python-native DAG executi
 
 ```bash
 # Run locally (uses single HTEX, multi-process)
-uv run lambda-hat workflow llc --local
+uv run lambda-hat workflow llc --backend local
 
 # Run locally with promotion (generates galleries)
-uv run lambda-hat workflow llc --local --promote
+uv run lambda-hat workflow llc --backend local --promote
 ```
 
 ### Editing experiments
@@ -201,10 +201,10 @@ Promotion generates asset galleries from sampling runs. It's opt-in via the `--p
 
 ```bash
 # Run workflow with diagnostics and promotion
-uv run lambda-hat workflow llc --local --promote
+uv run lambda-hat workflow llc --backend local --promote
 
 # Specify which plots to promote
-uv run lambda-hat workflow llc --local --promote \
+uv run lambda-hat workflow llc --backend local --promote \
     --promote-plots trace.png,llc_convergence_combined.png
 ```
 
@@ -214,15 +214,15 @@ uv run lambda-hat workflow llc --local --promote \
 
 ### HPC Execution
 
-For SLURM clusters, use a Parsl card configuration:
+For SLURM clusters, use the backend flag to select GPU or CPU execution:
 
 ```bash
-# Run on SLURM cluster (auto-scales based on card config)
-uv run lambda-hat workflow llc --parsl-card config/parsl/slurm/gpu-a100.yaml
+# Run on SLURM GPU cluster
+uv run lambda-hat workflow llc --backend slurm-gpu
 
-# Customize with overrides
-uv run lambda-hat workflow llc --parsl-card config/parsl/slurm/cpu.yaml \
-    --set walltime=04:00:00 --set gpus_per_node=2
+# Run on SLURM CPU cluster with overrides
+uv run lambda-hat workflow llc --backend slurm-cpu \
+    --set walltime=04:00:00 --set max_blocks=300
 ```
 
 ### Hyperparameter Optimization
@@ -231,11 +231,11 @@ uv run lambda-hat workflow llc --parsl-card config/parsl/slurm/cpu.yaml \
 
 ```bash
 # Optimize hyperparameters locally
-uv run lambda-hat workflow optuna --config config/optuna_demo.yaml --local
+uv run lambda-hat workflow optuna --config config/optuna_demo.yaml --backend local
 
 # Optimize on SLURM cluster
 uv run lambda-hat workflow optuna --config config/optuna_demo.yaml \
-    --parsl-card config/parsl/slurm/cpu.yaml
+    --backend slurm-cpu
 ```
 
 **How it works:**

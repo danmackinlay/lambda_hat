@@ -1,163 +1,214 @@
+Yes, I’d revise that plan given where you are now and what you actually care about (GPU Slurm, embarrassingly parallel, good UX, Option D in place).
 
-* **HTEX doesn’t require you to run a separate “ZMQ server.”** It spawns a tiny *interchange* process for you and uses ZeroMQ sockets between the driver, the interchange, and workers. You don’t need any daemon beyond what HTEX starts itself. The networking pain you saw (binding to `10.100.0.2`) is address auto‑detection going wrong, not a missing service. The fix is to **set the address explicitly** (and, optionally, pin port ranges). ([Parsl][1])
-
-* **“Slurm executor” vs HTEX:** In Parsl terms, **Slurm is a *provider*** (how blocks are obtained), while **HTEX is an *executor*** (how tasks are run inside those blocks). HTEX uses a **pilot‑job model**: Slurm gives you *blocks* (batch jobs), and Parsl schedules many tasks *inside* those blocks. That is a different goal than “one Slurm job per small task.” ([GitLab][2])
-
-* If your real goal is **“let Slurm schedule many small jobs itself”**, you have three viable paths:
-
-  1. Configure HTEX to submit **many tiny one‑node blocks** (each block is one Slurm job) and let Parsl fill them—this preserves the Parsl workflow and still leverages Slurm queueing.
-  2. Use **WorkQueueExecutor** (start many workers via Slurm job arrays; Parsl sends tasks to whichever workers check in).
-  3. Skip Parsl for the compute step and **use Slurm job arrays** (each array element runs a `lambda-hat` CLI), then have your Python orchestrator collect outputs.
-     (Details and examples below.)
+Let me give you a **target design** that’s explicitly GPU-aware and UX-friendly, then concrete steps.
 
 ---
 
-## What’s antithetical and what isn’t
+## 1. Reframe the architecture (what matters now)
 
-* **Antithetical:** With *vanilla* HTEX, **Slurm does not schedule each Parsl task**; Slurm gives HTEX long‑lived allocations (“blocks”), and *Parsl* schedules your tasks inside those. That’s the pilot‑job model by design. ([Parsl][3])
+Given:
 
-* **Compatible:** You can still exploit Slurm’s economics and backfill by **requesting lots of small, short blocks** (e.g., `nodes_per_block=1`, small `walltime`, `min_blocks=0`, high `max_blocks`). Then **Parsl adaptively scales blocks up/down** with the Simple strategy as the backlog changes. The scheduler sees many short jobs; Parsl still batches tasks efficiently inside each job. ([Parsl][4])
+* Option D is in and working: **precision is per-task** via `cfg.jax.enable_x64`, not via executor selection.
+* On Slurm, jobs are **process-isolated**; you’re going to use `nodes_per_block=1` and short walltimes.
+* You care about **GPU vs CPU**, not “float32 vs float64 executors”.
+* Sampler runs are **embarrassingly parallel**; you’re penalised for long jobs, not for many jobs.
+
+So:
+
+1. Stop thinking about “local vs Slurm” as a deep design problem. Treat them as **just different Parsl cards**.
+2. Make GPU vs CPU a **card choice**, not something the workflow has to infer.
+3. Give the user a **single CLI knob** like `--backend=local|slurm-cpu|slurm-gpu` and hide everything else.
+4. Tune Slurm cards for **many short single-node, single-GPU blocks** that Parsl fills with your embarrassingly parallel tasks.
 
 ---
 
-## Minimalist, robust local execution (no ZMQ flakes)
+## 2. Slurm + GPU design
 
-Your help‑desk report shows HTEX was binding to a VPN (`utun3`, `10.100.0.2`). On macOS, fix by *explicitly* telling HTEX to use loopback:
+### 2.1. Cards: explicit CPU vs GPU
 
-```python
-# lambda_hat/parsl_cards.py  (pseudo-diff)
-from parsl.executors import HighThroughputExecutor
-from parsl.providers import LocalProvider
-from parsl.addresses import address_by_interface, address_by_hostname
+You already have:
 
-htex = HighThroughputExecutor(
-    label="htex_local",
-    # For local-only runs:
-    address="127.0.0.1",            # <- force loopback
-    loopback_address="127.0.0.1",   # keep internal chatter local
-    start_method="spawn",           # safer than fork for JAX/NumPy backends
-    worker_port_range=(55000, 55100),
-    interchange_port_range=(55101, 55200),
-    cores_per_worker=1,
-    max_workers_per_node=4,
-    provider=LocalProvider(
-        init_blocks=1, min_blocks=0, max_blocks=1,
-        worker_init="export MPLBACKEND=Agg; export JAX_ENABLE_X64=1",
-    ),
-)
+* `config/parsl/slurm/cpu.yaml`
+* `config/parsl/slurm/gpu-a100.yaml`
+
+Refine them so they both follow this pattern:
+
+```yaml
+type: slurm
+label: htex_slurm
+
+partition: <cpu-or-gpu-partition>
+nodes_per_block: 1
+init_blocks: 0
+min_blocks: 0
+max_blocks: 200     # lots of small blocks
+walltime: "00:20:00"  # or whatever fits “one sampler target” scale
+
+cores_per_node: 4      # or 8, doesn’t matter much if you do 1 worker
+mem_per_node: 64
+gpus_per_node: 0|1     # 0 in cpu.yaml, 1 in gpu-a100.yaml
+gpu_type: null|a100    # as needed
+
+retries: 1
+run_dir: parsl_runinfo
+max_workers: 1         # 1 worker per node/block – good for embarrassingly parallel
+
+worker_init: |
+  module load python || true
+  source ~/.bashrc || true
+  export PATH="$HOME/.local/bin:$PATH"
+  export JAX_DEFAULT_PRNG_IMPL=threefry2x32
+  export MPLBACKEND=Agg
+  # GPU card only:
+  # module load cuda/12.1 || true
+  # export JAX_PLATFORMS=cuda
 ```
 
-* `address` and `loopback_address` remove the auto‑detection failure.
-* Pinning `worker_port_range`/`interchange_port_range` makes ports predictable.
-* `start_method="spawn"` avoids fork‑related issues in scientific stacks (BLAS, XLA, etc.). ([Parsl][1])
+Key points:
 
-> If you want this configurable from YAML, add an optional `address:` key; allow values like a literal IP (`127.0.0.1`), `hostname`, or `if:lo0` to go through `address_by_hostname()`/`address_by_interface()`. ([GitLab][5])
+* **nodes_per_block=1**: each Slurm job is a single node; you’re not doing multi-node parallelism.
+* **max_workers=1** / low `cores_per_node`: each node runs a single worker process, so one Parsl task at a time → exactly what you want for “one job per compute node”.
+* **walltime short**: each block is a short job. If you have many tasks, Parsl/HTEX will spin up many such blocks as the backlog grows. Slurm is happy: many short jobs, no long hogs.
 
-**Why this addresses your bug report:** HTEX’s interchange is already “the server”; the error came from it binding to the wrong NIC. For local runs, `127.0.0.1` is the most robust choice and needs no daemons. ([Parsl][1])
+You can tweak `max_blocks` and `walltime` once you see typical sampler runtime.
+
+### 2.2. GPUs: don’t overthink it
+
+For GPU Slurm:
+
+* `gpus_per_node: 1`, `gpu_type: a100` (already in your file).
+* `worker_init` loads CUDA and sets `JAX_PLATFORMS=cuda`. That’s enough; Option D still handles x64 vs x32.
+* If you want to be nice to the cluster, add `XLA_PYTHON_CLIENT_PREALLOCATE=false` too to avoid JAX grabbing the whole GPU by default.
+
+You do **not** need separate executors per sampler or per dtype.
 
 ---
 
-## Slurm: best‑practice configurations by goal
+## 3. UX: make backend selection trivial
 
-### A) Keep Parsl + HTEX, but let Slurm “see” many small jobs
+Right now your CLI for workflows is:
 
-Use one node per block and adaptive scaling:
-
-```python
-from parsl.executors import HighThroughputExecutor
-from parsl.providers import SlurmProvider
-from parsl.launchers import SrunLauncher
-from parsl.addresses import address_by_hostname
-
-htex = HighThroughputExecutor(
-    label="htex_slurm_smallblocks",
-    address=address_by_hostname(),        # must be reachable from compute nodes
-    start_method="spawn",
-    max_workers_per_node=1, cores_per_worker=1,
-    worker_port_range=(55000,55100), interchange_port_range=(55101,55200),
-    provider=SlurmProvider(
-        partition="short",
-        nodes_per_block=1,         # <- one job per block
-        init_blocks=0, min_blocks=0, max_blocks=200,  # scale with backlog
-        walltime="00:15:00",
-        launcher=SrunLauncher(),   # standard Slurm launcher
-        worker_init="source /path/to/env; export MPLBACKEND=Agg",
-    ),
-)
+```bash
+lambda-hat workflow llc --config ... --local
+# or
+lambda-hat workflow llc --config ... --parsl-card config/parsl/slurm/gpu-a100.yaml
 ```
 
-* This preserves the Parsl workflow and usually gives **excellent throughput for many small tasks** while benefiting from Slurm’s queueing/backfill for lots of short jobs.
-* Ensure `address` is resolvable from compute nodes (use `address_by_hostname()` or `address_by_interface('ib0')` depending on site). ([Parsl][1])
+That’s annoying. Replace it with:
 
-### B) Run Parsl **inside** a Slurm allocation (no inbound connections)
+### 3.1. New CLI flag: `--backend`
 
-If your site blocks inbound connections to the login node, submit a single Slurm job that runs your Parsl driver on node 0 and uses `SrunLauncher`. In this pattern the HTEX address can remain loopback and all traffic is intra‑allocation. Example patterns are documented by NERSC. ([NERSC Documentation][6])
+Add to `workflow llc` in `lambda_hat/cli.py`:
 
-### C) If you truly want “one scheduler job per unit of compute”
+```python
+@workflow.command("llc")
+@click.option(
+    "--backend",
+    type=click.Choice(["local", "slurm-cpu", "slurm-gpu"]),
+    default="local",
+    show_default=True,
+    help="Execution backend: local HTEX, Slurm CPU, or Slurm GPU.",
+)
+# keep --config, --experiment, --promote, etc.
+def workflow_llc(config, experiment, backend, ...):
+    ...
+```
 
-* **Job arrays (no Parsl):** For embarrassingly parallel tasks, create an array script that calls your CLI once per element (e.g., per target/sampler/seed), then run a tiny Python step to aggregate parquet outputs. This is the purest “let Slurm schedule it” approach and avoids ZMQ entirely. (Many centers recommend arrays for such workloads.) ([rc-docs.northeastern.edu][7])
+Then inside that command:
 
-* **WorkQueueExecutor:** Keep Parsl’s Python DAG, but start many **`work_queue_worker`** processes under Slurm (often via a Slurm job array). Workers come and go, and Parsl feeds tasks to whichever are alive. This is a good fit when you want scheduler control over worker lifetimes and counts but still want Parsl to manage task/data dependencies. ([Parsl][8])
+```python
+from lambda_hat.parsl_cards import load_parsl_config_from_card
+from lambda_hat.artifacts import Paths, RunContext
 
-> There is no built‑in “SlurmExecutor that submits one Slurm job per Parsl task.” The standard model is pilot jobs (HTEX) or external worker pools (WorkQueue/TaskVine/Flux). ([Parsl][3])
+paths_early = Paths.from_env()
+paths_early.ensure()
+exp_config = OmegaConf.load(config)
+experiment_name = experiment or exp_config.get("experiment") or "dev"
+ctx_early = RunContext.create(experiment=experiment_name, algo="parsl_llc", paths=paths_early)
+
+# Map backend -> card path
+if backend == "local":
+    card_path = Path("config/parsl/local.yaml")
+elif backend == "slurm-cpu":
+    card_path = Path("config/parsl/slurm/cpu.yaml")
+elif backend == "slurm-gpu":
+    card_path = Path("config/parsl/slurm/gpu-a100.yaml")
+else:
+    raise click.ClickException(f"Unknown backend {backend!r}")
+
+if not card_path.exists():
+    raise click.ClickException(f"Parsl card not found: {card_path}")
+
+parsl_cfg = load_parsl_config_from_card(card_path, [f"run_dir={ctx_early.parsl_dir}"])
+```
+
+And delete the previous `--local` / `--parsl-card` logic in that command. You can keep `workflow optuna` as-is for now, or give it the same `--backend` pattern later.
+
+From the user’s perspective:
+
+* Local dev:
+  `uv run lambda-hat workflow llc --backend local --config config/smoke.yaml`
+* CPU Slurm:
+  `uv run lambda-hat workflow llc --backend slurm-cpu --config config/experiments.yaml`
+* GPU Slurm:
+  `uv run lambda-hat workflow llc --backend slurm-gpu --config config/experiments.yaml`
+
+No agonising about cards.
+
+If you want serious ergonomics, read a default backend from env:
+
+```python
+default_backend = os.getenv("LAMBDA_HAT_BACKEND", "local")
+@click.option("--backend", ..., default=default_backend, show_default=True)
+```
+
+So on the cluster you can just:
+
+```bash
+export LAMBDA_HAT_BACKEND=slurm-gpu
+uv run lambda-hat workflow llc --config config/experiments.yaml
+```
 
 ---
 
-## Concrete changes I recommend for **lambda_hat**
+## 4. Embarrassingly parallel runs: align workflow + Slurm
 
-1. **Local card (`type: local`)**
+Your Stage B is already “target × sampler × seed → independent sampler run.” The improvements above make Slurm *see* many small jobs:
 
-   * Add an `address` option to your YAML (default `127.0.0.1`) and pass it to HTEX.
-   * Pin `worker_port_range` and `interchange_port_range`.
-   * Use `start_method: spawn`.
-     This eliminates the “ZMQ URL not viable” flakiness on macOS. ([Parsl][1])
+* `nodes_per_block=1`, `walltime` short
+* `max_workers=1`
+* `max_blocks` high
 
-2. **Slurm card (`type: slurm`)**
+That combines well with your Option D model:
 
-   * Decide between **A** (pilot jobs: many small blocks) and **B** (run inside allocation).
-   * For **A**: `nodes_per_block=1`, `min_blocks=0`, `max_blocks` large, short `walltime`, `SrunLauncher()`, `address=address_by_hostname()` or `address_by_interface("ib0")`.
-   * For **B**: run your Parsl driver under `sbatch`, use `SrunLauncher()` only, and keep address/loopback internal as shown by the NERSC example. ([NERSC Documentation][6])
+* Each sampler task is a separate Parsl task.
+* HTEX requests as many blocks as you have runnable tasks (up to `max_blocks`), each block running exactly one worker executing one task at a time.
+* Slurm happily schedules many short GPU jobs.
 
-3. **(Optional) WorkQueue mode**
+For very large grids, you might bump `max_blocks` to the expected concurrency limit (e.g. if your queue allows you ~100 GPUs at once, set `max_blocks=100`).
 
-   * Add a second executor profile using `WorkQueueExecutor`. Provide a small helper `sbatch` to launch `work_queue_worker` via an array (`min_workers=0, max_workers=...`). Use this profile when you want Slurm to elastically provide workers without holding big long‑lived allocations. ([Parsl][8])
-
-4. **Docs + diagnostics**
-
-   * In your README, add a short “Networking FAQ” that calls out `address=` and port‑pinning and shows how to select an interface. Mention the “compile pyzmq from source” fallback if the site’s prebuilt `pyzmq` is incompatible. ([Parsl][9])
+You do **not** need to change the Parsl app definitions; `run_sampler_app` already takes care of per-run configs.
 
 ---
 
-## Will a multiprocess executor fix the plotting/x64 flakiness?
+## 5. Checklist of revisions vs your current plan
 
-Very likely *yes* for the plotting: separate **processes** isolate Matplotlib/ArviZ state and avoid the thread‑safety issues you hit with the ThreadPool. You’ve already set `MPLBACKEND=Agg`; combine that with process isolation and you shouldn’t need locks. (Keep your `rcParams['text.usetex']=False` change.) For the **x64 dtype drift**, processes also help by giving each run its own `JAX_ENABLE_X64` environment and JAX config, rather than sharing process‑global state across threads.
+Compared to the text you pasted:
 
-HTEX on a single node with `LocalProvider` is essentially a managed **ProcessPool with better control over workers**—that’s why Parsl’s quickstart compares HTEX to `ProcessPoolExecutor`. ([Parsl][10])
+* Drop the whole “dual local HTEX with address fiddling” complexity as a *design target*; you now only need robust `local.yaml` with `address=127.0.0.1` and spawn. The subtle ZMQ / VPN discussion is still useful, but that’s a separate bugfix, not core design.
+* Stop talking about “Slurm executor” vs “HTEX executor” as if you needed both. In practice, you’ll have a **single HTEX** plus a **SlurmProvider** with `nodes_per_block=1`.
+* For “let Slurm schedule many small jobs”, you now achieve that by:
+
+  * short Slurm blocks,
+  * `nodes_per_block=1`,
+  * high `max_blocks`,
+  * one worker per node.
+* UX plan becomes: **backend switch**, not “remember which card path you like”.
 
 ---
 
-## TL;DR decision guide
+If you want, I can now write a concrete “coding agent plan” to implement:
 
-* **“I want minimal local parallelism and no network surprises.”**
-  Use **HTEX + LocalProvider** with `address="127.0.0.1"`, pinned port ranges, and `start_method="spawn"`. No extra daemons; robust on macOS. ([Parsl][1])
-
-* **“I’m on Slurm and want many cheap small jobs with the Parsl DAG.”**
-  Keep **HTEX + SlurmProvider** but set `nodes_per_block=1`, short `walltime`, adaptive scaling (`min_blocks=0`, big `max_blocks`). Slurm still schedules many small jobs; Parsl fills them. ([Parsl][4])
-
-* **“I want the scheduler to elastically provide workers, not long pilots.”**
-  Consider **WorkQueueExecutor** and launch `work_queue_worker` via a Slurm job array. ([Parsl][8])
-
-* **“I truly want one Slurm job per task and don’t need Parsl’s DAG.”**
-  Use **Slurm job arrays** invoking `lambda-hat` CLI per element; aggregate afterward. ([rc-docs.northeastern.edu][7])
-
-
-[1]: https://parsl.readthedocs.io/en/stable/stubs/parsl.executors.HighThroughputExecutor.html?utm_source=chatgpt.com "parsl.executors.HighThroughputExecutor - Read the Docs"
-[2]: https://gitlab.ebrains.eu/noelp/parsl/-/blob/3687404abf2eb00d3baa5076c70813f5d7bf8646/docs/userguide/configuring.rst?utm_source=chatgpt.com "parsl - docs - userguide - configuring.rst"
-[3]: https://parsl.readthedocs.io/en/stable/userguide/overview.html?utm_source=chatgpt.com "Overview — Parsl 1.3.0-dev documentation - Read the Docs"
-[4]: https://parsl-project.org/parslfest/2024/parslguts.pdf?utm_source=chatgpt.com "Parsl Guts"
-[5]: https://gitlab.ebrains.eu/noelp/parsl/-/blob/master/parsl/addresses.py?utm_source=chatgpt.com "parsl/addresses.py · master - Klaus Noelp"
-[6]: https://docs.nersc.gov/jobs/workflow/parsl/?utm_source=chatgpt.com "Parsl"
-[7]: https://rc-docs.northeastern.edu/en/latest/runningjobs/slurmarray.html?utm_source=chatgpt.com "Slurm Jobs Array"
-[8]: https://parsl.readthedocs.io/en/stable/stubs/parsl.executors.WorkQueueExecutor.html?utm_source=chatgpt.com "parsl.executors.WorkQueueExecutor - Read the Docs"
-[9]: https://parsl.readthedocs.io/en/stable/faq.html?utm_source=chatgpt.com "FAQ — Parsl 1.3.0-dev documentation"
-[10]: https://parsl.readthedocs.io/en/stable/quickstart.html?utm_source=chatgpt.com "Quickstart — Parsl 1.3.0-dev documentation"
+* `--backend` wiring,
+* updated `local.yaml`, `cpu.yaml`, `gpu-a100.yaml`,
+* and the minimal doc tweaks so that everything is internally consistent.

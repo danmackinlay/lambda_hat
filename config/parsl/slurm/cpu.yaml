@@ -4,7 +4,7 @@ partition: normal
 nodes_per_block: 1
 init_blocks: 0
 min_blocks: 0
-max_blocks: 50
+max_blocks: 200
 walltime: "01:59:00"
 cores_per_node: 2
 mem_per_node: 64
@@ -21,4 +21,5 @@ worker_init: |
   module load python || true
   source ~/.bashrc || true
   export PATH="$HOME/.local/bin:$PATH"
+  export MPLBACKEND=Agg
   export JAX_DEFAULT_PRNG_IMPL=threefry2x32
