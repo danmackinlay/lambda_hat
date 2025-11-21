@@ -267,23 +267,9 @@ def sample_entry(config_yaml: str, target_id: str, experiment: Optional[str] = N
     ):
         _write_tensorboard_logs(ctx, traces, metrics, work)
 
-    # Create diagnostic plots (skip in workflows unless explicitly enabled)
-    if analysis_mode in ("light", "full"):
-        # Lazy import to avoid matplotlib/arviz in Parsl workers when skipping
-        from lambda_hat.analysis import (
-            create_arviz_diagnostics,
-            create_combined_convergence_plot,
-            create_work_normalized_variance_plot,
-        )
-
-        log.info("[sample] Running offline diagnostics (mode=%s)", analysis_mode)
-        create_arviz_diagnostics({sampler_name: idata}, run_dir)
-        create_combined_convergence_plot({sampler_name: idata}, run_dir)
-
-        if analysis_mode == "full":
-            create_work_normalized_variance_plot({sampler_name: idata}, run_dir)
-    else:
-        log.info("[sample] Skipping offline diagnostics (mode=%s)", analysis_mode)
+    # Offline diagnostics moved to Stage C (diagnose command)
+    # Sampling now only creates trace.nc + analysis.json (or traces_raw.json)
+    # Run: lambda-hat diagnose --run-dir <path> to generate plots
 
     # Write run manifest (replaces legacy append_sample_manifest)
     sp = OmegaConf.to_container(cfg.sampler, resolve=True)

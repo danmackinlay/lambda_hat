@@ -69,6 +69,67 @@ def sample(config_yaml, target_id, experiment):
 
 
 # =============================================================================
+# Stage C: Generate Diagnostics
+# =============================================================================
+
+
+@cli.command()
+@click.option(
+    "--run-dir",
+    required=True,
+    type=click.Path(exists=True),
+    help="Path to run directory containing trace.nc or traces_raw.json",
+)
+@click.option(
+    "--mode",
+    type=click.Choice(["light", "full"]),
+    default="light",
+    show_default=True,
+    help="Diagnostic depth: 'light' (basic plots) or 'full' (+ expensive plots)",
+)
+def diagnose(run_dir, mode):
+    """Generate offline diagnostics for a completed sampling run (Stage C)."""
+    from lambda_hat.commands.diagnose_cmd import diagnose_entry
+
+    result = diagnose_entry(run_dir, mode)
+    click.echo(f"✓ Generated {len(result['plots_generated'])} plots in {result['diagnostics_dir']}")
+
+
+@cli.command()
+@click.option(
+    "--experiment",
+    required=True,
+    help="Experiment name (e.g., 'smoke', 'dev')",
+)
+@click.option(
+    "--mode",
+    type=click.Choice(["light", "full"]),
+    default="light",
+    show_default=True,
+    help="Diagnostic depth: 'light' (basic plots) or 'full' (+ expensive plots)",
+)
+@click.option(
+    "--samplers",
+    default=None,
+    help="Comma-separated sampler names to process (default: all)",
+)
+def diagnose_experiment(experiment, mode, samplers):
+    """Generate diagnostics for all runs in an experiment (Stage C)."""
+    from lambda_hat.commands.diagnose_cmd import diagnose_experiment_entry
+
+    sampler_list = [s.strip() for s in samplers.split(",")] if samplers else None
+    result = diagnose_experiment_entry(experiment, mode, sampler_list)
+    click.echo(
+        f"✓ Processed {result['num_runs']} runs: "
+        f"{result['num_success']} success, {result['num_failed']} failed"
+    )
+    if result["failed_runs"]:
+        click.echo("Failed runs:", err=True)
+        for fr in result["failed_runs"]:
+            click.echo(f"  • {fr}", err=True)
+
+
+# =============================================================================
 # Artifact Management
 # =============================================================================
 
@@ -117,13 +178,13 @@ def artifacts_tb(experiment):
 
 
 # =============================================================================
-# Stage C: Promote Results
+# Stage D: Promote Results
 # =============================================================================
 
 
 @cli.group()
 def promote():
-    """Promote plots to galleries (Stage C)."""
+    """Promote plots to galleries (Stage D)."""
 
 
 @promote.command("single")
@@ -248,17 +309,18 @@ def workflow():
 def workflow_llc(config, experiment, parsl_card, parsl_sets, local, promote, promote_plots):
     """Run N×M targets×samplers workflow.
 
-    This orchestrates the full three-stage pipeline:
+    This orchestrates the full pipeline:
       A. Build targets (neural networks + datasets)
       B. Run samplers (MCMC/VI) for each target
-      C. Promote results (gallery + aggregation) - OPTIONAL
+      C. Generate diagnostics (offline plots from traces) - OPTIONAL (runs when --promote)
+      D. Promote results (gallery + aggregation) - OPTIONAL (opt-in via --promote)
 
     Examples:
 
-      # Local testing (no promotion)
+      # Local testing (no promotion, fast)
       lambda-hat workflow llc --config config/experiments.yaml --local
 
-      # SLURM cluster with promotion
+      # SLURM cluster with promotion (includes diagnostics)
       lambda-hat workflow llc --config config/experiments.yaml \\
           --parsl-card config/parsl/slurm/gpu-a100.yaml --promote
     """

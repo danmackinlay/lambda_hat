@@ -4,13 +4,14 @@
 Stages:
   A. Build targets (neural networks + datasets)
   B. Run samplers (MCMC/VI) for each target
-  C. Promote results (gallery + aggregation) - OPTIONAL, opt-in via --promote
+  C. Generate diagnostics (offline plots from traces) - OPTIONAL, runs when --promote enabled
+  D. Promote results (gallery + aggregation) - OPTIONAL, opt-in via --promote
 
 Usage:
   # Local testing (no promotion)
   lambda-hat workflow llc --config config/experiments.yaml --local
 
-  # SLURM cluster with promotion
+  # SLURM cluster with promotion (includes diagnostics)
   lambda-hat workflow llc --config config/experiments.yaml \\
       --parsl-card config/parsl/slurm/gpu-a100.yaml --promote
 """
@@ -170,6 +171,27 @@ def run_sampler_app(cfg_yaml, target_id, experiment, inputs=None):
 
 
 @python_app
+def diagnose_app(run_dir, mode, inputs=None):
+    """Generate offline diagnostics for a completed sampling run via direct command call.
+
+    Args:
+        run_dir: Path to run directory containing trace.nc or traces_raw.json
+        mode: Diagnostic depth - "light" or "full"
+        inputs: List of futures this task depends on (sampling run)
+
+    Returns:
+        dict: Diagnostic result from diagnose_entry with keys:
+            - run_dir: Path to run directory
+            - diagnostics_dir: Path to diagnostics output
+            - plots_generated: List of plot filenames created
+            - mode: Diagnostic mode used
+    """
+    from lambda_hat.commands.diagnose_cmd import diagnose_entry
+
+    return diagnose_entry(run_dir, mode)
+
+
+@python_app
 def promote_app(store_root, samplers, outdir, plot_name, inputs=None):
     """Promote results: create gallery with newest run per sampler via direct command call.
 
@@ -178,7 +200,7 @@ def promote_app(store_root, samplers, outdir, plot_name, inputs=None):
         samplers: List of sampler names
         outdir: Output directory for promotion assets
         plot_name: Name of plot to promote (e.g., 'trace.png')
-        inputs: List of futures this task depends on (all sampling runs)
+        inputs: List of futures this task depends on (all diagnostics)
 
     Returns:
         str: Path to generated markdown snippet
@@ -417,11 +439,74 @@ def run_workflow(
             log.error("    Check logs: %s", fr["stderr_path"])
 
     # ========================================================================
-    # Stage C: Promotion (optional, opt-in)
+    # Stage C: Generate Diagnostics (optional, runs when promotion enabled)
     # ========================================================================
 
     if enable_promotion:
-        log.info("=== Stage C: Promotion ===")
+        log.info("=== Stage C: Generating Diagnostics ===")
+
+        # Extract run directories from completed sampling runs
+        diagnose_futures = []
+        diagnose_records = []
+
+        for i, (future, record) in enumerate(zip(run_futures, run_records)):
+            # Get result to extract run_dir (sampling already completed in wait loop above)
+            try:
+                result = future.result()  # Already completed, won't block
+                run_dir = result["run_dir"]
+
+                # Submit diagnose job (light mode for faster processing)
+                log.info(
+                    "  Submitting diagnostics for %s/%s", record["target_id"], record["sampler"]
+                )
+                diagnose_future = diagnose_app(
+                    run_dir=run_dir,
+                    mode="light",
+                    inputs=[future],  # Dependency: wait for sampling run
+                )
+                diagnose_futures.append(diagnose_future)
+                diagnose_records.append({**record, "run_dir": run_dir})
+            except Exception:
+                # Skip failed runs (they're already logged in the wait loop)
+                log.warning(
+                    "  Skipping diagnostics for failed run: %s/%s",
+                    record["target_id"],
+                    record["sampler"],
+                )
+                continue
+
+        # Wait for all diagnostics to complete
+        log.info("=== Waiting for %d diagnostic tasks to complete ===", len(diagnose_futures))
+        for i, (future, record) in enumerate(zip(diagnose_futures, diagnose_records), 1):
+            try:
+                name = f"diagnose_{record['target_id']}_{record['sampler']}"
+                unwrap_parsl_future(future, name)
+                log.info(
+                    "  [%d/%d] ✓ Diagnostics: %s/%s",
+                    i,
+                    len(diagnose_futures),
+                    record["target_id"],
+                    record["sampler"],
+                )
+            except Exception as e:
+                log.error(
+                    "  [%d/%d] ✗ Diagnostics FAILED: %s/%s - %s",
+                    i,
+                    len(diagnose_futures),
+                    record["target_id"],
+                    record["sampler"],
+                    e,
+                )
+    else:
+        log.info("=== Stage C: Diagnostics skipped (use --promote to enable) ===")
+        diagnose_futures = []  # Empty list for promotion dependency
+
+    # ========================================================================
+    # Stage D: Promotion (optional, opt-in)
+    # ========================================================================
+
+    if enable_promotion:
+        log.info("=== Stage D: Promotion ===")
         unique_samplers = sorted({s["name"] for s in samplers_conf})
 
         # Promotion outputs go to artifacts directory
@@ -435,7 +520,7 @@ def run_workflow(
                 samplers=unique_samplers,
                 outdir=str(outdir),
                 plot_name=plot_name,
-                inputs=run_futures,  # Wait for all runs
+                inputs=diagnose_futures,  # Wait for all diagnostics
             )
             try:
                 md_path = unwrap_parsl_future(promote_future, f"promote_{plot_name}")
@@ -443,7 +528,7 @@ def run_workflow(
             except Exception as e:
                 log.error("    → Promotion FAILED: %s", e)
     else:
-        log.info("=== Stage C: Promotion skipped (use --promote to enable) ===")
+        log.info("=== Stage D: Promotion skipped (use --promote to enable) ===")
 
     # ========================================================================
     # Aggregate results into single parquet file

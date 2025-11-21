@@ -58,13 +58,21 @@ def _load_metrics(run_dir: Path) -> Dict:
 
 
 def gather_latest_runs(runs_root: Path, samplers: List[str], plot_name: str) -> Dict[str, Path]:
-    """Pick the most recent run_* dir per sampler, assuming generic plot names."""
+    """Pick the most recent run_* dir per sampler, assuming generic plot names.
+
+    Gracefully skips samplers with no runs containing the requested plot.
+    """
     result: Dict[str, Path] = {}
 
     for sampler in samplers:
         files = _find_plot_files(runs_root, sampler, plot_name)
         if not files:
-            raise RuntimeError(f"No runs found for sampler {sampler}")
+            log.warning(
+                "No runs with plot '%s' found for sampler '%s' - skipping from promotion",
+                plot_name,
+                sampler,
+            )
+            continue
         # newest by mtime of the plot file
         newest_plot = max(files, key=os.path.getmtime)
         result[sampler] = _run_dir_from_plot(newest_plot)
@@ -109,6 +117,13 @@ def promote_gallery(
     """
     outdir.mkdir(parents=True, exist_ok=True)
     latest_runs = gather_latest_runs(runs_root, samplers, plot_name)
+
+    if not latest_runs:
+        log.warning(
+            "No runs with plot '%s' found for any sampler - promotion skipped",
+            plot_name,
+        )
+        return []
 
     rows: List[Tuple[str, Path, Dict]] = []
 

@@ -37,9 +37,12 @@ Parsl manages parallel execution through Python futures:
 
 1. **Stage A** (Build): Train N targets in parallel
 2. **Stage B** (Sample): Run M samplers per target (waits for target via `inputs=[target_future]`)
-3. **Stage C** (Promote): Optional gallery generation (if `--promote` flag used)
+3. **Stage C** (Diagnose): Generate offline diagnostics from traces (optional, runs when `--promote` enabled)
+4. **Stage D** (Promote): Optional gallery generation (if `--promote` flag used, waits for diagnostics)
 
-**Example**: 2 targets × 3 samplers = 6 sampling jobs + 2 target builds
+**Example**:
+- Without `--promote`: 2 targets × 3 samplers = 6 sampling jobs + 2 target builds (Stages A + B only)
+- With `--promote`: Adds 6 diagnostic jobs + 1 promotion job (Stages A + B + C + D)
 
 ---
 
@@ -246,22 +249,24 @@ See [Optuna Workflow documentation](./optuna_workflow.md) for detailed configura
 
 **Standard workflow** (`lambda-hat workflow llc`):
 ```
-runs/
-└── targets/
-    ├── _catalog.jsonl               # Registry of all targets
-    └── tgt_abc123/
-        ├── meta.json                # Config, dimensions, L0
-        ├── data.npz                 # Training data
-        ├── params.npz               # Trained parameters
-        ├── _runs.jsonl              # Manifest of Stage-B runs
-        ├── run_hmc_ab12cd34/
-        │   ├── trace.nc             # ArviZ trace
-        │   ├── analysis.json        # Metrics
-        │   └── diagnostics/
-        │       ├── trace.png
-        │       └── rank.png
-        ├── run_sgld_ef567890/
-        └── run_mclmc_gh901234/
+artifacts/
+├── store/                           # Content-addressed immutable objects
+└── experiments/
+    └── my_experiment/
+        ├── targets/                 # Symlinks to store
+        │   └── tgt_abc123 -> ../../store/objects/abc123/
+        └── runs/                    # Sampling and diagnostic results
+            ├── 20251120T123456-hmc-tgt_abc123-run123/
+            │   ├── manifest.json    # Run metadata
+            │   ├── trace.nc         # ArviZ trace (Stage B)
+            │   ├── analysis.json    # Metrics (Stage B)
+            │   └── diagnostics/     # Plots (Stage C)
+            │       ├── trace.png
+            │       ├── rank.png
+            │       ├── energy.png
+            │       └── llc_convergence_combined.png
+            ├── 20251120T123457-sgld-tgt_abc123-run456/
+            └── 20251120T123458-mclmc-tgt_abc123-run789/
 ```
 
 **Optuna workflow** (`lambda-hat workflow optuna`):
@@ -310,11 +315,34 @@ lambda-hat artifacts tb --experiment my_experiment
 
 ---
 
-### Promotion
+### Diagnostics and Promotion
+
+#### Stage C: Generate Diagnostics
+
+**Diagnostics** are decoupled from sampling for speed. Generate plots after sampling completes:
+
+```bash
+# Generate diagnostics for a single run
+lambda-hat diagnose \
+  --run-dir artifacts/experiments/dev/runs/20251120... \
+  --mode light
+
+# Generate diagnostics for all runs in an experiment
+lambda-hat diagnose-experiment \
+  --experiment dev \
+  --mode light \
+  --samplers sgld,hmc
+```
+
+**Modes:**
+- `light` (default) — Basic plots: trace, rank, energy, LLC convergence
+- `full` — All plots including expensive work-normalized variance
+
+#### Stage D: Promotion
 
 **Promotion** copies plots from run directories into stable locations for galleries.
 
-**Enable promotion**:
+**Enable promotion (runs diagnostics first)**:
 ```bash
 uv run lambda-hat workflow llc --local --promote
 ```
@@ -325,22 +353,27 @@ uv run lambda-hat workflow llc --local --promote \
     --promote-plots trace.png,llc_convergence_combined.png
 ```
 
-**Manual promotion**:
+**Manual promotion** (after running diagnostics):
 ```bash
 # Create gallery with newest run per sampler
 lambda-hat promote gallery \
-  --runs-root runs \
+  --runs-root artifacts/experiments/dev/runs \
   --samplers sgld,hmc,mclmc \
-  --outdir runs/promotion \
-  --snippet-out runs/promotion/gallery.md
+  --outdir artifacts/promotion \
+  --snippet-out artifacts/promotion/gallery.md
 
 # Copy specific plots
 lambda-hat promote single \
-  --runs-root runs \
+  --runs-root artifacts/experiments/dev/runs \
   --samplers sgld \
   --outdir figures \
-  --plot-name running_llc.png
+  --plot-name llc_convergence_combined.png
 ```
+
+**Pipeline flow with `--promote`:**
+1. Stage B completes → raw traces saved
+2. Stage C runs → diagnostics/plots generated
+3. Stage D runs → plots copied to gallery
 
 ---
 

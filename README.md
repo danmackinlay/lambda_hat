@@ -4,17 +4,19 @@ In [Singular Learning Theory (SLT)](https://singularlearningtheory.com), the **L
 
 ## Concept
 
-The Local Learning Coefficient (LLC) measures the effective number of parameters a neural network *actually* learns from data. Lambda-Hat implements a teacher–student framework with a two-stage design:
+The Local Learning Coefficient (LLC) measures the effective number of parameters a neural network *actually* learns from data. Lambda-Hat implements a teacher–student framework with a four-stage design:
 
 * **Stage A**: Build and train a neural network target once, generating a reproducible **target artifact**.
-* **Stage B**: Run multiple samplers (MCMC or variational) on the same target with different configurations.
+* **Stage B**: Run multiple samplers (MCMC or variational) on the same target with different configurations (fast mode: no diagnostics).
+* **Stage C**: Generate offline diagnostics from traces (optional, separate from sampling for speed).
+* **Stage D**: Promote results to galleries and aggregated reports (optional, opt-in via `--promote`).
 
 This separation provides:
 
 * **Reproducibility**: Same target ID = identical neural network weights and data
-* **Efficiency**: Train expensive targets once, sample many times
-* **Isolation**: Target configuration and sampler hyper-parameters are decoupled
-* **Cost control**: Resource-intensive target building and cheaper sampling jobs can be optimized independently
+* **Efficiency**: Train expensive targets once, sample many times, generate diagnostics only when needed
+* **Isolation**: Target configuration, sampler hyper-parameters, and diagnostic generation are decoupled
+* **Cost control**: Resource-intensive target building, fast sampling, and optional expensive diagnostics can be optimized independently
 
 In [Singular Learning Theory (SLT)](https://singularlearningtheory.com), the **Local Learning Coefficient (LLC)** quantifies the effective local dimensionality of a model around a trained optimum.
 Estimating it can be tricky. That is what we explore here.
@@ -59,7 +61,7 @@ pip install .[cuda12]    # For CUDA 12 (Linux)
 
 ## Entrypoints
 
-Lambda-Hat provides three command-line tools that implement the two-stage workflow.
+Lambda-Hat provides command-line tools that implement the four-stage workflow.
 Parsl orchestrates these automatically, but they can also be invoked directly for debugging or custom workflows.
 
 ### `lambda-hat build` (Stage A)
@@ -95,37 +97,67 @@ uv run lambda-hat sample \
 ```
 
 **Outputs:**
-- `trace.nc` — ArviZ-compatible NetCDF trace with chains and diagnostics
+- `trace.nc` — ArviZ-compatible NetCDF trace with chains and diagnostics (if `analysis_mode="light"` or `"full"`)
+- `traces_raw.json` — Raw trace data (if `analysis_mode="none"`)
 - `analysis.json` — computed metrics (LLC estimate, ESS, R-hat, etc.)
-- `diagnostics/` — trace plots, rank plots, convergence diagnostics
 
 **Key features:**
 - Precision guard: fails if sampler x64 setting mismatches target
 - Automatic minibatching for SGLD-family samplers
 - Parallel chain execution with JAX's vmap
+- Fast mode: Set `LAMBDA_HAT_ANALYSIS_MODE=none` to skip expensive diagnostics (plots generated in Stage C)
 
-### `lambda-hat promote`
+### `lambda-hat diagnose` (Stage C)
+
+Generates offline diagnostics (plots and analysis) from completed sampling runs. This is decoupled from sampling for speed.
+
+```bash
+# Generate diagnostics for a single run
+uv run lambda-hat diagnose \
+  --run-dir artifacts/experiments/dev/runs/20251120... \
+  --mode light
+
+# Generate diagnostics for all runs in an experiment
+uv run lambda-hat diagnose-experiment \
+  --experiment dev \
+  --mode light \
+  --samplers sgld,hmc
+```
+
+**Outputs:**
+- `diagnostics/trace.png` — ArviZ trace plots
+- `diagnostics/rank.png` — Rank plots for convergence
+- `diagnostics/energy.png` — Energy plots (HMC/MCLMC)
+- `diagnostics/llc_convergence_combined.png` — LLC convergence plot
+- `diagnostics/wnv.png` — Work-normalized variance (only in `--mode full`)
+
+**Modes:**
+- `light` (default) — Basic plots (trace, rank, energy, convergence)
+- `full` — All plots including expensive work-normalized variance
+
+### `lambda-hat promote` (Stage D)
 
 Utility for copying plots from run directories into stable locations for documentation or galleries.
-It searches under `runs/targets/**/run_{sampler}_*/diagnostics/`.
+It searches under `artifacts/experiments/{experiment}/runs/*/diagnostics/`.
 
 ```bash
 # Create an asset gallery with newest run per sampler
 uv run lambda-hat promote gallery \
-  --runs-root runs \
+  --runs-root artifacts/experiments/dev/runs \
   --samplers sgld,hmc,mclmc \
-  --outdir runs/promotion \
-  --snippet-out runs/promotion/gallery.md
+  --outdir artifacts/promotion \
+  --snippet-out artifacts/promotion/gallery.md
 
 # Copy specific plots
 uv run lambda-hat promote single \
-  --runs-root runs \
+  --runs-root artifacts/experiments/dev/runs \
   --samplers sgld \
   --outdir figures \
-  --plot-name running_llc.png
+  --plot-name llc_convergence_combined.png
 ```
 
-These can be orchestrated automatically by adding the `--promote` flag to the Parsl workflow (see Orchestration section below).
+These can be orchestrated automatically by adding the `--promote` flag to the Parsl workflow.
+This requires diagnostics to exist (run Stage C first, or use `--promote` flag which runs both).
 
 
 ---
@@ -151,16 +183,20 @@ uv run lambda-hat workflow llc --local --promote
 
 ### Promotion (opt-in)
 
-Promotion generates asset galleries from sampling runs. It's opt-in via the `--promote` flag:
+Promotion generates asset galleries from sampling runs. It's opt-in via the `--promote` flag, which automatically runs Stage C (diagnostics) before Stage D (promotion):
 
 ```bash
-# Run workflow with promotion
+# Run workflow with diagnostics and promotion
 uv run lambda-hat workflow llc --local --promote
 
 # Specify which plots to promote
 uv run lambda-hat workflow llc --local --promote \
     --promote-plots trace.png,llc_convergence_combined.png
 ```
+
+**How it works:**
+- Without `--promote`: Runs Stages A + B only (fast, no diagnostics or plots)
+- With `--promote`: Runs Stages A + B + C + D (generates diagnostics, then promotes best runs to gallery)
 
 ### HPC Execution
 

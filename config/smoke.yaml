@@ -42,7 +42,7 @@ samplers:
       warmup: 10      # Reduced from 50000
       eval_every: 10  # More frequent eval for faster testing
 
-  # VI: 20 steps with minimal mixture components (~2-3 sec)
+  # MFA VI: 20 steps with minimal mixture components (~2-3 sec)
   - name: vi
     seed: 4
     overrides:
@@ -50,3 +50,8 @@ samplers:
       M: 2            # Reduced from 8 (fewer mixture components)
       r: 1            # Reduced from 2 (lower rank)
       eval_every: 10  # More frequent eval
+      algo: mfa
+      gamma: 0.01
+
+  # VI sampler: normalizing flow-based VI (requires --extra flowvi)
+  # - { name: vi, overrides: { algo: flow, M: 8, r: 2, gamma: 0.001 }, seed: 54322 }
