@@ -25,9 +25,6 @@ optuna:
   # Concurrency controls
   concurrency:
     batch_size: 16  # Total inflight trials per (problem, method)
-    per_executor:   # Optional caps per executor label; omit to disable
-      htex64: 8
-      htex32: 16
 
   # Sampler configuration
   sampler:
@@ -122,18 +119,6 @@ execution:
   budget:
     hmc_sec: 7200   # HMC reference computation (2 hours)
     trial_sec: 600  # Per-trial timeout (10 minutes)
-
-  # Executor routing (optional; AUTO rules apply if omitted)
-  # AUTO rules:
-  #   - If both htex64 and htex32 exist:
-  #     hmc → htex64, mclmc → htex64, sgld/vi → htex32
-  #   - If single executor exists: route all tasks there
-  executor_map:
-    hmc: htex64  # HMC reference always needs float64
-    methods:
-      mclmc: htex64  # MCLMC needs float64
-      sgld: htex32   # SGLD uses float32
-      vi: htex32     # VI uses float32
 
 # Artifact storage configuration
 store:

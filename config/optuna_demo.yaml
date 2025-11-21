@@ -32,9 +32,6 @@ optuna:
 
   concurrency:
     batch_size: 8         # Reduced for local testing
-    # per_executor:       # Optional per-executor caps
-    #   htex64: 4
-    #   htex32: 8
 
   sampler:
     type: tpe
@@ -121,14 +118,6 @@ execution:
   budget:
     hmc_sec: 3600   # 1 hour for HMC reference (reduced for demo)
     trial_sec: 600  # 10 minutes per trial (reduced for demo)
-
-  # Executor routing: use AUTO rules (will map to htex64/htex32 based on method)
-  # executor_map:
-  #   hmc: htex64
-  #   methods:
-  #     mclmc: htex64
-  #     sgld: htex32
-  #     vi: htex32
 
 # Artifact storage configuration
 store:

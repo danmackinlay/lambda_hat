@@ -527,20 +527,16 @@ def workflow_optuna(config, backend, config_sets, dry_run):
 
     parsl_cfg = load_parsl_config_from_card(card_path, [f"run_dir={ctx.parsl_dir}"])
 
-    # Load Parsl before validating Optuna config (executor validation needs it)
+    # Load Parsl
     parsl.load(parsl_cfg)
 
-    # Load and validate Optuna config (with executor validation)
-    cfg = load_cfg(config, dotlist_overrides=list(config_sets), validate_executors=True)
+    # Load and validate Optuna config
+    cfg = load_cfg(config, dotlist_overrides=list(config_sets))
 
     # Dry-run mode: print resolved config and exit
     if dry_run:
         click.echo("\n=== Resolved Optuna Configuration ===")
         click.echo(OmegaConf.to_yaml(cfg))
-        click.echo("\n=== Executor Routing ===")
-        routing = cfg.get("_executor_routing", {})
-        for key, label in sorted(routing.items()):
-            click.echo(f"  {key} → {label}")
         click.echo("\n✓ Dry-run complete (no workflow executed)")
         parsl.clear()
         return

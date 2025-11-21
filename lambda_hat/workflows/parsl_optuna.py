@@ -25,7 +25,6 @@ import time
 
 import optuna
 import pandas as pd
-import parsl
 from omegaconf import DictConfig, OmegaConf
 
 from lambda_hat.artifacts import Paths, RunContext
@@ -33,55 +32,6 @@ from lambda_hat.id_utils import problem_id, trial_id
 from lambda_hat.runners.parsl_apps import compute_hmc_reference, run_method_trial
 
 log = logging.getLogger(__name__)
-
-
-def _available_labels() -> set[str]:
-    """Read executor labels from the loaded Parsl config.
-
-    Returns:
-        Set of executor labels (e.g., {"htex64", "htex32"})
-
-    Raises:
-        RuntimeError: If Parsl is not loaded yet
-    """
-    try:
-        return {ex.label for ex in parsl.dfk().config.executors}
-    except RuntimeError as e:
-        raise RuntimeError("Parsl must be loaded before calling _available_labels()") from e
-
-
-def _executor_for(role: str, method: str, cfg: DictConfig) -> str:
-    """Determine which executor to use for a task.
-
-    Args:
-        role: Task role ("hmc" for HMC reference, "method" for method trials)
-        method: Method name (used only when role="method")
-        cfg: Optuna configuration with executor routing
-
-    Returns:
-        Executor label string
-
-    Raises:
-        RuntimeError: If no suitable executor found
-    """
-    # Use pre-computed routing from config loader
-    routing = cfg.get("_executor_routing", {})
-
-    if role == "hmc":
-        if "hmc" in routing:
-            return routing["hmc"]
-    elif role == "method":
-        if method in routing:
-            return routing[method]
-
-    # Fallback: single executor case
-    labels = _available_labels()
-    if len(labels) == 1:
-        return next(iter(labels))
-
-    raise RuntimeError(
-        f"No executor routing for role={role}, method={method}. Available executors: {labels}"
-    )
 
 
 def _suggest(trial, name: str, spec: dict):
@@ -198,7 +148,6 @@ def run_optuna_workflow(cfg: DictConfig):
     methods = list(cfg.get("methods", []))
     max_trials_per_method = cfg.optuna.max_trials_per_method
     batch_size = cfg.optuna.concurrency.batch_size
-    per_executor_caps = cfg.optuna.concurrency.get("per_executor", {})
     hmc_budget_sec = cfg.execution.budget.hmc_sec
     trial_budget_sec = cfg.execution.budget.trial_sec
 
@@ -207,7 +156,6 @@ def run_optuna_workflow(cfg: DictConfig):
     log.info("Methods: %s", methods)
     log.info("Max trials per (problem, method): %d", max_trials_per_method)
     log.info("Batch size (concurrent trials): %d", batch_size)
-    log.info("Per-executor caps: %s", dict(per_executor_caps) if per_executor_caps else "None")
     log.info("HMC budget: %ds (%.1fh)", hmc_budget_sec, hmc_budget_sec / 3600)
     log.info("Method budget: %ds (%.1fmin)", trial_budget_sec, trial_budget_sec / 60)
 
@@ -237,10 +185,9 @@ def run_optuna_workflow(cfg: DictConfig):
             log.info("    Reference exists, loading from %s", out_ref)
             ref_meta[pid] = json.loads(out_ref.read_text())
         else:
-            executor = _executor_for("hmc", "", cfg)
-            log.info("    Submitting HMC reference computation → %s", executor)
+            log.info("    Submitting HMC reference computation")
             ref_futs[pid] = compute_hmc_reference(
-                problem_spec, str(out_ref), budget_sec=hmc_budget_sec, executor=executor
+                problem_spec, str(out_ref), budget_sec=hmc_budget_sec
             )
 
     # Wait for missing references to complete
@@ -283,10 +230,6 @@ def run_optuna_workflow(cfg: DictConfig):
         for method_name in methods:
             log.info("    Method: %s", method_name)
 
-            # Get executor for this method
-            executor = _executor_for("method", method_name, cfg)
-            log.info("      Executor: %s", executor)
-
             # Get search space for this method
             method_space = cfg.search_space[method_name]
 
@@ -324,21 +267,13 @@ def run_optuna_workflow(cfg: DictConfig):
                 pruner=pruner,
             )
 
-            # In-flight trials tracking (global and per-executor)
+            # In-flight trials tracking
             inflight = {}  # future -> (trial, trial_id, run_dir)
-            inflight_per_executor = {}  # executor_label -> set of futures
             submitted = 0
 
             def submit_one():
                 """Submit one trial to Parsl."""
                 nonlocal submitted
-
-                # Check per-executor caps if specified
-                if executor in per_executor_caps:
-                    cap = per_executor_caps[executor]
-                    current_count = len(inflight_per_executor.get(executor, set()))
-                    if current_count >= cap:
-                        return None  # Cap reached for this executor
 
                 # Ask Optuna for hyperparameters
                 t = study.ask()
@@ -363,7 +298,7 @@ def run_optuna_workflow(cfg: DictConfig):
                 # Build method config
                 method_cfg = {"name": method_name, **hp}
 
-                # Submit Parsl app with appropriate executor
+                # Submit Parsl app
                 fut = run_method_trial(
                     problem_spec,
                     method_cfg,
@@ -371,13 +306,9 @@ def run_optuna_workflow(cfg: DictConfig):
                     str(run_dir / "metrics.json"),
                     budget_sec=trial_budget_sec,
                     seed=int(t.number),
-                    executor=executor,
                 )
 
                 inflight[fut] = (t, tid, run_dir)
-                if executor not in inflight_per_executor:
-                    inflight_per_executor[executor] = set()
-                inflight_per_executor[executor].add(fut)
                 submitted += 1
 
                 return fut
@@ -386,10 +317,7 @@ def run_optuna_workflow(cfg: DictConfig):
             initial_batch = min(batch_size, max_trials_per_method)
             log.info("      Submitting initial batch of %d trials...", initial_batch)
             while submitted < initial_batch:
-                fut = submit_one()
-                if fut is None:
-                    # Hit per-executor cap; wait for completions
-                    break
+                submit_one()
 
             # Main loop: process completions and refill batch
             log.info("      Running optimization loop (max %d trials)...", max_trials_per_method)
@@ -404,10 +332,6 @@ def run_optuna_workflow(cfg: DictConfig):
                 # Process completed trials
                 for f in done:
                     t, tid, run_dir = inflight.pop(f)
-
-                    # Remove from per-executor tracking
-                    for exec_label, futs in inflight_per_executor.items():
-                        futs.discard(f)
 
                     try:
                         result = f.result()  # dict: {llc_hat, se_hat, runtime_sec, ...}
