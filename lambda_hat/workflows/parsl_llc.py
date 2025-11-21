@@ -234,6 +234,7 @@ def run_workflow(
     parsl_config_path=None,  # Deprecated, kept for compatibility
     enable_promotion=False,
     promote_plots=None,
+    is_local=False,  # NEW: Whether running in local mode (vs SLURM/cluster)
 ):
     """Execute the full Lambda-Hat workflow: build → sample → (optional) promote.
 
@@ -244,6 +245,7 @@ def run_workflow(
         enable_promotion: Whether to run promotion stage (default: False, opt-in)
         promote_plots: List of plot names to promote
             (default: ['trace.png', 'llc_convergence_combined.png'])
+        is_local: Whether running in local mode (enables target diagnostics for dev visibility)
 
     Returns:
         Path to aggregated results parquet file
@@ -251,10 +253,15 @@ def run_workflow(
     if promote_plots is None:
         promote_plots = ["trace.png", "llc_convergence_combined.png"]
 
-    # Default workflows to skip expensive offline diagnostics (can be overridden)
+    # Conditional defaults for diagnostics
     import os
 
-    os.environ.setdefault("LAMBDA_HAT_SKIP_DIAGNOSTICS", "1")  # Build-time diagnostics
+    # Target diagnostics: ON for local dev, OFF for Parsl workflows (keep workers lightweight)
+    if is_local:
+        os.environ.setdefault("LAMBDA_HAT_SKIP_DIAGNOSTICS", "0")  # Local: teacher plots ON
+    else:
+        os.environ.setdefault("LAMBDA_HAT_SKIP_DIAGNOSTICS", "1")  # Parsl: teacher plots OFF
+
     os.environ.setdefault("LAMBDA_HAT_ANALYSIS_MODE", "none")  # Offline sampling diagnostics
 
     # Initialize artifact system
@@ -511,6 +518,24 @@ def run_workflow(
 
         # Promotion outputs go to artifacts directory
         outdir = ctx.artifacts_dir / "promotion"
+
+        # Promote target diagnostics (teacher comparison plots)
+        # NOTE: This runs inline (not as Parsl app) since it's just file copying
+        # and target diagnostics only exist for local builds (SKIP_DIAGNOSTICS=0)
+        from lambda_hat.promote.core import promote_target_diagnostics
+
+        log.info("  Promoting target diagnostics...")
+        try:
+            runs_root = Path(store_root)
+            promoted_targets = promote_target_diagnostics(runs_root, outdir)
+            if promoted_targets:
+                log.info("    → Promoted diagnostics for %d targets", len(promoted_targets))
+                for target_id, plots in promoted_targets:
+                    log.info("      • %s: %d plots", target_id, len(plots))
+            else:
+                log.info("    → No target diagnostics found (expected for Parsl runs)")
+        except Exception as e:
+            log.warning("    → Target promotion failed (non-fatal): %s", e)
 
         # Promote each plot type
         for plot_name in promote_plots:

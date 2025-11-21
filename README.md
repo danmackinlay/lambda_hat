@@ -79,11 +79,25 @@ uv run lambda-hat build \
 - `meta.json` — config snapshot, dimensions, L0, package versions
 - `params.npz` — trained neural network parameters
 - `data.npz` — training dataset (X, Y)
+- `diagnostics/` — teacher comparison plots (when teacher is configured and `LAMBDA_HAT_SKIP_DIAGNOSTICS=0`)
+  - `target_train_test_loss.png` — training and test loss curves
+  - `target_pred_vs_teacher_train.png` — student vs teacher predictions (train set)
+  - `target_pred_vs_teacher_test.png` — student vs teacher predictions (test set)
 
 **Key features:**
 - Content-addressed target IDs ensure reproducibility
 - Precision mode (`jax_enable_x64`) recorded in metadata
 - Reference loss L0 computed and stored for LLC estimation
+- Target diagnostics enabled by default for local builds, disabled for Parsl workflows (set `LAMBDA_HAT_SKIP_DIAGNOSTICS=0/1` to override)
+
+**Regenerate target diagnostics:**
+```bash
+# Single target
+uv run lambda-hat diagnose-target --target-id tgt_abc123 --experiment dev
+
+# All targets in experiment
+uv run lambda-hat diagnose-targets --experiment dev
+```
 
 ### `lambda-hat sample` (Stage B)
 
@@ -250,11 +264,15 @@ runs/
         ├── meta.json                # metadata (config, dims, precision, L0)
         ├── data.npz                 # training data
         ├── params.npz               # trained parameters
+        ├── diagnostics/             # target diagnostics (local builds only)
+        │   ├── target_train_test_loss.png
+        │   ├── target_pred_vs_teacher_train.png
+        │   └── target_pred_vs_teacher_test.png
         ├── _runs.jsonl              # manifest of Stage-B runs
         ├── run_hmc_ab12cd34/        # one sampler run
         │   ├── trace.nc             # ArviZ trace
         │   ├── analysis.json        # metrics
-        │   └── diagnostics/
+        │   └── diagnostics/         # sampler diagnostics
         │       ├── trace.png
         │       └── rank.png
         ├── run_sgld_ef567890/

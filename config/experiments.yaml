@@ -31,4 +31,4 @@ samplers:
   # VI sampler: mixture of factor analyzers with STL + RB gradients
   - { name: vi, overrides: { algo: mfa, M: 8, r: 2, gamma: 0.001 }, seed: 54321 }
   # VI sampler: normalizing flow-based VI (requires --extra flowvi)
-  - { name: vi, overrides: { algo: flow, M: 8, r: 2, gamma: 0.001 }, seed: 54322 }
+  # - { name: vi, overrides: { algo: flow, M: 8, r: 2, gamma: 0.001 }, seed: 54322 }

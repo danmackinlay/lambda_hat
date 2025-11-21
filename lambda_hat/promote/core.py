@@ -103,6 +103,63 @@ def promote(
         log.info("Promoted %s -> %s", src, dst)
 
 
+def promote_target_diagnostics(
+    runs_root: Path,
+    outdir: Path,
+) -> List[Tuple[str, List[Path]]]:
+    """Promote target diagnostics to promotion gallery.
+
+    Copies teacher diagnostic plots from each target's diagnostics/ directory
+    into promotion/targets/ for easy discovery alongside sampler plots.
+
+    Args:
+        runs_root: Root directory containing targets/ subdirectory
+            (e.g., artifacts/experiments/dev/runs)
+        outdir: Output directory for promoted plots (creates targets/ subdirectory)
+
+    Returns:
+        List of (target_id, list_of_promoted_plot_paths) tuples
+    """
+    targets_dir = runs_root / "targets"
+    if not targets_dir.exists():
+        log.warning("No targets directory found at %s - skipping target promotion", targets_dir)
+        return []
+
+    promoted: List[Tuple[str, List[Path]]] = []
+
+    for target_dir in sorted(targets_dir.iterdir()):
+        if not target_dir.is_dir() or target_dir.name.startswith("_"):
+            continue
+
+        target_id = target_dir.name
+        diagnostics_dir = target_dir / "diagnostics"
+
+        if not diagnostics_dir.exists():
+            log.debug("No diagnostics directory for target %s - skipping", target_id)
+            continue
+
+        # Find all PNG files in the diagnostics directory
+        plot_files = list(diagnostics_dir.glob("*.png"))
+        if not plot_files:
+            log.debug("No diagnostic plots for target %s - skipping", target_id)
+            continue
+
+        # Create output directory for this target
+        target_outdir = outdir / "targets" / target_id
+        target_outdir.mkdir(parents=True, exist_ok=True)
+
+        promoted_plots: List[Path] = []
+        for src in plot_files:
+            dst = target_outdir / src.name
+            shutil.copyfile(src, dst)
+            promoted_plots.append(dst)
+            log.info("[target] %s: %s -> %s", target_id, src, dst)
+
+        promoted.append((target_id, promoted_plots))
+
+    return promoted
+
+
 def promote_gallery(
     runs_root: Path,
     samplers: List[str],

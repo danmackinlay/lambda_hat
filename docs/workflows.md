@@ -124,6 +124,79 @@ tail -f logs/run_sampler/*   # Watch logs
 
 ---
 
+## Target Diagnostics (Teacher Comparison)
+
+Lambda-Hat can generate diagnostic plots comparing student network predictions against teacher networks (for synthetic data scenarios).
+
+### Conditional Behavior
+
+Target diagnostics have **conditional defaults** to balance dev visibility with production performance:
+
+| Mode | `LAMBDA_HAT_SKIP_DIAGNOSTICS` | Behavior |
+|------|-------------------------------|----------|
+| **Local builds** (`--local`) | `0` (enabled) | Teacher plots generated during Stage A |
+| **Parsl workflows** (cluster) | `1` (disabled) | No plots in workers (keeps executors lightweight) |
+| **Standalone `build` command** | `0` (enabled) | Always generate for dev debugging |
+
+**Why?** Target diagnostics require matplotlib/arviz imports. Enabling them in Parsl workers would regress pipeline performance by loading heavy plotting libraries in every worker process.
+
+### Outputs
+
+When enabled, target builds produce:
+
+```
+targets/tgt_abc123/diagnostics/
+├── target_train_test_loss.png          # Training vs test loss curves
+├── target_pred_vs_teacher_train.png    # Predictions vs teacher (train)
+└── target_pred_vs_teacher_test.png     # Predictions vs teacher (test)
+```
+
+### On-Demand Regeneration
+
+If diagnostics were skipped during initial build, regenerate them later:
+
+```bash
+# Single target
+uv run lambda-hat diagnose-target \
+  --target-id tgt_abc123 \
+  --experiment dev
+
+# All targets in experiment
+uv run lambda-hat diagnose-targets \
+  --experiment dev
+```
+
+### Promotion
+
+Target diagnostics are automatically promoted to galleries when using `--promote`:
+
+```bash
+uv run lambda-hat workflow llc --local --promote
+```
+
+Promoted plots appear in:
+```
+artifacts/experiments/dev/promotion/targets/
+└── tgt_abc123/
+    ├── target_train_test_loss.png
+    ├── target_pred_vs_teacher_train.png
+    └── target_pred_vs_teacher_test.png
+```
+
+### Override Defaults
+
+**Force enable** (even in Parsl workflows):
+```bash
+LAMBDA_HAT_SKIP_DIAGNOSTICS=0 uv run lambda-hat workflow llc --local
+```
+
+**Force disable** (even in local builds):
+```bash
+LAMBDA_HAT_SKIP_DIAGNOSTICS=1 uv run lambda-hat workflow llc --local
+```
+
+---
+
 ## Parameter Sweeps
 
 Lambda-Hat automatically generates N × M experiment matrices from `config/experiments.yaml`.

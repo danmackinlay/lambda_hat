@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Lambda-Hat unified CLI - all commands under one interface."""
 
+import os
 import sys
 from pathlib import Path
 
@@ -36,7 +37,11 @@ def cli():
 )
 def build(config_yaml, target_id, experiment):
     """Build target artifact (Stage A: train neural network)."""
+
     from lambda_hat.commands.build_cmd import build_entry
+
+    # Enable target diagnostics for manual builds (dev visibility)
+    os.environ.setdefault("LAMBDA_HAT_SKIP_DIAGNOSTICS", "0")
 
     result = build_entry(config_yaml, target_id, experiment)
     click.echo(f"✓ Built {result['target_id']}: {result['urn']}")
@@ -127,6 +132,46 @@ def diagnose_experiment(experiment, mode, samplers):
         click.echo("Failed runs:", err=True)
         for fr in result["failed_runs"]:
             click.echo(f"  • {fr}", err=True)
+
+
+@cli.command()
+@click.option(
+    "--target-id",
+    required=True,
+    help="Target ID (e.g., 'tgt_abc123')",
+)
+@click.option(
+    "--experiment",
+    required=True,
+    help="Experiment name (e.g., 'dev', 'smoke')",
+)
+def diagnose_target(target_id, experiment):
+    """Generate target diagnostics (teacher comparison plots) for a single target."""
+    from lambda_hat.commands.diagnose_target_cmd import diagnose_target_entry
+
+    result = diagnose_target_entry(target_id, experiment)
+    click.echo(f"✓ Generated {len(result['plots_generated'])} plots in {result['diagnostics_dir']}")
+
+
+@cli.command()
+@click.option(
+    "--experiment",
+    required=True,
+    help="Experiment name (e.g., 'dev', 'smoke')",
+)
+def diagnose_targets(experiment):
+    """Generate target diagnostics for all targets in an experiment."""
+    from lambda_hat.commands.diagnose_target_cmd import diagnose_targets_entry
+
+    result = diagnose_targets_entry(experiment)
+    click.echo(
+        f"✓ Processed {result['num_targets']} targets: "
+        f"{result['num_success']} success, {result['num_failed']} failed"
+    )
+    if result["failed_targets"]:
+        click.echo("Failed targets:", err=True)
+        for ft in result["failed_targets"]:
+            click.echo(f"  • {ft}", err=True)
 
 
 # =============================================================================
@@ -388,6 +433,7 @@ def workflow_llc(config, experiment, parsl_card, parsl_sets, local, promote, pro
             experiment=experiment,
             enable_promotion=promote,
             promote_plots=promote_plots_list,
+            is_local=local,  # Enable target diagnostics for local dev
         )
         click.echo(f"\n✓ Workflow complete! Results: {output_path}")
     except Exception as e:
