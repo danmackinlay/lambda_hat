@@ -52,11 +52,12 @@ def build_parsl_config_from_card(card: DictConfig) -> Config:
     run_dir = card.get("run_dir", "parsl_runinfo")
 
     if typ == "local":
-        # Build dual HTEX executors for x64 and x32 precision isolation
+        # Build local HTEX executor(s) from card config
+        # Note: Precision controlled per-task via jax.config.update(), not worker_init
         executors_config = card.get("executors", [])
         if not executors_config:
             raise ValueError(
-                "Local config requires 'executors' list with htex64 and htex32 definitions"
+                "Local config requires 'executors' list with at least one executor definition"
             )
 
         executors = []

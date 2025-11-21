@@ -47,6 +47,9 @@ def sample_entry(config_yaml: str, target_id: str, experiment: Optional[str] = N
     experiment = experiment or cfg.get("experiment", None)
     sampler_name = cfg.sampler.name
 
+    # Configure logging at entrypoint
+    configure_logging()
+
     # Initialize artifact system
     paths = Paths.from_env()
     paths.ensure()
@@ -64,15 +67,14 @@ def sample_entry(config_yaml: str, target_id: str, experiment: Optional[str] = N
     assert "sampler" in cfg and "name" in cfg.sampler, "cfg.sampler.name missing"
     assert "jax" in cfg and "enable_x64" in cfg.jax, "cfg.jax.enable_x64 missing"
 
+    # Set JAX precision per-task from config (before any PRNG or JIT usage)
+    want_x64 = bool(cfg.jax.enable_x64)
+    jax.config.update("jax_enable_x64", want_x64)
+    log.info("sample_entry: jax_enable_x64 set to %s", want_x64)
+
     # Temporarily disable x64 for model template creation and target loading
     # (targets are always saved as float32, so template must be float32)
-    # Save current x64 state to restore later
-    # Note: In multiprocessing mode, JAX_ENABLE_X64 is set by executor's worker_init
-    current_x64 = jax.config.jax_enable_x64
     jax.config.update("jax_enable_x64", False)
-
-    # Configure logging at entrypoint
-    configure_logging()
 
     log.info("=== LLC: Sample ===")
     log.info("Target ID: %s", target_id)
@@ -131,8 +133,8 @@ def sample_entry(config_yaml: str, target_id: str, experiment: Optional[str] = N
         target_payload, model_template=model_template
     )
 
-    # Restore x64 state (executor's worker_init set the correct value)
-    jax.config.update("jax_enable_x64", current_x64)
+    # Restore x64 state to config value (from want_x64 set earlier)
+    jax.config.update("jax_enable_x64", want_x64)
 
     # Cast loaded model and data to sampler's required dtype using equinox_adapter
     # Determine dtype from sampler config (default: float64 if x64, else float32)

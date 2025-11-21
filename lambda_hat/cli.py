@@ -388,7 +388,7 @@ def workflow_llc(config, experiment, parsl_card, parsl_sets, local, promote, pro
     # Resolve Parsl config
     if local and not parsl_card:
         # Local mode: load local.yaml card with RunContext run_dir
-        click.echo("Using Parsl mode: local (dual HTEX)")
+        click.echo("Using Parsl mode: local (single HTEX)")
         local_card_path = Path("config/parsl/local.yaml")
         if not local_card_path.exists():
             click.echo(f"Error: Local card not found: {local_card_path}", err=True)
@@ -532,7 +532,7 @@ def workflow_optuna(config, parsl_card, config_sets, local, dry_run):
 
     # Resolve Parsl configuration with run_dir override
     if local:
-        click.echo("Using Parsl mode: local (dual HTEX)")
+        click.echo("Using Parsl mode: local (single HTEX)")
         local_card_path = Path("config/parsl/local.yaml")
         if not local_card_path.exists():
             click.echo(f"Error: Local card not found: {local_card_path}", err=True)

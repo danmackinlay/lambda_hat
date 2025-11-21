@@ -48,7 +48,9 @@ Parsl manages parallel execution through Python futures:
 
 ### Local Execution
 
-**Default profile**: Dual HighThroughputExecutor (multi-process) with separate executors for float64 and float32 precision isolation.
+**Default profile**: Single HighThroughputExecutor (multi-process) using up to 8 CPU cores.
+
+**Precision control**: JAX precision (`float64` vs `float32`) is set per-task at runtime from the `jax_enable_x64` config field, not via executor `worker_init`.
 
 ```bash
 # Run locally (uses up to 8 CPU cores)

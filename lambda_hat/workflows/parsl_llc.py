@@ -79,45 +79,6 @@ def unwrap_parsl_future(future, name: str):
 
 
 # ============================================================================
-# Helper Functions
-# ============================================================================
-
-
-def get_executor_for_dtype(dtype_str: str) -> str:
-    """Determine which executor to use based on dtype.
-
-    Args:
-        dtype_str: Either "float64" or "float32"
-
-    Returns:
-        Executor label: "htex64" for float64, "htex32" for float32
-    """
-    return "htex64" if dtype_str == "float64" else "htex32"
-
-
-def get_sampler_dtype(sample_cfg: OmegaConf, sampler_name: str) -> str:
-    """Extract sampler's dtype from sample config.
-
-    Args:
-        sample_cfg: Composed sample configuration
-        sampler_name: Sampler name (hmc, mclmc, sgld, vi)
-
-    Returns:
-        dtype string: "float64" or "float32"
-    """
-    # Read dtype from sampler config, matching sampling_runner.py logic
-    if sampler_name in ("hmc", "mclmc"):
-        return str(sample_cfg.sampler.get(sampler_name, {}).get("dtype", "float64"))
-    elif sampler_name == "sgld":
-        return str(sample_cfg.sampler.sgld.get("dtype", "float32"))
-    elif sampler_name == "vi":
-        return str(sample_cfg.sampler.vi.dtype)
-    else:
-        # Default to float32 for unknown samplers
-        return "float32"
-
-
-# ============================================================================
 # Parsl Apps (task definitions)
 # ============================================================================
 
@@ -275,9 +236,6 @@ def run_workflow(
     # Legacy store_root for promote functionality (backward compatibility)
     store_root = exp.get("store_root", "runs")
 
-    # Determine default executor for build tasks based on global jax_x64 setting
-    build_executor = get_executor_for_dtype("float64" if jax_x64 else "float32")
-
     targets_conf = list(exp["targets"])
     samplers_conf = list(exp["samplers"])
 
@@ -349,24 +307,18 @@ def run_workflow(
             # Compose sample config and compute run ID
             sample_cfg = compose_sample_cfg(tid, s, jax_enable_x64=jax_x64)
             rid = run_id_for(sample_cfg)
-
-            # Determine executor based on sampler's dtype
             sampler_name = s["name"]
-            dtype = get_sampler_dtype(sample_cfg, sampler_name)
-            executor = get_executor_for_dtype(dtype)
 
             # Write temp config YAML
             cfg_yaml_path = temp_cfg_dir / f"sample_{tid}_{s['name']}_{rid}.yaml"
             cfg_yaml_path.write_text(OmegaConf.to_yaml(sample_cfg))
 
             # Submit sampling job (uses artifact system via command modules)
-            # Note: executor routing disabled for now - both executors support all dtypes
             log.info(
-                "  Submitting %s for %s (run_id=%s, dtype=%s)",
+                "  Submitting %s for %s (run_id=%s)",
                 sampler_name,
                 tid,
                 rid,
-                dtype,
             )
             future = run_sampler_app(
                 cfg_yaml=str(cfg_yaml_path),

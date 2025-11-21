@@ -71,15 +71,17 @@ def build_entry(config_yaml: str, target_id: str, experiment: Optional[str] = No
     target_dir = ctx.scratch_dir / "target_payload"
     target_dir.mkdir(parents=True, exist_ok=True)
 
+    # Configure logging at entrypoint
+    configure_logging()
+
     # Fail-fast validation
     assert "target" in cfg and "seed" in cfg.target, "cfg.target.seed missing"
     assert "jax" in cfg and "enable_x64" in cfg.jax, "cfg.jax.enable_x64 missing"
 
-    # Note: JAX_ENABLE_X64 is set by executor's worker_init, not at runtime
-    # The config value is kept for compatibility and dtype casting logic
-
-    # Configure logging at entrypoint
-    configure_logging()
+    # Set JAX precision per-task from config (before any PRNG or JIT usage)
+    want_x64 = bool(cfg.jax.enable_x64)
+    jax.config.update("jax_enable_x64", want_x64)
+    log.info("build_entry: jax_enable_x64 set to %s", want_x64)
 
     log.info("=== LLC: Build Target ===")
     log.info("Target ID: %s", target_id)
