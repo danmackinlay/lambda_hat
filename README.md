@@ -170,8 +170,20 @@ uv run lambda-hat promote single \
   --plot-name llc_convergence_combined.png
 ```
 
-These can be orchestrated automatically by adding the `--promote` flag to the Parsl workflow.
 This requires diagnostics to exist (run Stage C first, or use `--promote` flag which runs both).
+
+```bash
+# Run workflow with diagnostics and promotion
+uv run lambda-hat workflow llc --backend local --promote
+
+# Specify which plots to promote
+uv run lambda-hat workflow llc --backend local --promote \
+    --promote-plots trace.png,llc_convergence_combined.png
+```
+
+**How it works:**
+- Without `--promote`: Runs Stages A + B only (fast, no diagnostics or plots)
+- With `--promote`: Runs Stages A + B + C + D (generates diagnostics, then promotes best runs to gallery)
 
 
 ---
@@ -195,22 +207,6 @@ uv run lambda-hat workflow llc --backend local --promote
 * Edit `config/experiments.yaml` to add/remove targets and samplers.
 * Parsl computes IDs and directories using the same logic; scripts do **not** invent paths.
 
-### Promotion (opt-in)
-
-Promotion generates asset galleries from sampling runs. It's opt-in via the `--promote` flag, which automatically runs Stage C (diagnostics) before Stage D (promotion):
-
-```bash
-# Run workflow with diagnostics and promotion
-uv run lambda-hat workflow llc --backend local --promote
-
-# Specify which plots to promote
-uv run lambda-hat workflow llc --backend local --promote \
-    --promote-plots trace.png,llc_convergence_combined.png
-```
-
-**How it works:**
-- Without `--promote`: Runs Stages A + B only (fast, no diagnostics or plots)
-- With `--promote`: Runs Stages A + B + C + D (generates diagnostics, then promotes best runs to gallery)
 
 ### HPC Execution
 
@@ -225,7 +221,37 @@ uv run lambda-hat workflow llc --backend slurm-cpu \
     --set walltime=04:00:00 --set max_blocks=300
 ```
 
+
+## Artifact Layout
+
+### Standard workflow** (`lambda-hat workflow llc`):
+
+```
+runs/
+└── targets/
+    ├── _catalog.jsonl               # registry of all targets
+    └── tgt_abc123/                  # one target artifact
+        ├── meta.json                # metadata (config, dims, precision, L0)
+        ├── data.npz                 # training data
+        ├── params.npz               # trained parameters
+        ├── diagnostics/             # target diagnostics (local builds only)
+        │   ├── target_train_test_loss.png
+        │   ├── target_pred_vs_teacher_train.png
+        │   └── target_pred_vs_teacher_test.png
+        ├── _runs.jsonl              # manifest of Stage-B runs
+        ├── run_hmc_ab12cd34/        # one sampler run
+        │   ├── trace.nc             # ArviZ trace
+        │   ├── analysis.json        # metrics
+        │   └── diagnostics/         # sampler diagnostics
+        │       ├── trace.png
+        │       └── rank.png
+        ├── run_sgld_ef567890/
+        └── run_mclmc_gh901234/
+```
+
 ### Hyperparameter Optimization
+
+**NB** untested.
 
 **Optuna workflow** for automated hyperparameter tuning using Bayesian optimization:
 
@@ -252,32 +278,6 @@ uv run lambda-hat workflow optuna --config config/optuna_demo.yaml \
 See [`docs/optuna_workflow.md`](docs/optuna_workflow.md) for detailed configuration and usage.
 
 ---
-
-## Artifact Layout
-
-**Standard workflow** (`lambda-hat workflow llc`):
-```
-runs/
-└── targets/
-    ├── _catalog.jsonl               # registry of all targets
-    └── tgt_abc123/                  # one target artifact
-        ├── meta.json                # metadata (config, dims, precision, L0)
-        ├── data.npz                 # training data
-        ├── params.npz               # trained parameters
-        ├── diagnostics/             # target diagnostics (local builds only)
-        │   ├── target_train_test_loss.png
-        │   ├── target_pred_vs_teacher_train.png
-        │   └── target_pred_vs_teacher_test.png
-        ├── _runs.jsonl              # manifest of Stage-B runs
-        ├── run_hmc_ab12cd34/        # one sampler run
-        │   ├── trace.nc             # ArviZ trace
-        │   ├── analysis.json        # metrics
-        │   └── diagnostics/         # sampler diagnostics
-        │       ├── trace.png
-        │       └── rank.png
-        ├── run_sgld_ef567890/
-        └── run_mclmc_gh901234/
-```
 
 **Optuna workflow** (`lambda-hat workflow optuna`):
 ```
