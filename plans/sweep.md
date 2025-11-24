@@ -116,7 +116,7 @@ Commands:
 uv sync --extra cpu
 
 # Run the N × M sweep
-uv run lambda-hat workflow llc \
+uv run lambda-hat workflow sample \
   --config config/experiments_teacher_sweep.yaml \
   --backend local
 ```
@@ -138,12 +138,12 @@ Using the existing Parsl cards:
 
 ```bash
 # CPU cluster
-uv run lambda-hat workflow llc \
+uv run lambda-hat workflow sample \
   --config config/experiments_teacher_sweep.yaml \
   --parsl-card config/parsl/slurm/cpu.yaml
 
 # A100 GPU profile (if you want JAX-on-GPU for SGLD/VI)
-uv run lambda-hat workflow llc \
+uv run lambda-hat workflow sample \
   --config config/experiments_teacher_sweep.yaml \
   --parsl-card config/parsl/slurm/gpu-a100.yaml
 ```
@@ -160,7 +160,7 @@ uv run lambda-hat diagnose-experiment --experiment teacher_sweep --mode light
 uv run lambda-hat diagnose-targets --experiment teacher_sweep
 
 # Promote plots into a gallery
-uv run lambda-hat workflow llc \
+uv run lambda-hat workflow sample \
   --config config/experiments_teacher_sweep.yaml \
   --backend local  --promote
 ```
@@ -179,7 +179,7 @@ Drop something like this under the existing “Workflow” or “Config” secti
 This repo’s experiment grid is defined in `config/experiments.yaml`:
 each `targets:` row is a problem `(model, data, teacher, seed)`,
 and each `samplers:` row is a sampling method/config. The workflow
-`lambda-hat workflow llc` runs the full N × M grid in parallel.
+`lambda-hat workflow sample` runs the full N × M grid in parallel.
 
 To get **non-trivial LLC values** from a mismatched teacher–student
 setup, create a dedicated experiments file:
@@ -226,12 +226,12 @@ Then run the sweep:
 
 ```bash
 # Local
-uv run lambda-hat workflow llc \
+uv run lambda-hat workflow sample \
   --config config/experiments_teacher_sweep.yaml \
   --backend local
 
 # SLURM (examples)
-uv run lambda-hat workflow llc \
+uv run lambda-hat workflow sample \
   --config config/experiments_teacher_sweep.yaml \
   --parsl-card config/parsl/slurm/cpu.yaml
 ```
@@ -291,7 +291,7 @@ samplers:
 Run the full grid:
 
 ```bash
-uv run lambda-hat workflow llc \
+uv run lambda-hat workflow sample \
   --config config/experiments_teacher_sweep.yaml \
   --backend local
 ```
@@ -311,8 +311,8 @@ example `(model: base, teacher: small)`.:contentReference[oaicite:24]{index=24}
 
 Add a short “recipe” block near that example:
 
-```markdown
-### Recipe: non-trivial LLC via mismatched teacher
+````markdown
+### Recipe: non-trivial LLC estimate via mismatched teacher
 
 To force LLC to see a **misspecified model class**, pick different
 presets for `model` and `teacher` in `config/experiments.yaml`:
@@ -323,7 +323,7 @@ targets:
     data: base
     teacher: small
     seed: 123
-````
+```
 
 Here:
 
@@ -333,10 +333,10 @@ Here:
 
 Add this row to `targets:` alongside your baseline `teacher: _null` rows,
 then reference it from `samplers:` as usual (HMC, MCLMC, SGLD, VI).
-The standard `lambda-hat workflow llc` will build the target and run all
+The standard `lambda-hat workflow sample` will build the target and run all
 samplers on the mismatched problem.
 
-```
+````
 
 ---
 
