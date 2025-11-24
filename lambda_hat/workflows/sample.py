@@ -574,8 +574,8 @@ def run_workflow(
                 log.info("    → Gallery written to %s", md_path)
 
                 # Copy promoted assets to repository-visible location
-                plot_stem = plot_name.replace(".png", "")
-                src_dir = outdir / plot_stem
+                # promote_gallery() writes files directly to outdir (not in subdirectories)
+                src_dir = outdir
                 dest_dir = Path("docs/assets") / experiment / "samplers"
                 log.info("    → Copying to repository: %s", dest_dir)
                 copy_promotion_to_repo(src_dir, dest_dir)
@@ -600,14 +600,24 @@ def run_workflow(
             manifest_path = run_dir / "manifest.json"
             traces_raw_path = run_dir / "traces_raw.npz"
 
-            # Check if raw traces exist (required for analysis)
-            if not traces_raw_path.exists() or not manifest_path.exists():
-                if not traces_raw_path.exists():
-                    log.warning("  Warning: Missing traces_raw.npz at %s, skipping", run_dir)
-                if not manifest_path.exists():
-                    log.warning("  Warning: Missing manifest.json at %s, skipping", run_dir)
+            traces_raw_exists = traces_raw_path.exists()
+            manifest_exists = manifest_path.exists()
+
+            # Skip non-sampler runs quietly (build/parsl orchestration)
+            # Case 1: No manifest and no traces → not an artifact we care about
+            if not manifest_exists and not traces_raw_exists:
                 continue
 
+            # Case 2: Manifest exists but no traces → build/parsl run, skip quietly
+            if manifest_exists and not traces_raw_exists:
+                continue
+
+            # Case 3: Traces exist but no manifest → genuinely malformed, warn
+            if traces_raw_exists and not manifest_exists:
+                log.warning("  Warning: traces_raw.npz without manifest at %s, skipping", run_dir)
+                continue
+
+            # Case 4: Both exist → genuine sampling run, process it
             # Auto-diagnose if analysis.json is missing or stale
             if not analysis_path.exists() or (
                 analysis_path.stat().st_mtime < traces_raw_path.stat().st_mtime
