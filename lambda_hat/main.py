@@ -179,10 +179,13 @@ def main(cfg: Config) -> None:
     target = build_target(target_key, cfg)
     log.info(f"Target built: d={target.d}, L0={target.L0:.6f}")
 
-    # Run samplers
+    # Identify samplers to run
     samplers_to_run = list(cfg.get("samplers_to_run", ["sgld", "hmc", "mclmc"]))
+
+    # Create a dictionary for results
     results = {}
 
+    # Run samplers
     for sampler_name in samplers_to_run:
         key, sampler_key = jax.random.split(key)
         start_time = time.time()
