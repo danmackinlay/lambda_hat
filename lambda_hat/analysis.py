@@ -66,29 +66,35 @@ def _debug_print_idata(idata, name: str):
 
 
 def analyze_traces(
-    traces: Dict[str, jnp.ndarray],
-    L0: float,
-    n_data: int,
-    beta: float,
-    warmup: int = 0,
-    timings: Dict[str, float] = None,
-    work: Dict[str, float] = None,
-    sampler_flavour: str = None,
-) -> Tuple[Dict[str, float], az.InferenceData]:
+    traces: Dict[str, np.ndarray],
+    manifest: Dict,
+    mode: str = "light",
+    outdir: Optional[Path] = None,
+) -> Tuple[az.InferenceData, Dict[str, float]]:
     """Analyze sampling traces, compute LLC metrics, and create InferenceData.
 
+    This is the single golden path for converting raw traces to diagnostics.
+    Workers write traces_raw.json + manifest.json; controller calls this function.
+
     Args:
-        traces: Dictionary of traces (vmapped: C, T). Must contain 'llc' key.
-        L0, n_data, beta: Legacy parameters (no longer used; kept for API compatibility).
-        warmup: Number of recorded draws to discard (burn-in).
-        timings: Dictionary of timing information.
-        work: Dictionary of work counts (n_full_loss, n_minibatch_grads).
-        sampler_flavour: Flavour of sampler ("iid" or "markov") for metrics computation.
-            Defaults to "markov" if not specified.
+        traces: Dictionary of trace arrays (from traces_raw.json). Must contain 'llc' key.
+        manifest: Run manifest dict (from manifest.json) with metadata needed for analysis.
+        mode: Diagnostic depth: "light" (basic plots) or "full" (+ expensive WNV plots).
+        outdir: If provided, writes trace.nc, analysis.json, and plots to this directory.
 
     Returns:
-        Tuple of (metrics dictionary, ArviZ InferenceData).
+        Tuple of (ArviZ InferenceData, metrics dictionary).
+
+    Raises:
+        ValueError: If required keys are missing from traces or manifest.
     """
+    # Extract metadata from manifest
+    sampler_name = manifest.get("sampler", "unknown")
+    warmup = manifest.get("warmup", 0)
+    timings = manifest.get("timings")
+    work = manifest.get("work")
+    sampler_flavour = manifest.get("sampler_flavour")
+    # Note: L0, n_data, beta no longer used (kept in manifest for reference only)
     # All samplers must provide pre-computed LLC
     if "llc" not in traces:
         raise ValueError(
@@ -203,7 +209,37 @@ def analyze_traces(
 
     # Compute metrics
     metrics = _compute_metrics_from_idata(idata, llc_values_np, timings, work, sampler_flavour)
-    return metrics, idata
+
+    # Write outputs if outdir provided (golden path for diagnostics)
+    if outdir is not None:
+        import json
+
+        outdir = Path(outdir)
+        outdir.mkdir(parents=True, exist_ok=True)
+
+        # Write trace.nc (ArviZ InferenceData cache)
+        idata.to_netcdf(outdir / "trace.nc")
+        log.info("[analysis] Wrote trace.nc to %s", outdir)
+
+        # Write analysis.json (metrics cache)
+        (outdir / "analysis.json").write_text(json.dumps(metrics, indent=2, sort_keys=True))
+        log.info("[analysis] Wrote analysis.json to %s", outdir)
+
+        # Generate plots based on mode
+        # For plotting functions, wrap idata in dict with sampler name as key
+        idata_dict = {sampler_name: idata}
+
+        # Always generate basic plots
+        create_arviz_diagnostics(idata_dict, outdir)
+        create_combined_convergence_plot(idata_dict, outdir)
+
+        # Generate expensive plots only in "full" mode
+        if mode == "full":
+            # WNV plot is expensive; only generate if work metrics available
+            if work is not None:
+                create_work_normalized_variance_plot(idata_dict, outdir)
+
+    return idata, metrics
 
 
 def _compute_metrics_from_idata(
@@ -610,7 +646,8 @@ def compute_target_diagnostics(
     """Write simple problem-level diagnostics and return scalar metrics.
 
     Args:
-        cfg: Full OmegaConf/Config object used for Stage A (must have .data, .teacher, .target.seed).
+        cfg: Full OmegaConf/Config object used for Stage A
+            (must have .data, .teacher, .target.seed).
         X, Y: Training data arrays from the target artifact.
         model: Trained Equinox model (ERM solution).
         outdir: Directory to write PNGs into (created if needed).

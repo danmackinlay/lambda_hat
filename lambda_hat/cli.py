@@ -4,9 +4,9 @@
 import os
 import sys
 from pathlib import Path
-from omegaconf import OmegaConf
 
 import click
+from omegaconf import OmegaConf
 
 
 @click.group()
@@ -66,12 +66,36 @@ def build(config_yaml, target_id, experiment):
     default=None,
     help="Experiment name (defaults from config then env)",
 )
-def sample(config_yaml, target_id, experiment):
+@click.option(
+    "--diagnose",
+    is_flag=True,
+    default=False,
+    help="Run diagnostics immediately after sampling (convenience flag)",
+)
+@click.option(
+    "--diagnose-mode",
+    type=click.Choice(["light", "full"]),
+    default="light",
+    help="Diagnostic depth if --diagnose is used (light=basic, full=expensive plots)",
+)
+def sample(config_yaml, target_id, experiment, diagnose, diagnose_mode):
     """Run sampler on target (Stage B: MCMC/VI inference)."""
     from lambda_hat.commands.sample_cmd import sample_entry
 
     result = sample_entry(config_yaml, target_id, experiment)
     click.echo(f"✓ Completed run {result['run_id']}")
+
+    # Optionally run diagnostics immediately (golden path)
+    if diagnose:
+        from pathlib import Path
+
+        from lambda_hat.commands.diagnose_cmd import diagnose_entry
+
+        run_dir = Path(result["run_dir"])
+        diag_result = diagnose_entry(run_dir, mode=diagnose_mode)
+        num_plots = len(diag_result["plots_generated"])
+        diag_dir = diag_result["diagnostics_dir"]
+        click.echo(f"✓ Generated {num_plots} plots in {diag_dir}")
 
 
 # =============================================================================

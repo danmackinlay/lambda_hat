@@ -208,6 +208,86 @@ The experiment-level `manifest.jsonl` indexes all runs:
 
 ---
 
+## Analysis Workflow (Golden Path)
+
+### Worker Output (Stage B: Sampling)
+
+Workers **always** write only raw traces, regardless of execution mode:
+
+```
+artefacts/experiments/<experiment>/runs/<run_id>/
+├── manifest.json         # Run metadata (sampler, hyperparams, timings, work metrics)
+└── traces_raw.json       # Raw trace arrays as JSON (LLC + scalar stats only)
+```
+
+**Design principles:**
+- No ArviZ, no matplotlib, no metrics computation in workers
+- Keeps HPC/cluster workers lightweight and fast
+- Parameter vector traces forbidden (validation enforced)
+- Single canonical format: JSON-serialized numpy arrays
+
+**Example `traces_raw.json`:**
+```json
+{
+  "llc": [[...], [...]],           // (chains, draws)
+  "cumulative_fge": [[...], [...]],
+  "cumulative_time": [[...], [...]],
+  "acceptance_rate": [[...], [...]]
+}
+```
+
+### Controller Reconstruction (Stage C: Diagnostics)
+
+The controller loads raw traces and calls `analyze_traces()` to generate analysis products:
+
+```
+artefacts/experiments/<experiment>/runs/<run_id>/
+├── traces_raw.json       # Input: raw traces
+├── manifest.json         # Input: metadata
+├── trace.nc              # Output: ArviZ InferenceData (cached)
+├── analysis.json         # Output: metrics (llc_mean, ESS, R-hat, etc.)
+└── diagnostics/          # Output: plots
+    ├── trace.png         # ArviZ trace plot
+    ├── rank.png          # Rank plot (convergence check)
+    ├── energy.png        # Energy plot (HMC/MCLMC)
+    ├── llc_convergence_combined.png  # LLC vs FGEs/Time
+    └── wnv.png           # Work-normalized variance (full mode only)
+```
+
+**Smart caching:**
+- If `trace.nc` and `analysis.json` exist and are fresh (mtime >= traces_raw.json), reuse them
+- Otherwise, reconstruct via `analyze_traces()` (golden path)
+- Use `--force` flag to bypass cache and recompute
+
+**Commands:**
+```bash
+# Diagnose single run
+uv run lambda-hat diagnose --run-dir artifacts/experiments/dev/runs/<run_id>
+
+# Diagnose all runs in experiment
+uv run lambda-hat diagnose-experiment --experiment dev --mode light
+
+# Sample with immediate diagnostics (convenience)
+uv run lambda-hat sample --config config.yaml --target-id tgt_abc --diagnose
+```
+
+### Auto-Diagnosis in Workflows
+
+The workflow aggregation stage automatically diagnoses runs missing `analysis.json`:
+
+```python
+# Pseudo-code for aggregation logic
+for run_dir in experiment_runs:
+    if not analysis.json.exists() or analysis.json is stale:
+        diagnose_entry(run_dir, mode="light")  # Auto-diagnose on-demand
+    metrics = load(analysis.json)
+    aggregate(metrics)
+```
+
+This ensures `llc_runs.parquet` always contains complete metrics without manual intervention.
+
+---
+
 ## TensorBoard Integration
 
 ### Per-Run Logs

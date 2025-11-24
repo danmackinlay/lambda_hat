@@ -223,7 +223,8 @@ def run_workflow(
     else:
         os.environ.setdefault("LAMBDA_HAT_SKIP_DIAGNOSTICS", "1")  # Parsl: teacher plots OFF
 
-    os.environ.setdefault("LAMBDA_HAT_ANALYSIS_MODE", "none")  # Offline sampling diagnostics
+    # Note: LAMBDA_HAT_ANALYSIS_MODE removed - workers always write raw traces only
+    # Diagnostics are deferred to Stage C (diagnose command) using the golden path
 
     # Initialize artifact system
     paths = Paths.from_env()
@@ -521,27 +522,47 @@ def run_workflow(
         for run_dir in experiment_runs_dir.glob("*/"):
             analysis_path = run_dir / "analysis.json"
             manifest_path = run_dir / "manifest.json"
+            traces_raw_path = run_dir / "traces_raw.json"
 
-            if analysis_path.exists() and manifest_path.exists():
+            # Check if raw traces exist (required for analysis)
+            if not traces_raw_path.exists() or not manifest_path.exists():
+                if not traces_raw_path.exists():
+                    log.warning("  Warning: Missing traces_raw.json at %s, skipping", run_dir)
+                if not manifest_path.exists():
+                    log.warning("  Warning: Missing manifest.json at %s, skipping", run_dir)
+                continue
+
+            # Auto-diagnose if analysis.json is missing or stale
+            if not analysis_path.exists() or (
+                analysis_path.stat().st_mtime < traces_raw_path.stat().st_mtime
+            ):
+                log.info("  Auto-diagnosing %s (missing or stale analysis)", run_dir.name)
                 try:
-                    metrics = json.loads(analysis_path.read_text())
-                    manifest = json.loads(manifest_path.read_text())
+                    from lambda_hat.commands.diagnose_cmd import diagnose_entry
 
-                    # Combine manifest metadata with analysis metrics
-                    row = {
-                        "run_id": manifest.get("run_id"),
-                        "target_id": manifest.get("target_id"),
-                        "sampler": manifest.get("sampler"),
-                        "experiment": manifest.get("experiment"),
-                        **metrics,
-                    }
-                    rows.append(row)
+                    diagnose_entry(str(run_dir), mode="light")
                 except Exception as e:
-                    log.warning(
-                        "  Warning: Failed to read %s or %s: %s", analysis_path, manifest_path, e
-                    )
-            elif not analysis_path.exists():
-                log.warning("  Warning: Missing analysis.json at %s", analysis_path)
+                    log.warning("  Warning: Failed to diagnose %s: %s", run_dir.name, e)
+                    continue
+
+            # Load metrics and manifest
+            try:
+                metrics = json.loads(analysis_path.read_text())
+                manifest = json.loads(manifest_path.read_text())
+
+                # Combine manifest metadata with analysis metrics
+                row = {
+                    "run_id": manifest.get("run_id"),
+                    "target_id": manifest.get("target_id"),
+                    "sampler": manifest.get("sampler"),
+                    "experiment": manifest.get("experiment"),
+                    **metrics,
+                }
+                rows.append(row)
+            except Exception as e:
+                log.warning(
+                    "  Warning: Failed to read %s or %s: %s", analysis_path, manifest_path, e
+                )
 
     df = pd.DataFrame(rows)
     output_path = ctx.artifacts_dir / "llc_runs.parquet"

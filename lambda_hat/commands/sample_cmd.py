@@ -1,18 +1,21 @@
 # lambda_hat/commands/sample_cmd.py
-"""Sample command - Stage B: Run MCMC/VI sampler on target."""
+"""Sample command - Stage B: Run MCMC/VI sampler on target.
+
+Workers always produce raw traces (traces_raw.json + manifest.json) only.
+Diagnostics are deferred to Stage C (diagnose command) via the golden path.
+"""
 
 import json
 import logging
-import os
 import time
 from typing import Dict, Optional
 
+import numpy as np
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 from omegaconf import OmegaConf
 
-# Lazy import analysis to avoid matplotlib/arviz in Parsl workers when skipping offline diagnostics
 from lambda_hat.artifacts import Paths, RunContext
 from lambda_hat.config import validate_teacher_cfg
 from lambda_hat.equinox_adapter import ensure_dtype
@@ -24,6 +27,61 @@ from lambda_hat.target_artifacts import load_target_artifact_from_dir
 from lambda_hat.targets import TargetBundle
 
 log = logging.getLogger(__name__)
+
+
+def _validate_trace_schema(traces: Dict) -> None:
+    """Validate trace schema: reject parameter vectors, require LLC, enforce shape constraints.
+
+    Traces must contain only scalar traces with shape (C, T) or (T,).
+    Parameter vectors (3-dim arrays) are explicitly forbidden.
+
+    Args:
+        traces: Dictionary of trace arrays from sampler
+
+    Raises:
+        ValueError: If validation fails (missing llc, parameter vectors, invalid shapes)
+    """
+
+    # Required key check
+    if "llc" not in traces:
+        raise ValueError(
+            "Trace validation failed: 'llc' key is required. "
+            "All samplers must compute and include LLC (Local Learning Coefficient) in traces."
+        )
+
+    # Check for forbidden parameter vector traces
+    for key, value in traces.items():
+        # Convert to numpy for shape checking
+        if hasattr(value, "__array__") or hasattr(value, "tolist"):
+            arr = np.asarray(value)
+
+            # Forbid 3-dim arrays (parameter vectors)
+            if arr.ndim >= 3:
+                raise ValueError(
+                    f"Trace validation failed: '{key}' has shape {arr.shape} (ndim={arr.ndim}). "
+                    f"Parameter vector traces are not allowed. "
+                    f"Only scalar traces with shape (C, T) or (T,) are permitted. "
+                    f"Remove parameter logging from the sampler."
+                )
+
+            # Allow: scalars (ndim=0), 1-dim (T,), 2-dim (C, T)
+            if arr.ndim > 2:
+                raise ValueError(
+                    f"Trace validation failed: '{key}' has invalid shape "
+                    f"{arr.shape} (ndim={arr.ndim}). "
+                    f"Only shapes (C, T) or (T,) are allowed."
+                )
+
+    # Warn about deprecated keys
+    if "samples" in traces:
+        log.warning(
+            "Trace contains deprecated 'samples' key (parameter vectors). "
+            "This key will be ignored. Remove parameter logging from sampler."
+        )
+
+    log.debug(
+        "[validation] Trace schema valid: %d keys, 'llc' present, no parameter vectors", len(traces)
+    )
 
 
 def sample_entry(config_yaml: str, target_id: str, experiment: Optional[str] = None) -> Dict:
@@ -217,49 +275,32 @@ def sample_entry(config_yaml: str, target_id: str, experiment: Optional[str] = N
     n_data = X.shape[0]
     beta = float(result["beta"])
 
+    # Validate trace schema (enforce no parameter vectors)
+    _validate_trace_schema(traces)
+
     # Extract sampler flavour from work dict, or infer from sampler name
     sampler_flavour = None
     if work is not None:
         sampler_flavour = work.get("sampler_flavour")
 
-    # Determine analysis mode
-    analysis_mode = os.environ.get("LAMBDA_HAT_ANALYSIS_MODE", "full")
+    # Workers ALWAYS write raw traces only (single golden format)
+    # Diagnostics are deferred to controller (diagnose command or --diagnose flag)
     run_dir.mkdir(parents=True, exist_ok=True)
 
-    if analysis_mode in ("light", "full"):
-        # Lazy import analyze_traces (uses arviz for InferenceData)
-        from lambda_hat.analysis import analyze_traces
+    # Convert all array-like values (including JAX arrays) to lists for JSON serialization
+    traces_serializable = {}
+    for k, v in traces.items():
+        if hasattr(v, "__array__") or hasattr(v, "tolist"):
+            # Convert JAX arrays and numpy arrays to lists
+            traces_serializable[k] = np.asarray(v).tolist()
+        else:
+            traces_serializable[k] = v
 
-        metrics, idata = analyze_traces(
-            traces,
-            L0=L0,
-            n_data=n_data,
-            beta=beta,
-            warmup=0,
-            timings=timings,
-            work=work,
-            sampler_flavour=sampler_flavour,
-        )
+    (run_dir / "traces_raw.json").write_text(json.dumps(traces_serializable, indent=2))
+    log.info("[sample] Wrote traces_raw.json (raw traces only)")
 
-        # Write artifacts with full analysis
-        idata.to_netcdf(run_dir / "trace.nc")
-        (run_dir / "analysis.json").write_text(json.dumps(metrics, indent=2, sort_keys=True))
-        log.info("[sample] Wrote trace.nc and analysis.json (mode=%s)", analysis_mode)
-    else:
-        # Mode "none": save only raw traces as JSON, skip arviz InferenceData
-        import numpy as np
-
-        # Convert all array-like values (including JAX arrays) to lists
-        traces_serializable = {}
-        for k, v in traces.items():
-            if hasattr(v, "__array__") or hasattr(v, "tolist"):
-                # Convert JAX arrays and numpy arrays to lists
-                traces_serializable[k] = np.asarray(v).tolist()
-            else:
-                traces_serializable[k] = v
-        (run_dir / "traces_raw.json").write_text(json.dumps(traces_serializable, indent=2))
-        log.info("[sample] Wrote traces_raw.json only (mode=%s)", analysis_mode)
-        metrics = {}  # No metrics in "none" mode
+    # No metrics computed during sampling (deferred to diagnostics stage)
+    metrics = {}
 
     # TensorBoard logging (Stage 2) - VI only for now
     if (
@@ -269,11 +310,12 @@ def sample_entry(config_yaml: str, target_id: str, experiment: Optional[str] = N
     ):
         _write_tensorboard_logs(ctx, traces, metrics, work)
 
-    # Offline diagnostics moved to Stage C (diagnose command)
-    # Sampling now only creates trace.nc + analysis.json (or traces_raw.json)
-    # Run: lambda-hat diagnose --run-dir <path> to generate plots
+    # Diagnostics deferred to Stage C (diagnose command)
+    # Sampling (Stage B) only creates traces_raw.json + manifest.json
+    # Run diagnostics: lambda-hat diagnose --run-dir <path>
+    # Or use --diagnose flag: lambda-hat sample --diagnose ...
 
-    # Write run manifest (replaces legacy append_sample_manifest)
+    # Write run manifest (includes metadata needed for later reconstruction)
     sp = OmegaConf.to_container(cfg.sampler, resolve=True)
     ctx.write_run_manifest(
         {
@@ -284,12 +326,20 @@ def sample_entry(config_yaml: str, target_id: str, experiment: Optional[str] = N
             "hyperparams": sp,
             "dtype64": bool(cfg.jax.enable_x64),
             "walltime_sec": dt,
-            "metrics": metrics,
+            "metrics": metrics,  # Empty dict for now; filled by diagnose stage
+            # Metadata needed for reconstruction
+            "L0": L0,
+            "n_data": n_data,
+            "beta": beta,
+            "warmup": 0,
+            "timings": timings,
+            "work": work,
+            "sampler_flavour": sampler_flavour,
         }
     )
 
-    log.info("[sample] wrote trace.nc & analysis.json in %.2fs → %s", dt, run_dir)
-    log.info("[sample] experiment: %s, run: %s", ctx.experiment, ctx.run_id)
+    log.info("[sample] Wrote raw traces in %.2fs → %s", dt, run_dir)
+    log.info("[sample] Experiment: %s, Run: %s", ctx.experiment, ctx.run_id)
 
     return {
         "run_id": ctx.run_id,

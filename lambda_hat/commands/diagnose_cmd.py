@@ -27,15 +27,53 @@ from lambda_hat.logging_config import configure_logging
 log = logging.getLogger(__name__)
 
 
+def _load_traces_raw_json(path: Path) -> Dict[str, np.ndarray]:
+    """Load traces from traces_raw.json and convert lists to numpy arrays.
+
+    Args:
+        path: Path to traces_raw.json
+
+    Returns:
+        Dict mapping trace names to numpy arrays
+    """
+    traces_raw = json.loads(path.read_text())
+
+    traces = {}
+    for key, value in traces_raw.items():
+        if isinstance(value, list):
+            traces[key] = np.array(value)
+        else:
+            traces[key] = value
+
+    return traces
+
+
+def _load_manifest(path: Path) -> Dict:
+    """Load manifest.json.
+
+    Args:
+        path: Path to manifest.json
+
+    Returns:
+        Manifest dict
+    """
+    return json.loads(path.read_text())
+
+
 def diagnose_entry(
     run_dir: str,
     mode: str = "light",
+    force: bool = False,
 ) -> Dict:
     """Generate offline diagnostics for a single completed run.
 
+    Uses the single golden path: loads raw traces → calls analyze_traces() → generates outputs.
+    Supports smart caching: if trace.nc and analysis.json exist and are fresh, reuses them.
+
     Args:
-        run_dir: Path to run directory containing trace.nc or traces_raw.json
+        run_dir: Path to run directory containing traces_raw.json
         mode: Diagnostic depth - "light" (basic plots) or "full" (+ expensive plots)
+        force: If True, bypass cache and recompute analysis even if fresh
 
     Returns:
         dict: Diagnostic results with keys:
@@ -45,7 +83,7 @@ def diagnose_entry(
             - mode: Diagnostic mode used
 
     Raises:
-        FileNotFoundError: If run_dir doesn't exist or lacks trace data
+        FileNotFoundError: If run_dir doesn't exist or lacks raw traces
         ValueError: If invalid mode specified
     """
     configure_logging()
@@ -57,63 +95,52 @@ def diagnose_entry(
     if not run_dir.exists():
         raise FileNotFoundError(f"Run directory not found: {run_dir}")
 
-    log.info("[diagnose] Processing run: %s (mode=%s)", run_dir.name, mode)
+    log.info("[diagnose] Processing run: %s (mode=%s, force=%s)", run_dir.name, mode, force)
 
-    # Load manifest to get sampler name and metadata
+    # Required paths
+    traces_raw_path = run_dir / "traces_raw.json"
     manifest_path = run_dir / "manifest.json"
+    trace_nc_path = run_dir / "trace.nc"
+    analysis_json_path = run_dir / "analysis.json"
+
+    if not traces_raw_path.exists():
+        raise FileNotFoundError(f"Missing traces_raw.json in {run_dir}")
     if not manifest_path.exists():
         raise FileNotFoundError(f"Missing manifest.json in {run_dir}")
 
-    manifest = json.loads(manifest_path.read_text())
-    sampler_name = manifest.get("sampler", "unknown")
+    # Load manifest
+    manifest = _load_manifest(manifest_path)
 
-    # Load InferenceData (or create from raw traces)
-    trace_nc = run_dir / "trace.nc"
-    traces_raw_json = run_dir / "traces_raw.json"
-
-    if trace_nc.exists():
-        log.info("[diagnose] Loading trace.nc")
-        idata = az.from_netcdf(trace_nc)
-    elif traces_raw_json.exists():
-        log.info("[diagnose] Reconstructing InferenceData from traces_raw.json")
-        idata = _reconstruct_idata_from_json(traces_raw_json, manifest)
-        # Save for future use
-        idata.to_netcdf(trace_nc)
-        log.info("[diagnose] Wrote trace.nc")
+    # Smart caching: use cached analysis if fresh and not forcing
+    if (
+        not force
+        and trace_nc_path.exists()
+        and analysis_json_path.exists()
+        and trace_nc_path.stat().st_mtime >= traces_raw_path.stat().st_mtime
+    ):
+        log.info("[diagnose] Using cached trace.nc and analysis.json (fresh)")
+        idata = az.from_netcdf(trace_nc_path)
+        metrics = json.loads(analysis_json_path.read_text())
     else:
-        raise FileNotFoundError(
-            f"No trace data found in {run_dir} (expected trace.nc or traces_raw.json)"
-        )
+        # Golden path: load raw traces and analyze
+        log.info("[diagnose] Loading traces_raw.json and running analysis")
+        traces = _load_traces_raw_json(traces_raw_path)
 
-    # Create diagnostics directory
+        # Import analyze_traces (lazy to avoid loading in workers)
+        from lambda_hat.analysis import analyze_traces
+
+        # analyze_traces writes trace.nc, analysis.json, and plots to outdir
+        idata, metrics = analyze_traces(traces, manifest, mode=mode, outdir=run_dir)
+        log.info("[diagnose] ✓ Analysis complete, wrote trace.nc and analysis.json")
+
+    # Diagnostics directory (created by analyze_traces if it ran, otherwise may not exist)
     diagnostics_dir = run_dir / "diagnostics"
-    diagnostics_dir.mkdir(exist_ok=True)
 
-    # Import analysis functions (lazy to avoid loading in workers)
-    from lambda_hat.analysis import (
-        create_arviz_diagnostics,
-        create_combined_convergence_plot,
-        create_work_normalized_variance_plot,
-    )
-
+    # Collect plot filenames
     plots_generated = []
-
-    # Basic diagnostics (always in light/full mode)
-    log.info("[diagnose] Generating ArviZ diagnostics")
-    create_arviz_diagnostics({sampler_name: idata}, run_dir)
-    plots_generated.extend(
-        ["diagnostics/trace.png", "diagnostics/rank.png", "diagnostics/energy.png"]
-    )
-
-    log.info("[diagnose] Generating convergence plot")
-    create_combined_convergence_plot({sampler_name: idata}, run_dir)
-    plots_generated.append("diagnostics/llc_convergence_combined.png")
-
-    # Full diagnostics (expensive)
-    if mode == "full":
-        log.info("[diagnose] Generating work-normalized variance plot")
-        create_work_normalized_variance_plot({sampler_name: idata}, run_dir)
-        plots_generated.append("diagnostics/wnv.png")
+    if diagnostics_dir.exists():
+        for plot_file in diagnostics_dir.glob("*.png"):
+            plots_generated.append(f"diagnostics/{plot_file.name}")
 
     log.info("[diagnose] ✓ Generated %d plots in %s", len(plots_generated), diagnostics_dir)
 
@@ -203,69 +230,3 @@ def diagnose_experiment_entry(
         "failed_runs": failed_runs,
         "mode": mode,
     }
-
-
-def _reconstruct_idata_from_json(traces_json_path: Path, manifest: Dict) -> az.InferenceData:
-    """Reconstruct ArviZ InferenceData from raw traces JSON.
-
-    This is used when a run was created with analysis_mode="none" and only
-    has traces_raw.json. We reconstruct the InferenceData so diagnostics
-    can be generated later.
-
-    Args:
-        traces_json_path: Path to traces_raw.json
-        manifest: Run manifest with metadata
-
-    Returns:
-        ArviZ InferenceData object
-    """
-    traces_raw = json.loads(traces_json_path.read_text())
-
-    # Convert lists back to numpy arrays
-    traces = {}
-    for key, value in traces_raw.items():
-        if isinstance(value, list):
-            traces[key] = np.array(value)
-        else:
-            traces[key] = value
-
-    # Extract metadata from manifest
-    sampler_name = manifest.get("sampler", "unknown")
-    warmup_steps = manifest.get("warmup_steps", 0)
-
-    # Determine chain dimensions
-    # traces["samples"] has shape (n_samples, n_params)
-    # ArviZ expects (chain, draw, *shape)
-    samples = traces.get("samples")
-    if samples is None:
-        raise ValueError("traces_raw.json missing 'samples' key")
-
-    n_samples, n_params = samples.shape
-
-    # Reshape to single chain
-    samples_reshaped = samples[np.newaxis, :, :]  # (1, n_samples, n_params)
-
-    # Create posterior group
-    posterior_dict = {"theta": samples_reshaped}
-
-    # Add scalar traces if they exist
-    for key in ["llc", "grad_norm", "accept_prob"]:
-        if key in traces:
-            value = traces[key]
-            if hasattr(value, "shape"):
-                # Reshape to (chain, draw) if needed
-                if value.ndim == 1:
-                    posterior_dict[key] = value[np.newaxis, :]
-                else:
-                    posterior_dict[key] = value
-
-    # Create InferenceData
-    idata = az.from_dict(
-        posterior=posterior_dict,
-        attrs={
-            "sampler": sampler_name,
-            "warmup_steps": warmup_steps,
-        },
-    )
-
-    return idata
