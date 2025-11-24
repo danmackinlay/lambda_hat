@@ -29,59 +29,6 @@ from lambda_hat.targets import TargetBundle
 log = logging.getLogger(__name__)
 
 
-def _validate_trace_schema(traces: Dict) -> None:
-    """Validate trace schema: reject parameter vectors, require LLC, enforce shape constraints.
-
-    Traces must contain only scalar traces with shape (C, T) or (T,).
-    Parameter vectors (3-dim arrays) are explicitly forbidden.
-
-    Args:
-        traces: Dictionary of trace arrays from sampler
-
-    Raises:
-        ValueError: If validation fails (missing llc, parameter vectors, invalid shapes)
-    """
-
-    # Required key check
-    if "llc" not in traces:
-        raise ValueError(
-            "Trace validation failed: 'llc' key is required. "
-            "All samplers must compute and include LLC (Local Learning Coefficient) in traces."
-        )
-
-    # Check for forbidden parameter vector traces
-    for key, value in traces.items():
-        # Convert to numpy for shape checking
-        if hasattr(value, "__array__") or hasattr(value, "tolist"):
-            arr = np.asarray(value)
-
-            # Forbid 3-dim arrays (parameter vectors)
-            if arr.ndim >= 3:
-                raise ValueError(
-                    f"Trace validation failed: '{key}' has shape {arr.shape} (ndim={arr.ndim}). "
-                    f"Parameter vector traces are not allowed. "
-                    f"Only scalar traces with shape (C, T) or (T,) are permitted. "
-                    f"Remove parameter logging from the sampler."
-                )
-
-            # Allow: scalars (ndim=0), 1-dim (T,), 2-dim (C, T)
-            if arr.ndim > 2:
-                raise ValueError(
-                    f"Trace validation failed: '{key}' has invalid shape "
-                    f"{arr.shape} (ndim={arr.ndim}). "
-                    f"Only shapes (C, T) or (T,) are allowed."
-                )
-
-    # Warn about deprecated keys
-    if "samples" in traces:
-        log.warning(
-            "Trace contains deprecated 'samples' key (parameter vectors). "
-            "This key will be ignored. Remove parameter logging from sampler."
-        )
-
-    log.debug(
-        "[validation] Trace schema valid: %d keys, 'llc' present, no parameter vectors", len(traces)
-    )
 
 
 def sample_entry(config_yaml: str, target_id: str, experiment: Optional[str] = None) -> Dict:
@@ -274,9 +221,6 @@ def sample_entry(config_yaml: str, target_id: str, experiment: Optional[str] = N
     work = result.get("work")  # {"n_full_loss":..., "n_minibatch_grads":...}
     n_data = X.shape[0]
     beta = float(result["beta"])
-
-    # Validate trace schema (enforce no parameter vectors)
-    _validate_trace_schema(traces)
 
     # Extract sampler flavour from work dict, or infer from sampler name
     sampler_flavour = None

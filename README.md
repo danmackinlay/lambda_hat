@@ -90,6 +90,7 @@ uv run lambda-hat diagnose-targets \
   --experiment smoke_all_samplers
 ```
 
+
 ## Entrypoints
 
 Lambda-Hat provides command-line tools that implement the four-stage workflow.
