@@ -3,8 +3,6 @@
 
 # Unified Workflow Configuration for N x M Sweeps
 
-# NOTE: This file is consumed via OmegaConf mergers from the Snakefile
-
 # --- Shared Config ---
 jax:
   enable_x64: true
@@ -49,4 +47,3 @@ training:
   batch_size: null  # Use full batch by default
 
 # Teacher configuration is loaded via config group defaults (teacher: _null)
-

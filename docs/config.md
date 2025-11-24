@@ -100,8 +100,6 @@ plot_name: trace.png
 
 # Unified Workflow Configuration for N x M Sweeps
 
-# NOTE: This file is consumed via OmegaConf mergers from the Snakefile
-
 # --- Shared Config ---
 jax:
   enable_x64: true

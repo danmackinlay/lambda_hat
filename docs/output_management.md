@@ -286,6 +286,47 @@ for run_dir in experiment_runs:
 
 This ensures `llc_runs.parquet` always contains complete metrics without manual intervention.
 
+### Promotion (Stage D)
+
+The promotion stage (optional, enabled with `--promote` flag) creates galleries of diagnostic plots:
+
+```
+artifacts/experiments/{experiment}/
+└── runs/
+    └── {timestamp}-parsl_llc-{id}/
+        └── artifacts/
+            └── promotion/
+                ├── hmc.png                          # Newest trace plot per sampler
+                ├── vi.png
+                ├── sgld.png
+                └── gallery_trace.md                 # HTML snippet for README
+```
+
+**How it works**:
+1. Promotion searches `experiments/{exp}/runs/` for sampler runs (identified by `manifest.json`)
+2. For each sampler, finds the newest run containing the requested plot (e.g., `trace.png`)
+3. Copies plots to promotion directory with standardized names (`{sampler}.png`)
+4. Generates HTML gallery snippet with metrics overlay
+
+**Supported plots**:
+- `trace.png` - ArviZ trace plots
+- `llc_convergence_combined.png` - LLC vs FGEs/Time convergence
+
+**Commands**:
+```bash
+# Run workflow with promotion
+uv run lambda-hat workflow llc --backend local --promote
+
+# Manual promotion (if needed)
+uv run lambda-hat promote gallery \
+  --runs-root artifacts/experiments/dev/runs \
+  --samplers hmc,vi,sgld \
+  --plot-name trace.png \
+  --outdir artifacts/promotion
+```
+
+**Note**: Target diagnostics (teacher comparison plots) are NOT promoted. They already exist at the correct location: `artifacts/experiments/{exp}/targets/{id}/diagnostics/` and can be accessed directly.
+
 ---
 
 ## TensorBoard Integration

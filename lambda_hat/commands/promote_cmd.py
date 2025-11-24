@@ -32,21 +32,24 @@ def promote_single_entry(
 def promote_gallery_entry(
     runs_root: str,
     samplers: List[str],
-    outdir: str = "runs/promotion",
+    outdir: str,
     plot_name: str = "trace.png",
     snippet_out: Optional[str] = None,
 ) -> Optional[str]:
-    """Generate gallery HTML of all targets.
+    """Generate gallery HTML from sampler runs (artifact system).
 
     Args:
-        runs_root: Root directory containing run subdirectories
+        runs_root: Path to experiments/{exp}/runs/ directory (artifact system)
         samplers: List[str] of sampler names to include
-        outdir: Output directory for gallery (default: runs/promotion)
+        outdir: Output directory for gallery (required)
         plot_name: Name of plot file to copy (default: trace.png)
         snippet_out: Optional path to write HTML snippet
 
     Returns:
         Optional[str]: Path to generated HTML snippet if snippet_out provided, else None
+
+    Note: Artifact system uses flat run structure at experiments/{exp}/runs/
+          Each run directory: {timestamp}-{sampler}-{tag}-{id}/
     """
     configure_logging()
     runs_root = Path(runs_root)

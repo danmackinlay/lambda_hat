@@ -153,11 +153,11 @@ def diagnose_app(run_dir, mode, inputs=None):
 
 
 @python_app
-def promote_app(store_root, samplers, outdir, plot_name, inputs=None):
+def promote_app(runs_root, samplers, outdir, plot_name, inputs=None):
     """Promote results: create gallery with newest run per sampler via direct command call.
 
     Args:
-        store_root: Root directory for runs
+        runs_root: Path to experiments/{exp}/runs/ directory (artifact system)
         samplers: List of sampler names
         outdir: Output directory for promotion assets
         plot_name: Name of plot to promote (e.g., 'trace.png')
@@ -176,7 +176,7 @@ def promote_app(store_root, samplers, outdir, plot_name, inputs=None):
     snippet_out = outdir / f"gallery_{plot_name.replace('.png', '')}.md"
 
     return promote_gallery_entry(
-        runs_root=store_root,
+        runs_root=runs_root,
         samplers=samplers,
         outdir=str(outdir),
         plot_name=plot_name,
@@ -192,7 +192,6 @@ def promote_app(store_root, samplers, outdir, plot_name, inputs=None):
 def run_workflow(
     experiments_yaml,
     experiment=None,
-    parsl_config_path=None,  # Deprecated, kept for compatibility
     enable_promotion=False,
     promote_plots=None,
     is_local=False,  # NEW: Whether running in local mode (vs SLURM/cluster)
@@ -202,7 +201,6 @@ def run_workflow(
     Args:
         experiments_yaml: Path to experiments config (e.g., config/experiments.yaml)
         experiment: Experiment name (default: from config or env LAMBDA_HAT_DEFAULT_EXPERIMENT)
-        parsl_config_path: [DEPRECATED] Ignored (Parsl config loaded via main())
         enable_promotion: Whether to run promotion stage (default: False, opt-in)
         promote_plots: List of plot names to promote
             (default: ['trace.png', 'llc_convergence_combined.png'])
@@ -234,8 +232,7 @@ def run_workflow(
     exp = OmegaConf.load(experiments_yaml)
     experiment = experiment or exp.get("experiment") or "dev"
     jax_x64 = bool(exp.get("jax_enable_x64", True))
-    # Legacy store_root for promote functionality (backward compatibility)
-    store_root = exp.get("store_root", "runs")
+    # Note: store_root removed - promotion now uses artifact system paths directly
 
     targets_conf = list(exp["targets"])
     samplers_conf = list(exp["samplers"])
@@ -472,29 +469,18 @@ def run_workflow(
         # Promotion outputs go to artifacts directory
         outdir = ctx.artifacts_dir / "promotion"
 
-        # Promote target diagnostics (teacher comparison plots)
-        # NOTE: This runs inline (not as Parsl app) since it's just file copying
-        # and target diagnostics only exist for local builds (SKIP_DIAGNOSTICS=0)
-        from lambda_hat.promote.core import promote_target_diagnostics
+        # Note: Target diagnostics promotion removed (obsolete with artifact system)
+        # Target diagnostics already exist at correct location:
+        # artifacts/experiments/{exp}/targets/{id}/diagnostics/
 
-        log.info("  Promoting target diagnostics...")
-        try:
-            runs_root = Path(store_root)
-            promoted_targets = promote_target_diagnostics(runs_root, outdir)
-            if promoted_targets:
-                log.info("    → Promoted diagnostics for %d targets", len(promoted_targets))
-                for target_id, plots in promoted_targets:
-                    log.info("      • %s: %d plots", target_id, len(plots))
-            else:
-                log.info("    → No target diagnostics found (expected for Parsl runs)")
-        except Exception as e:
-            log.warning("    → Target promotion failed (non-fatal): %s", e)
+        # Promote sampler diagnostic plots
+        # Compute runs_root from artifact system paths
+        runs_root = paths.experiments / experiment / "runs"
 
-        # Promote each plot type
         for plot_name in promote_plots:
             log.info("  Promoting %s...", plot_name)
             promote_future = promote_app(
-                store_root=store_root,
+                runs_root=str(runs_root),
                 samplers=unique_samplers,
                 outdir=str(outdir),
                 plot_name=plot_name,

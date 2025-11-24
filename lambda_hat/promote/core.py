@@ -13,29 +13,62 @@ DEFAULT_FILENAME = "llc_convergence_combined.png"
 
 
 def find_run_dirs(runs_root: Path, target_id: str | None, sampler: str | None) -> List[Path]:
-    """Find run directories based on target_id and/or sampler filtering."""
-    base = runs_root / "targets"
+    """Find sampler run directories in artifact system.
+
+    Args:
+        runs_root: Path to experiments/{exp}/runs/ directory (artifact system)
+        target_id: Optional target filter (short ID, e.g., tgt_abc123 or tgt_abc123[:8])
+        sampler: Optional sampler filter (e.g., "hmc", "vi")
+
+    Returns:
+        List of Path objects matching filters
+
+    Note: Artifact system uses flat structure: {timestamp}-{sampler}-{tag}-{id}/
+          Tag typically contains target short ID (first 8 chars)
+    """
+    runs_root = Path(runs_root)
+
+    # Artifact system uses flat structure
+    all_runs = sorted(runs_root.glob("*"))
+
+    # Filter by manifest presence (sampler runs only, excludes orchestration/build runs)
+    sampler_runs = [d for d in all_runs if d.is_dir() and (d / "manifest.json").exists()]
+
+    # Apply optional sampler filter
+    if sampler:
+        sampler_runs = [d for d in sampler_runs if f"-{sampler}-" in d.name]
+
+    # Apply optional target_id filter
     if target_id:
-        base = base / target_id
-        pat = "run_*" if sampler is None else f"run_{sampler}_*"
-        return sorted([p for p in base.glob(pat) if p.is_dir()])
-    else:
-        # Search across all targets
-        pat = "*/run_*" if sampler is None else f"*/run_{sampler}_*"
-        return sorted([p for p in base.glob(pat) if p.is_dir()])
+        # Target ID (short form) appears in tag portion of run directory name
+        target_short = target_id[:8] if target_id.startswith("tgt_") else target_id
+        sampler_runs = [d for d in sampler_runs if target_short in d.name]
+
+    return sampler_runs
 
 
 def find_plot_files(runs_root: Path, sampler: str, plot_name: str) -> List[Path]:
-    """Find plot files across all targets for a given sampler."""
-    return list(runs_root.glob(f"targets/*/run_{sampler}_*/diagnostics/{plot_name}"))
+    """Find plot files across all runs for a given sampler (artifact system)."""
+    runs_root = Path(runs_root)
+    pat = f"*-{sampler}-*/diagnostics/{plot_name}"
+    return list(runs_root.glob(pat))
 
 
 def _find_plot_files(runs_root: Path, sampler: str, plot_name: str) -> List[Path]:
+    """Find plot files in artifact system's flat structure.
+
+    Args:
+        runs_root: Path to experiments/{exp}/runs/ directory
+        sampler: Sampler name (e.g., "hmc", "vi")
+        plot_name: Plot filename (e.g., "trace.png")
+
+    Returns:
+        List of plot file paths matching:
+          {runs_root}/{timestamp}-{sampler}-{tag}-{id}/diagnostics/{plot_name}
     """
-    Return list of plot files matching:
-      runs/targets/*/run_<sampler>_*/diagnostics/<plot_name>
-    """
-    return list(runs_root.glob(f"targets/*/run_{sampler}_*/diagnostics/{plot_name}"))
+    runs_root = Path(runs_root)
+    pat = f"*-{sampler}-*/diagnostics/{plot_name}"
+    return list(runs_root.glob(pat))
 
 
 def _run_dir_from_plot(plot_file: Path) -> Path:
@@ -107,10 +140,11 @@ def promote_target_diagnostics(
     runs_root: Path,
     outdir: Path,
 ) -> List[Tuple[str, List[Path]]]:
-    """Promote target diagnostics to promotion gallery.
+    """DEPRECATED: Promote target diagnostics to promotion gallery.
 
-    Copies teacher diagnostic plots from each target's diagnostics/ directory
-    into promotion/targets/ for easy discovery alongside sampler plots.
+    This function is obsolete with the artifact system. Target diagnostics
+    already exist at the correct location and don't need promotion:
+    artifacts/experiments/{exp}/targets/{id}/diagnostics/
 
     Args:
         runs_root: Root directory containing targets/ subdirectory
@@ -118,8 +152,15 @@ def promote_target_diagnostics(
         outdir: Output directory for promoted plots (creates targets/ subdirectory)
 
     Returns:
-        List of (target_id, list_of_promoted_plot_paths) tuples
+        List of (target_id, list_of_promoted_plot_paths) tuples (always empty)
     """
+    # Function deprecated - target diagnostics no longer need promotion
+    log.warning(
+        "promote_target_diagnostics() is deprecated and no longer needed with the artifact system"
+    )
+    return []
+
+    # Legacy code below (unreachable)
     targets_dir = runs_root / "targets"
     if not targets_dir.exists():
         log.warning("No targets directory found at %s - skipping target promotion", targets_dir)

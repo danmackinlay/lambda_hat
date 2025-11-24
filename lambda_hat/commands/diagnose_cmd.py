@@ -185,8 +185,11 @@ def diagnose_experiment_entry(
     if not experiment_runs_dir.exists():
         raise FileNotFoundError(f"Experiment runs directory not found: {experiment_runs_dir}")
 
-    # Find all run directories
-    run_dirs = sorted([d for d in experiment_runs_dir.iterdir() if d.is_dir()])
+    # Find all run directories (filter to sampler runs only via manifest.json presence)
+    # This excludes Parsl orchestration dirs and build_target dirs
+    run_dirs = sorted(
+        [d for d in experiment_runs_dir.iterdir() if d.is_dir() and (d / "manifest.json").exists()]
+    )
 
     if samplers:
         # Filter by sampler name (run dirs contain sampler in name)
