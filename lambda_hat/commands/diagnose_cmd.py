@@ -27,25 +27,17 @@ from lambda_hat.logging_config import configure_logging
 log = logging.getLogger(__name__)
 
 
-def _load_traces_raw_json(path: Path) -> Dict[str, np.ndarray]:
-    """Load traces from traces_raw.json and convert lists to numpy arrays.
+def _load_traces_raw_npz(path: Path) -> Dict[str, np.ndarray]:
+    """Load traces from traces_raw.npz (NumPy compressed archive).
 
     Args:
-        path: Path to traces_raw.json
+        path: Path to traces_raw.npz
 
     Returns:
         Dict mapping trace names to numpy arrays
     """
-    traces_raw = json.loads(path.read_text())
-
-    traces = {}
-    for key, value in traces_raw.items():
-        if isinstance(value, list):
-            traces[key] = np.array(value)
-        else:
-            traces[key] = value
-
-    return traces
+    with np.load(path, allow_pickle=False) as data:
+        return {k: data[k] for k in data.files}
 
 
 def _load_manifest(path: Path) -> Dict:
@@ -98,13 +90,13 @@ def diagnose_entry(
     log.info("[diagnose] Processing run: %s (mode=%s, force=%s)", run_dir.name, mode, force)
 
     # Required paths
-    traces_raw_path = run_dir / "traces_raw.json"
+    traces_raw_path = run_dir / "traces_raw.npz"
     manifest_path = run_dir / "manifest.json"
     trace_nc_path = run_dir / "trace.nc"
     analysis_json_path = run_dir / "analysis.json"
 
     if not traces_raw_path.exists():
-        raise FileNotFoundError(f"Missing traces_raw.json in {run_dir}")
+        raise FileNotFoundError(f"Missing traces_raw.npz in {run_dir}")
     if not manifest_path.exists():
         raise FileNotFoundError(f"Missing manifest.json in {run_dir}")
 
@@ -123,8 +115,8 @@ def diagnose_entry(
         metrics = json.loads(analysis_json_path.read_text())
     else:
         # Golden path: load raw traces and analyze
-        log.info("[diagnose] Loading traces_raw.json and running analysis")
-        traces = _load_traces_raw_json(traces_raw_path)
+        log.info("[diagnose] Loading traces_raw.npz and running analysis")
+        traces = _load_traces_raw_npz(traces_raw_path)
 
         # Import analyze_traces (lazy to avoid loading in workers)
         from lambda_hat.analysis import analyze_traces

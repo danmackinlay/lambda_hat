@@ -74,10 +74,10 @@ def analyze_traces(
     """Analyze sampling traces, compute LLC metrics, and create InferenceData.
 
     This is the single golden path for converting raw traces to diagnostics.
-    Workers write traces_raw.json + manifest.json; controller calls this function.
+    Workers write traces_raw.npz + manifest.json; controller calls this function.
 
     Args:
-        traces: Dictionary of trace arrays (from traces_raw.json). Must contain 'llc' key.
+        traces: Dictionary of trace arrays (from traces_raw.npz). Must contain 'llc' key.
         manifest: Run manifest dict (from manifest.json) with metadata needed for analysis.
         mode: Diagnostic depth: "light" (basic plots) or "full" (+ expensive WNV plots).
         outdir: If provided, writes trace.nc, analysis.json, and plots to this directory.

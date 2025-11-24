@@ -211,7 +211,7 @@ def diagnose_app(run_dir, mode, inputs=None):
     """Generate offline diagnostics for a completed sampling run via direct command call.
 
     Args:
-        run_dir: Path to run directory containing trace.nc or traces_raw.json
+        run_dir: Path to run directory containing trace.nc or traces_raw.npz
         mode: Diagnostic depth - "light" or "full"
         inputs: List of futures this task depends on (sampling run)
 
@@ -598,12 +598,12 @@ def run_workflow(
         for run_dir in experiment_runs_dir.glob("*/"):
             analysis_path = run_dir / "analysis.json"
             manifest_path = run_dir / "manifest.json"
-            traces_raw_path = run_dir / "traces_raw.json"
+            traces_raw_path = run_dir / "traces_raw.npz"
 
             # Check if raw traces exist (required for analysis)
             if not traces_raw_path.exists() or not manifest_path.exists():
                 if not traces_raw_path.exists():
-                    log.warning("  Warning: Missing traces_raw.json at %s, skipping", run_dir)
+                    log.warning("  Warning: Missing traces_raw.npz at %s, skipping", run_dir)
                 if not manifest_path.exists():
                     log.warning("  Warning: Missing manifest.json at %s, skipping", run_dir)
                 continue

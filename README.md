@@ -143,7 +143,7 @@ uv run lambda-hat sample \
 ```
 
 **Outputs:**
-- `traces_raw.json` — Raw trace data (LLC samples, scalars)
+- `traces_raw.npz` — Raw trace data (NumPy compressed arrays: LLC samples, scalars)
 - `manifest.json` — Run metadata (sampler config, timings, work metrics)
 
 **Note:** Diagnostics (`trace.nc`, `analysis.json`, plots) are generated in Stage C via `lambda-hat diagnose`
@@ -295,7 +295,7 @@ artifacts/experiments/{experiment}/
 └── runs/
     └── {timestamp}-{sampler}-{tag}-{id}/
         ├── manifest.json           # Run metadata
-        ├── traces_raw.json         # Raw trace data
+        ├── traces_raw.npz          # Raw trace data (NumPy compressed)
         ├── trace.nc                # ArviZ trace (generated in Stage C)
         ├── analysis.json           # Metrics (generated in Stage C)
         └── diagnostics/            # Sampler diagnostics (generated in Stage C)

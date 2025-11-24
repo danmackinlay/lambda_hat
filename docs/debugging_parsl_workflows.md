@@ -101,22 +101,22 @@ for i, (future, record) in enumerate(zip(run_futures, run_records), 1):
 ```
 [tgt_deaf1a769193_hmc_f4567256] FAILED in worker:
 Traceback (most recent call last):
-  File "/path/to/sample_cmd.py", line 251, in sample_entry
-    (run_dir / "traces_raw.json").write_text(json.dumps(traces_serializable, indent=2))
-  File "/path/to/json/__init__.py", line 238, in dumps
-    **kw).encode(obj)
+  File "/path/to/sample_cmd.py", line 238, in sample_entry
+    np.savez_compressed(run_dir / "traces_raw.npz", **traces_arrays)
+  File "/path/to/numpy/lib/npyio.py", line 642, in savez_compressed
+    _savez(file, args, kwds, True)
   ...
-TypeError: Object of type ArrayImpl is not JSON serializable
+ValueError: Object arrays cannot be saved when allow_pickle=False
 
-Exception type: TypeError
+Exception type: ValueError
 Exception attributes: ['__cause__', '__class__', '__context__', ...]
 ```
 
 Now you can see:
-- Exact line number where error occurred (`sample_cmd.py:251`)
+- Exact line number where error occurred (`sample_cmd.py:238`)
 - Full Python traceback with nested calls
-- Actual exception type (`TypeError`)
-- Specific error message ("Object of type ArrayImpl is not JSON serializable")
+- Actual exception type (`ValueError`)
+- Specific error message ("Object arrays cannot be saved when allow_pickle=False")
 
 ## Real-World Example: Lambda-Hat Workflow Debugging
 

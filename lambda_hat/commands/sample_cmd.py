@@ -1,7 +1,7 @@
 # lambda_hat/commands/sample_cmd.py
 """Sample command - Stage B: Run MCMC/VI sampler on target.
 
-Workers always produce raw traces (traces_raw.json + manifest.json) only.
+Workers always produce raw traces (traces_raw.npz + manifest.json) only.
 Diagnostics are deferred to Stage C (diagnose command) via the golden path.
 """
 
@@ -10,10 +10,10 @@ import logging
 import time
 from typing import Dict, Optional
 
-import numpy as np
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import numpy as np
 from omegaconf import OmegaConf
 
 from lambda_hat.artifacts import Paths, RunContext
@@ -27,8 +27,6 @@ from lambda_hat.target_artifacts import load_target_artifact_from_dir
 from lambda_hat.targets import TargetBundle
 
 log = logging.getLogger(__name__)
-
-
 
 
 def sample_entry(config_yaml: str, target_id: str, experiment: Optional[str] = None) -> Dict:
@@ -231,17 +229,12 @@ def sample_entry(config_yaml: str, target_id: str, experiment: Optional[str] = N
     # Diagnostics are deferred to controller (diagnose command or --diagnose flag)
     run_dir.mkdir(parents=True, exist_ok=True)
 
-    # Convert all array-like values (including JAX arrays) to lists for JSON serialization
-    traces_serializable = {}
-    for k, v in traces.items():
-        if hasattr(v, "__array__") or hasattr(v, "tolist"):
-            # Convert JAX arrays and numpy arrays to lists
-            traces_serializable[k] = np.asarray(v).tolist()
-        else:
-            traces_serializable[k] = v
+    # Convert all array-like values to NumPy arrays for NPZ storage
+    traces_arrays = {k: np.asarray(v) for k, v in traces.items()}
 
-    (run_dir / "traces_raw.json").write_text(json.dumps(traces_serializable, indent=2))
-    log.info("[sample] Wrote traces_raw.json (raw traces only)")
+    # Write compressed NPZ (binary, efficient storage)
+    np.savez_compressed(run_dir / "traces_raw.npz", **traces_arrays)
+    log.info("[sample] Wrote traces_raw.npz (raw traces only)")
 
     # No metrics computed during sampling (deferred to diagnostics stage)
     metrics = {}
@@ -255,7 +248,7 @@ def sample_entry(config_yaml: str, target_id: str, experiment: Optional[str] = N
         _write_tensorboard_logs(ctx, traces, metrics, work)
 
     # Diagnostics deferred to Stage C (diagnose command)
-    # Sampling (Stage B) only creates traces_raw.json + manifest.json
+    # Sampling (Stage B) only creates traces_raw.npz + manifest.json
     # Run diagnostics: lambda-hat diagnose --run-dir <path>
     # Or use --diagnose flag: lambda-hat sample --diagnose ...
 

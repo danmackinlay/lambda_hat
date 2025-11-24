@@ -217,24 +217,19 @@ Workers **always** write only raw traces, regardless of execution mode:
 ```
 artefacts/experiments/<experiment>/runs/<run_id>/
 ├── manifest.json         # Run metadata (sampler, hyperparams, timings, work metrics)
-└── traces_raw.json       # Raw trace arrays as JSON (LLC + scalar stats only)
+└── traces_raw.npz        # Raw trace arrays as NumPy compressed archive (LLC + scalar stats only)
 ```
 
 **Design principles:**
 - No ArviZ, no matplotlib, no metrics computation in workers
 - Keeps HPC/cluster workers lightweight and fast
 - Parameter vector traces forbidden (validation enforced)
-- Single canonical format: JSON-serialized numpy arrays
+- Single canonical format: NumPy compressed arrays (NPZ)
 
-**Example `traces_raw.json`:**
-```json
-{
-  "llc": [[...], [...]],           // (chains, draws)
-  "cumulative_fge": [[...], [...]],
-  "cumulative_time": [[...], [...]],
-  "acceptance_rate": [[...], [...]]
-}
-```
+**Storage format:**
+- Binary compressed format (10-100x smaller than JSON)
+- Fast load/dump with `np.savez_compressed()` / `np.load()`
+- Contains named arrays: `llc` (chains, draws), `cumulative_fge`, `cumulative_time`, `acceptance_rate`, etc.
 
 ### Controller Reconstruction (Stage C: Diagnostics)
 
@@ -242,7 +237,7 @@ The controller loads raw traces and calls `analyze_traces()` to generate analysi
 
 ```
 artefacts/experiments/<experiment>/runs/<run_id>/
-├── traces_raw.json       # Input: raw traces
+├── traces_raw.npz        # Input: raw traces (NumPy compressed)
 ├── manifest.json         # Input: metadata
 ├── trace.nc              # Output: ArviZ InferenceData (cached)
 ├── analysis.json         # Output: metrics (llc_mean, ESS, R-hat, etc.)
@@ -255,7 +250,7 @@ artefacts/experiments/<experiment>/runs/<run_id>/
 ```
 
 **Smart caching:**
-- If `trace.nc` and `analysis.json` exist and are fresh (mtime >= traces_raw.json), reuse them
+- If `trace.nc` and `analysis.json` exist and are fresh (mtime >= traces_raw.npz), reuse them
 - Otherwise, reconstruct via `analyze_traces()` (golden path)
 - Use `--force` flag to bypass cache and recompute
 

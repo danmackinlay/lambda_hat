@@ -108,7 +108,7 @@ def sample(config_yaml, target_id, experiment, diagnose, diagnose_mode):
     "--run-dir",
     required=True,
     type=click.Path(exists=True),
-    help="Path to run directory containing trace.nc or traces_raw.json",
+    help="Path to run directory containing trace.nc or traces_raw.npz",
 )
 @click.option(
     "--mode",
