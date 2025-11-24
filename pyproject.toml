@@ -32,12 +32,16 @@ dependencies = [
 
 # Local / macOS / CPU (MPS or CPU-only)
 cpu = [
-  "jax~=0.7.1",               # pulls CPU/MPS wheels from PyPI
+  # jax==0.7.1 previously
+  # jaxlib version 0.4.38 is the last version which supported Intel Macs
+  "jax==0.4.38",
 ]
 
 # CUDA 12.x wheels for Linux (bundled CUDA libs; only needs a recent NVIDIA driver)
 cuda12 = [
-  "jax[cuda12_local]~=0.7.1"
+  # jax[cuda12_local]==0.7.1 previously
+  # jaxlib version 0.4.38 is the last version which supported Intel Macs
+  "jax[cuda12_local]==0.4.38"
 ]
 
 dev = [
