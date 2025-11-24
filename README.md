@@ -12,12 +12,12 @@ This repo provides benchmark estimators of LLC on small but non-trivial neural n
 * [Hydra](https://hydra.cc/) for configuration management
 * [Haiku](https://github.com/haiku/haiku) for neural network definitions.
 
-We target networks with dimension up to about $10^5$ which means we can ground-truth against classic samplers like HMC (which we expect to become non-viable in higher dimension or dataset size).
-In this regime we can relu upon classic MCMC to tell us the “true” LLC rather than relying on analytic results for approximate networks such as Deep Linear Networks.
+We target networks with parameter-space dimension up to about $10^5$ which means we can ground-truth against classic samplers like HMC (which we expect to become non-viable as either dimension or cardinality of the dataset increases).
+In this regime we can rely upon classic MCMC to tell us the “true” LLC rather than relying on analytic results for approximate networks such as Deep Linear Networks.
 
 ## Installation
 
-Requires Python 3.11+.
+Requires Python 3.11
 
 ```bash
 # Using uv (recommended):
@@ -29,6 +29,42 @@ uv sync --extra cuda12  # For CUDA 12 (Linux)
 pip install .[cpu]     # For CPU/macOS
 pip install .[cuda12]  # For CUDA 12 (Linux)
 ```
+
+Notes: On Intel macs, when running the command:
+
+```bash
+uv sync --extra cpu
+```
+
+You will encounter the error:
+
+```bash
+error: Distribution `jaxlib==0.7.1 @ registry+https://pypi.org/simple` can't be installed because it doesn't have a source distribution or wheel for the current platform
+
+hint: You're on macOS (`macosx_15_0_x86_64`), but `jaxlib` (v0.7.1) only has wheels for the following platforms: `manylinux_2_27_x86_64`, `manylinux2014_aarch64`, `macosx_11_0_arm64`, `win_amd64`
+```
+
+The fix is to run the command:
+
+```bash
+uv pip  install "jax[cpu]"
+```
+
+Which will install a CPU only variant of JAX to your previously created UV managed venv. You'll see something like:
+
+```bash
+Resolved 6 packages in 2.24s
+Prepared 6 packages in 28.68s
+Installed 6 packages in 70ms
+ + jax==0.4.38
+ + jaxlib==0.4.38
+ + ml-dtypes==0.5.4
+ + numpy==2.3.5
+ + opt-einsum==3.4.0
+ + scipy==1.16.3
+```
+
+Notably, jaxlib version 0.4.38 is installed; the last version which supported intel macs. In my (Paul) best present assement—meaning whatever nonsense ChatGPT 5.1 produced—it seems unlikely that the requirement jaxlib >= 0.7.1 matters, and that jaxlib >= 0.4.38 will be fine. But, of course, stay tuned.
 
 ## Running Experiments
 
