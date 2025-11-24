@@ -143,15 +143,16 @@ uv run lambda-hat sample \
 ```
 
 **Outputs:**
-- `trace.nc` — ArviZ-compatible NetCDF trace with chains and diagnostics (if `analysis_mode="light"` or `"full"`)
-- `traces_raw.json` — Raw trace data (if `analysis_mode="none"`)
-- `analysis.json` — computed metrics (LLC estimate, ESS, R-hat, etc.)
+- `traces_raw.json` — Raw trace data (LLC samples, scalars)
+- `manifest.json` — Run metadata (sampler config, timings, work metrics)
+
+**Note:** Diagnostics (`trace.nc`, `analysis.json`, plots) are generated in Stage C via `lambda-hat diagnose`
 
 **Key features:**
 - Precision guard: fails if sampler x64 setting mismatches target
 - Automatic minibatching for SGLD-family samplers
 - Parallel chain execution with JAX's vmap
-- Fast mode: Set `LAMBDA_HAT_ANALYSIS_MODE=none` to skip expensive diagnostics (plots generated in Stage C)
+- Workers write raw traces only; diagnostics generated separately in Stage C
 
 ### `lambda-hat diagnose` (Stage C)
 
@@ -181,11 +182,15 @@ uv run lambda-hat diagnose-experiment \
 - `light` (default) — Basic plots (trace, rank, energy, convergence)
 - `full` — All plots including expensive work-normalized variance
 
-### `lambda-hat promote` (Stage D)
+### `lambda-hat promote` (Stages C-2 and D)
 
-Utility for copying plots from run directories into stable locations for documentation or galleries.
-It searches under `artifacts/experiments/{experiment}/runs/*/diagnostics/`.
+Creates galleries from diagnostic plots and copies them to **repository-visible locations** for documentation.
 
+**Promotion writes to TWO locations:**
+1. **Artifact system**: `artifacts/experiments/{exp}/artifacts/promotion/` (workflow-specific)
+2. **Repository**: `docs/assets/{exp}/samplers/` and `docs/assets/{exp}/targets/` (browsable on GitHub)
+
+**Manual promotion commands:**
 ```bash
 # Create an asset gallery with newest run per sampler
 uv run lambda-hat promote gallery \
@@ -202,8 +207,7 @@ uv run lambda-hat promote single \
   --plot-name llc_convergence_combined.png
 ```
 
-This requires diagnostics to exist (run Stage C first, or use `--promote` flag which runs both).
-
+**Automated promotion via workflow:**
 ```bash
 # Run workflow with diagnostics and promotion
 uv run lambda-hat workflow sample --backend local --promote
@@ -215,7 +219,15 @@ uv run lambda-hat workflow sample --backend local --promote \
 
 **How it works:**
 - Without `--promote`: Runs Stages A + B only (fast, no diagnostics or plots)
-- With `--promote`: Runs Stages A + B + C + D (generates diagnostics, then promotes best runs to gallery)
+- With `--promote`: Runs Stages A + B + C + C-2 + D:
+  - **Stage C**: Generate diagnostics for all sampler runs
+  - **Stage C-2**: Copy target diagnostics to `docs/assets/{exp}/targets/`
+  - **Stage D**: Create galleries and copy to `docs/assets/{exp}/samplers/`
+
+**Repository outputs** (`docs/assets/{experiment}/`):
+- `samplers/*.png` — Latest sampler plots (hmc.png, vi.png, sgld.png, etc.)
+- `samplers/gallery_*.md` — HTML gallery snippets for embedding
+- `targets/{target_id}/diagnostics/*.png` — Target comparison plots
 
 
 ---
@@ -257,30 +269,63 @@ uv run lambda-hat workflow sample --backend slurm-cpu \
 
 ## Artifact Layout
 
-### Standard workflow** (`lambda-hat workflow sample`):
+Lambda-Hat uses a **three-layer content-addressed artifact system** for reproducible experiments:
 
+### 1. Content-Addressed Store (immutable)
 ```
-runs/
+artifacts/store/
+└── objects/sha256/<hash>/
+    ├── payload/                    # Actual artifact content
+    │   ├── data.npz
+    │   ├── params.eqx
+    │   └── diagnostics/
+    └── meta.json                   # Type, schema, provenance
+```
+
+### 2. Experiment Runs (symlinks to store)
+```
+artifacts/experiments/{experiment}/
+├── targets/
+│   └── {target_id} -> ../../../store/objects/sha256/.../
+│       └── payload/
+│           ├── meta.json
+│           ├── data.npz
+│           ├── params.npz
+│           └── diagnostics/        # Target comparison plots
+└── runs/
+    └── {timestamp}-{sampler}-{tag}-{id}/
+        ├── manifest.json           # Run metadata
+        ├── traces_raw.json         # Raw trace data
+        ├── trace.nc                # ArviZ trace (generated in Stage C)
+        ├── analysis.json           # Metrics (generated in Stage C)
+        └── diagnostics/            # Sampler diagnostics (generated in Stage C)
+            ├── trace.png
+            ├── rank.png
+            └── llc_convergence_combined.png
+```
+
+### 3. Repository-Visible Assets (promotion outputs)
+```
+docs/assets/{experiment}/
+├── samplers/
+│   ├── hmc.png                     # Latest sampler plots
+│   ├── vi.png
+│   ├── sgld.png
+│   └── gallery_*.md                # Gallery HTML snippets
 └── targets/
-    ├── _catalog.jsonl               # registry of all targets
-    └── tgt_abc123/                  # one target artifact
-        ├── meta.json                # metadata (config, dims, precision, L0)
-        ├── data.npz                 # training data
-        ├── params.npz               # trained parameters
-        ├── diagnostics/             # target diagnostics (local builds only)
-        │   ├── target_train_test_loss.png
-        │   ├── target_pred_vs_teacher_train.png
-        │   └── target_pred_vs_teacher_test.png
-        ├── _runs.jsonl              # manifest of Stage-B runs
-        ├── run_hmc_ab12cd34/        # one sampler run
-        │   ├── trace.nc             # ArviZ trace
-        │   ├── analysis.json        # metrics
-        │   └── diagnostics/         # sampler diagnostics
-        │       ├── trace.png
-        │       └── rank.png
-        ├── run_sgld_ef567890/
-        └── run_mclmc_gh901234/
+    └── {target_id}/
+        └── diagnostics/            # Target comparison plots
+            ├── data.png
+            └── loss.png
 ```
+
+**Key features:**
+- **Deduplication**: Identical targets stored once via content addressing
+- **Reproducibility**: Same target ID = identical weights and data
+- **Immutability**: Store objects never modified; experiments reference via symlinks
+- **GitHub browsing**: Promoted assets in `docs/assets/` visible without artifact system access
+
+See [`docs/output_management.md`](docs/output_management.md) for complete details on the artifact system.
 
 ### Hyperparameter Optimization
 

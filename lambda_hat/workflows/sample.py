@@ -5,13 +5,24 @@ Stages:
   A. Build targets (neural networks + datasets)
   B. Run samplers (MCMC/VI) for each target
   C. Generate diagnostics (offline plots from traces) - OPTIONAL, runs when --promote enabled
-  D. Promote results (gallery + aggregation) - OPTIONAL, opt-in via --promote
+  C-2. Copy target diagnostics to repository (docs/assets/) - OPTIONAL, runs when --promote enabled
+  D. Promote sampler results (gallery + aggregation) to repository - OPTIONAL, opt-in via --promote
+
+Promotion outputs (repository-visible):
+  docs/assets/<experiment>/samplers/*.png    - Promoted sampler plots per algorithm
+  docs/assets/<experiment>/samplers/*.md     - Gallery markdown snippets
+  docs/assets/<experiment>/targets/          - Target diagnostic plots
+
+Artifact outputs (immutable, content-addressed):
+  artifacts/experiments/<exp>/runs/          - Run directories with diagnostics
+  artifacts/experiments/<exp>/targets/       - Target directories with diagnostics
+  artifacts/experiments/<exp>/artifacts/     - Workflow artifacts (e.g., llc_runs.parquet)
 
 Usage:
   # Local testing (no promotion)
   lambda-hat workflow llc --config config/experiments.yaml --backend local
 
-  # SLURM cluster with promotion (includes diagnostics)
+  # SLURM cluster with promotion (includes diagnostics + repo copy)
   lambda-hat workflow llc --config config/experiments.yaml \\
       --parsl-card config/parsl/slurm/gpu-a100.yaml --promote
 """
@@ -19,6 +30,7 @@ Usage:
 import argparse
 import json
 import logging
+import shutil
 import sys
 from pathlib import Path
 
@@ -76,6 +88,69 @@ def unwrap_parsl_future(future, name: str):
         log.error("Exception attributes: %s", dir(e))
 
         raise
+
+
+def copy_promotion_to_repo(src_dir: Path, dest_dir: Path) -> None:
+    """Copy promoted assets from artifact system to repository-visible location.
+
+    Args:
+        src_dir: Source directory in artifact system (e.g., artifacts/.../promotion/trace/)
+        dest_dir: Destination in repository (e.g., docs/assets/<exp>/samplers/)
+
+    Copies all .png and .md files, creating dest_dir if needed.
+    """
+    src_dir = Path(src_dir)
+    dest_dir = Path(dest_dir)
+
+    if not src_dir.exists():
+        log.warning("Source directory does not exist: %s - skipping copy", src_dir)
+        return
+
+    dest_dir.mkdir(parents=True, exist_ok=True)
+
+    # Copy all .png and .md files
+    copied_count = 0
+    for pattern in ["*.png", "*.md"]:
+        for src_file in src_dir.glob(pattern):
+            dst_file = dest_dir / src_file.name
+            shutil.copy2(src_file, dst_file)
+            log.info("  Copied to repo: %s -> %s", src_file.name, dst_file)
+            copied_count += 1
+
+    if copied_count == 0:
+        log.warning("No .png or .md files found in %s", src_dir)
+
+
+def copy_target_diagnostics_to_repo(targets_dir: Path, dest_dir: Path) -> None:
+    """Copy target diagnostics from artifact system to repository-visible location.
+
+    Args:
+        targets_dir: Source targets directory (e.g., artifacts/experiments/<exp>/targets/)
+        dest_dir: Destination in repository (e.g., docs/assets/<exp>/targets/)
+
+    Recursively copies diagnostics/*.png preserving directory structure.
+    """
+    targets_dir = Path(targets_dir)
+    dest_dir = Path(dest_dir)
+
+    if not targets_dir.exists():
+        log.warning("Targets directory does not exist: %s - skipping copy", targets_dir)
+        return
+
+    copied_count = 0
+    for diagnostic_file in targets_dir.rglob("diagnostics/*.png"):
+        # Compute relative path from targets_dir to preserve structure
+        rel_path = diagnostic_file.relative_to(targets_dir)
+        dst_file = dest_dir / rel_path
+        dst_file.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(diagnostic_file, dst_file)
+        log.info("  Copied target diagnostic: %s -> %s", rel_path, dst_file)
+        copied_count += 1
+
+    if copied_count > 0:
+        log.info("  Copied %d target diagnostic files to repository", copied_count)
+    else:
+        log.info("  No target diagnostics found to copy")
 
 
 # ============================================================================
@@ -454,6 +529,14 @@ def run_workflow(
                     record["sampler"],
                     e,
                 )
+
+        # ====================================================================
+        # Stage C-2: Copy target diagnostics to repository (optional)
+        # ====================================================================
+        log.info("=== Stage C-2: Copying target diagnostics to repository ===")
+        targets_src = paths.experiments / experiment / "targets"
+        targets_dest = Path("docs/assets") / experiment / "targets"
+        copy_target_diagnostics_to_repo(targets_src, targets_dest)
     else:
         log.info("=== Stage C: Diagnostics skipped (use --promote to enable) ===")
         diagnose_futures = []  # Empty list for promotion dependency
@@ -489,6 +572,13 @@ def run_workflow(
             try:
                 md_path = unwrap_parsl_future(promote_future, f"promote_{plot_name}")
                 log.info("    → Gallery written to %s", md_path)
+
+                # Copy promoted assets to repository-visible location
+                plot_stem = plot_name.replace(".png", "")
+                src_dir = outdir / plot_stem
+                dest_dir = Path("docs/assets") / experiment / "samplers"
+                log.info("    → Copying to repository: %s", dest_dir)
+                copy_promotion_to_repo(src_dir, dest_dir)
             except Exception as e:
                 log.error("    → Promotion FAILED: %s", e)
     else:

@@ -312,9 +312,34 @@ artifacts/experiments/{experiment}/
 - `trace.png` - ArviZ trace plots
 - `llc_convergence_combined.png` - LLC vs FGEs/Time convergence
 
+**Repository-visible promotion** (Stage C-2 and D):
+
+In addition to writing to the artifact system, promotion now copies assets to repository-visible locations:
+
+```
+docs/assets/{experiment}/
+├── samplers/
+│   ├── hmc.png                                  # Promoted sampler plots
+│   ├── vi.png
+│   ├── sgld.png
+│   ├── gallery_trace.md                         # Gallery HTML snippets
+│   └── gallery_llc_convergence_combined.md
+└── targets/
+    └── {target_id}/
+        └── diagnostics/
+            ├── data.png                         # Target diagnostic plots
+            ├── loss.png
+            └── ...
+```
+
+This enables:
+- **GitHub browsing**: Plots visible in repository without artifact system access
+- **Target diagnostics**: Teacher comparison plots copied from artifact store
+- **Gallery integration**: Markdown snippets can be embedded in documentation
+
 **Commands**:
 ```bash
-# Run workflow with promotion
+# Run workflow with promotion (creates both artifact and repo-visible assets)
 uv run lambda-hat workflow llc --backend local --promote
 
 # Manual promotion (if needed)
@@ -325,7 +350,7 @@ uv run lambda-hat promote gallery \
   --outdir artifacts/promotion
 ```
 
-**Note**: Target diagnostics (teacher comparison plots) are NOT promoted. They already exist at the correct location: `artifacts/experiments/{exp}/targets/{id}/diagnostics/` and can be accessed directly.
+**Note on repository assets**: The `assets/readme/` directory is manually curated and contains hand-selected promotional images for the GitHub README. Automated promotion writes to `docs/assets/{experiment}/` which is separate from manual curation.
 
 ---
 
