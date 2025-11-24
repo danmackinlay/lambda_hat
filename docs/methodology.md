@@ -6,7 +6,7 @@ This document details the mathematical formulation of the Local Learning Coeffic
 
 ## Local Learning Coefficient (LLC) Estimator ($\hat\lambda$)
 
-In Singular Learning Theory (SLT), the LLC $\lambda(w_0)$ characterizes the volume scaling rate of the loss landscape near a minimum $w_0$. We estimate this quantity using the estimator $\hat\lambda(w_0)$.
+In Singular Learning Theory (SLT), the LLC $\lambda(w_0)$ characterizes the volume scaling rate of the loss landscape near a minimizer $w_0$. We estimate this quantity using the estimator $\hat\lambda(w_0)$.
 
 ### Tempered Local Posterior
 
@@ -17,11 +17,11 @@ $$
 $$
 
 Where:
-- $n$ is the dataset size.
+- $n$ is the size of the dataset.
 - $L_n(w)$ is the empirical negative log-likelihood (the loss function).
 - $\beta$ is the inverse temperature.
 - $w_0$ is the ERM solution (the center of localization).
-- $\gamma$ controls the strength of the Gaussian localization prior.
+- $\gamma$ controls the strength of the Gaussian localization "prior".
 
 ### The Estimator $\hat{\lambda}$
 
@@ -60,15 +60,6 @@ Crucially, following the methodology in Hitchcock and Hoogland (Appendix D.3), t
 - $\text{Drift}_{t} = g_t$
 - $\epsilon_{t}[i] = \epsilon$ (fixed scalar step size)
 
-#### RMSPropSGLD (Algorithm 3)
-
-RMSPropSGLD adapts the step size using the second moment estimate $v_t$.
-
-1. Update second moment: $v_{t} = b_2 v_{t-1} + (1-b_2) g_t^2$. (Note: $v_{-1}$ initialized to 1).
-2. Bias correction: $\hat{v}_{t} = v_{t} / (1-b_2^t)$.
-3. Calculate adaptive step size: $\epsilon_{t}[i] = \epsilon / (\sqrt{\hat{v}_{t}[i]} + a)$ (where $a$ is `eps`).
-4. $\text{Drift}_{t} = g_t$.
-
 #### AdamSGLD (Algorithm 2)
 
 AdamSGLD adapts both the step size and the drift term using first ($m_t$) and second ($v_t$) moment estimates.
@@ -78,3 +69,12 @@ AdamSGLD adapts both the step size and the drift term using first ($m_t$) and se
 3. Bias correction: $\hat{m}_{t} = m_{t} / (1-b_1^t)$, $\hat{v}_{t}$.
 4. Calculate adaptive step size: $\epsilon_{t}[i]$.
 5. $\text{Drift}_{t} = \hat{m}_t$.
+
+#### RMSPropSGLD (Algorithm 3)
+
+RMSPropSGLD adapts the step size using the second moment estimate $v_t$.
+
+1. Update second moment: $v_{t} = b_2 v_{t-1} + (1-b_2) g_t^2$. (Note: $v_{-1}$ initialized to 1).
+2. Bias correction: $\hat{v}_{t} = v_{t} / (1-b_2^t)$.
+3. Calculate adaptive step size: $\epsilon_{t}[i] = \epsilon / (\sqrt{\hat{v}_{t}[i]} + a)$ (where $a$ is `eps`).
+4. $\text{Drift}_{t} = g_t$.
