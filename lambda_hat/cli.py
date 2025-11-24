@@ -4,6 +4,7 @@
 import os
 import sys
 from pathlib import Path
+from omegaconf import OmegaConf
 
 import click
 
@@ -310,7 +311,7 @@ def workflow():
     """Parsl workflow orchestration."""
 
 
-@workflow.command("llc")
+@workflow.command("sample")
 @click.option(
     "--config",
     default="config/experiments.yaml",
@@ -347,7 +348,7 @@ def workflow():
     show_default=True,
     help="Comma-separated plots to promote when --promote is used",
 )
-def workflow_llc(config, experiment, backend, parsl_sets, promote, promote_plots):
+def workflow_sample(config, experiment, backend, parsl_sets, promote, promote_plots):
     """Run N×M targets×samplers workflow.
 
     This orchestrates the full pipeline:
@@ -359,23 +360,22 @@ def workflow_llc(config, experiment, backend, parsl_sets, promote, promote_plots
     Examples:
 
       # Local testing (no promotion, fast)
-      lambda-hat workflow llc --config config/experiments.yaml --backend local
+      lambda-hat workflow sample --config config/experiments.yaml --backend local
 
       # SLURM GPU cluster with promotion (includes diagnostics)
-      lambda-hat workflow llc --config config/experiments.yaml \\
+      lambda-hat workflow sample --config config/experiments.yaml \\
           --backend slurm-gpu --promote
 
       # SLURM CPU cluster
-      lambda-hat workflow llc --config config/experiments.yaml --backend slurm-cpu
+      lambda-hat workflow sample --config config/experiments.yaml --backend slurm-cpu
     """
     # Import main workflow logic from parsl_llc entrypoint
     # We'll delegate to the existing run_workflow function
     import parsl
-    from omegaconf import OmegaConf
 
     from lambda_hat.artifacts import Paths, RunContext
     from lambda_hat.parsl_cards import load_parsl_config_from_card
-    from lambda_hat.workflows.parsl_llc import run_workflow
+    from lambda_hat.workflows.sample import run_workflow
 
     # Initialize artifact system early to get RunContext for Parsl run_dir
     paths_early = Paths.from_env()
@@ -437,7 +437,7 @@ def workflow_llc(config, experiment, backend, parsl_sets, promote, promote_plots
         parsl.clear()
 
 
-@workflow.command("optuna")
+@workflow.command("tune")
 @click.option(
     "--config",
     required=True,
@@ -471,32 +471,32 @@ def workflow_optuna(config, backend, config_sets, dry_run):
 
     Examples:
       # Local testing
-      lambda-hat workflow optuna --config config/optuna/default.yaml --backend local
+      lambda-hat workflow tune --config config/optuna/default.yaml --backend local
 
       # Override trials and batch size
-      lambda-hat workflow optuna --config config/optuna/default.yaml --backend local \\
+      lambda-hat workflow tune --config config/optuna/default.yaml --backend local \\
           --set optuna.max_trials_per_method=24 \\
           --set optuna.concurrency.batch_size=6
 
       # SLURM GPU cluster
-      lambda-hat workflow optuna --config config/optuna/default.yaml \\
+      lambda-hat workflow tune --config config/optuna/default.yaml \\
           --backend slurm-gpu
 
       # Dry-run to preview config
-      lambda-hat workflow optuna --config config/optuna/default.yaml \\
+      lambda-hat workflow tune --config config/optuna/default.yaml \\
           --backend local --dry-run
-    """
-    import sys
+    """    import sys
     from pathlib import Path
 
-    import parsl
     from omegaconf import OmegaConf
+
+    import parsl
 
     from lambda_hat.artifacts import Paths, RunContext
     from lambda_hat.config_optuna import load_cfg
     from lambda_hat.logging_config import configure_logging
     from lambda_hat.parsl_cards import load_parsl_config_from_card
-    from lambda_hat.workflows.parsl_optuna import run_optuna_workflow
+    from lambda_hat.workflows.tune import run_optuna_workflow
 
     # Configure logging
     configure_logging()

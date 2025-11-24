@@ -1,0 +1,56 @@
+experiment: "smoke_all_samplers"
+jax_enable_x64: true  # simplest: run everything in float64
+
+# One tiny problem: small model, small data, no teacher
+targets:
+  - model: small
+    data: small
+    teacher: _null
+    seed: 0
+    overrides:
+      data:
+        n_train: 128
+        n_test: 64
+      training:
+        steps: 200        # very short ERM run
+        eval_every: 50
+
+# All samplers, each in "toy" mode
+samplers:
+  # Full-batch HMC
+  - name: hmc
+    seed: 1
+    overrides:
+      num_warmup: 50
+      num_samples: 50
+      thinning: 1
+      max_tree_depth: 5    # if supported; otherwise drop
+
+  # Microcanonical LMC
+  - name: mclmc
+    seed: 2
+    overrides:
+      num_warmup: 50
+      num_samples: 50
+      thinning: 1
+      trajectory_length: 1.0
+
+  # Minibatch SGLD
+  - name: sgld
+    seed: 3
+    overrides:
+      steps: 500          # total SGLD steps
+      batch_size: 64
+      step_size: 1e-5
+      eval_every: 100     # only a few checkpoints
+
+  # Variational inference (mean-field / low-rank)
+  - name: vi
+    seed: 4
+    overrides:
+      algo: mfa
+      M: 4                # mixture components
+      r: 1                # rank
+      whitening_mode: adam
+      steps: 1000
+      eval_every: 100

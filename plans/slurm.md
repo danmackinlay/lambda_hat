@@ -110,7 +110,7 @@ Add to `workflow llc` in `lambda_hat/cli.py`:
     help="Execution backend: local HTEX, Slurm CPU, or Slurm GPU.",
 )
 # keep --config, --experiment, --promote, etc.
-def workflow_llc(config, experiment, backend, ...):
+def workflow_sample(config, experiment, backend, ...):
     ...
 ```
 
