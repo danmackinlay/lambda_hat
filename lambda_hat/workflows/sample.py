@@ -9,7 +9,7 @@ Stages:
 
 Usage:
   # Local testing (no promotion)
-  lambda-hat workflow llc --config config/experiments.yaml --local
+  lambda-hat workflow llc --config config/experiments.yaml --backend local
 
   # SLURM cluster with promotion (includes diagnostics)
   lambda-hat workflow llc --config config/experiments.yaml \\
@@ -590,7 +590,7 @@ def main():
         ),
     )
     parser.add_argument(
-        "--local",
+        "--backend local ",
         action="store_true",
         help="Use local HTEX executors (equivalent to --parsl-card config/parsl/local.yaml)",
     )
@@ -643,7 +643,7 @@ def main():
             log.info("  Overrides: %s", args.parsl_sets)
         parsl_cfg = load_parsl_config_from_card(card_path, parsl_sets_with_rundir)
     else:
-        log.error("Error: Must specify either --local or --parsl-card")
+        log.error("Error: Must specify either --backend local  or --parsl-card")
         sys.exit(1)
 
     # Parse promote plots

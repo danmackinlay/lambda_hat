@@ -118,7 +118,7 @@ uv sync --extra cpu
 # Run the N × M sweep
 uv run lambda-hat workflow llc \
   --config config/experiments_teacher_sweep.yaml \
-  --local
+  --backend local
 ```
 
 This uses the standard workflow entrypoint described in README and `docs/workflows.md`.
@@ -162,7 +162,7 @@ uv run lambda-hat diagnose-targets --experiment teacher_sweep
 # Promote plots into a gallery
 uv run lambda-hat workflow llc \
   --config config/experiments_teacher_sweep.yaml \
-  --local --promote
+  --backend local  --promote
 ```
 
 The workflows/docs already describe diagnose / promote; this just reuses them on your new experiment.
@@ -228,7 +228,7 @@ Then run the sweep:
 # Local
 uv run lambda-hat workflow llc \
   --config config/experiments_teacher_sweep.yaml \
-  --local
+  --backend local
 
 # SLURM (examples)
 uv run lambda-hat workflow llc \
@@ -293,7 +293,7 @@ Run the full grid:
 ```bash
 uv run lambda-hat workflow llc \
   --config config/experiments_teacher_sweep.yaml \
-  --local
+  --backend local
 ```
 
 Use `lambda-hat diagnose-experiment` to generate sampler diagnostics,

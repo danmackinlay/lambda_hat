@@ -88,7 +88,7 @@ or however your current config encodes it.
 Now run:
 
 ```
-uv run lambda-hat workflow llc --local --promote
+uv run lambda-hat workflow llc --backend local  --promote
 ```
 
 You will get:

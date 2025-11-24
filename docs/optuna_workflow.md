@@ -44,14 +44,14 @@ optuna:
 
 **Note on budgets**: Default HMC budget (10 hours) is generous for production-quality references. For local testing or quick iteration, use shorter budgets via CLI:
 ```bash
-uv run lambda-hat workflow optuna --config config/my_optuna_run.yaml --local \
+uv run lambda-hat workflow optuna --config config/my_optuna_run.yaml --backend local  \
     --hmc-budget 1800 --method-budget 300  # 30min HMC, 5min trials
 ```
 
 ### 2. Run locally (testing)
 
 ```bash
-uv run lambda-hat workflow optuna --config config/my_optuna_run.yaml --local
+uv run lambda-hat workflow optuna --config config/my_optuna_run.yaml --backend local
 ```
 
 ### 3. Run on SLURM cluster

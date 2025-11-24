@@ -42,13 +42,13 @@ Then run the full pipeline:
 
 ```bash
 # Execute locally (testing)
-uv run lambda-hat workflow llc --local
+uv run lambda-hat workflow llc --backend local
 
 # Execute on SLURM cluster
 uv run lambda-hat workflow llc --parsl-card config/parsl/slurm/gpu-a100.yaml
 
 # With optional promotion (gallery generation)
-uv run lambda-hat workflow llc --local --promote
+uv run lambda-hat workflow llc --backend local  --promote
 ```
 
 See [Parallel Execution Guide](./parallelism.md) for detailed execution instructions.
@@ -298,7 +298,7 @@ uv run lambda-hat workflow optuna \
 
 ```bash
 # Local testing
-uv run lambda-hat workflow optuna --config config/optuna_demo.yaml --local
+uv run lambda-hat workflow optuna --config config/optuna_demo.yaml --backend local
 
 # SLURM cluster
 uv run lambda-hat workflow optuna --config config/optuna_demo.yaml

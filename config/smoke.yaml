@@ -2,7 +2,7 @@
 # Expected runtime: ~8-12 seconds for 1 target × 4 samplers
 #
 # Usage:
-#   uv run lambda-hat workflow llc --config config/smoke.yaml --local
+#   uv run lambda-hat workflow llc --config config/smoke.yaml --backend local
 #
 # Purpose: Quick manual validation that all samplers work end-to-end
 # (Same config as tests/test_smoke_workflow_config.yaml for consistency)

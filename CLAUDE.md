@@ -39,16 +39,16 @@ uv run lambda-hat --help            # see all commands
 
 ```bash
 # Local execution (testing)
-uv run lambda-hat workflow llc --local
+uv run lambda-hat workflow llc --backend local
 
 # SLURM cluster execution
 uv run lambda-hat workflow llc --parsl-card config/parsl/slurm/gpu-a100.yaml
 
 # With promotion (opt-in via --promote flag)
-uv run lambda-hat workflow llc --local --promote
+uv run lambda-hat workflow llc --backend local  --promote
 
 # Optuna hyperparameter optimization
-uv run lambda-hat workflow optuna --config config/optuna_demo.yaml --local
+uv run lambda-hat workflow optuna --config config/optuna_demo.yaml --backend local
 ```
 
 ## Testing & Lint

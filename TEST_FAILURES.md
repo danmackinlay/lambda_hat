@@ -30,7 +30,7 @@ Installing `uv sync --extra flowvi` resolved the flow-related test failures:
 FileNotFoundError: Parsl card not found: /Users/dan/Source/lambda_hat_threading/parsl_config_local.py
 ```
 
-**Root Cause**: Test fixture `parsl_config` in `tests/conftest.py` returns path to Python file that no longer exists. Should return path to `config/parsl/local.yaml` or use `--local` flag.
+**Root Cause**: Test fixture `parsl_config` in `tests/conftest.py` returns path to Python file that no longer exists. Should return path to `config/parsl/local.yaml` or use `--backend local ` flag.
 
 **Fix Required**: Update test fixtures in `tests/conftest.py`:
 ```python
@@ -88,7 +88,7 @@ subprocess.TimeoutExpired: Command '...' timed out after 60 seconds
 
 **Fix Options**:
 1. **Increase timeout** from 60s to 120s (accommodates HTEX startup)
-2. **Use --local flag correctly** (ensure config loads properly)
+2. **Use --backend local  flag correctly** (ensure config loads properly)
 3. **Optimize worker pool size** in local.yaml (reduce from default)
 
 **Recommendation**: Increase timeout to 120s. Multiprocessing inherently slower than threads due to:
@@ -198,7 +198,7 @@ result = run_vi(
 ### Phase 2: Validate Multiprocessing (Post-Fix)
 Run smoke test manually to verify:
 ```bash
-uv run lambda-hat workflow llc --config tests/test_smoke_workflow_config.yaml --local
+uv run lambda-hat workflow llc --config tests/test_smoke_workflow_config.yaml --backend local
 ```
 
 Expected: Completes in ~90-120s with proper executor routing logs.

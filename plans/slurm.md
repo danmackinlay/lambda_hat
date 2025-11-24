@@ -89,7 +89,7 @@ You do **not** need separate executors per sampler or per dtype.
 Right now your CLI for workflows is:
 
 ```bash
-lambda-hat workflow llc --config ... --local
+lambda-hat workflow llc --config ... --backend local
 # or
 lambda-hat workflow llc --config ... --parsl-card config/parsl/slurm/gpu-a100.yaml
 ```
@@ -142,7 +142,7 @@ if not card_path.exists():
 parsl_cfg = load_parsl_config_from_card(card_path, [f"run_dir={ctx_early.parsl_dir}"])
 ```
 
-And delete the previous `--local` / `--parsl-card` logic in that command. You can keep `workflow optuna` as-is for now, or give it the same `--backend` pattern later.
+And delete the previous `--backend local ` / `--parsl-card` logic in that command. You can keep `workflow optuna` as-is for now, or give it the same `--backend` pattern later.
 
 From the user’s perspective:
 

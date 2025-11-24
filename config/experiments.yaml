@@ -7,7 +7,7 @@
 # The Parsl workflow automatically creates N targets × M samplers jobs.
 #
 # Execution:
-#   Local testing:  uv run lambda-hat workflow llc --config config/experiments.yaml --local
+#   Local testing:  uv run lambda-hat workflow llc --config config/experiments.yaml --backend local
 #   SLURM cluster:  uv run lambda-hat workflow llc --config config/experiments.yaml --parsl-card config/parsl/slurm/gpu-a100.yaml
 #
 # See docs/configuration.md for detailed parameter documentation.

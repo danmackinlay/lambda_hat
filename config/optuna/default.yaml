@@ -112,7 +112,7 @@ search_space:
 
 # Execution configuration
 execution:
-  # Parsl backend (can override via --local or --parsl-card)
+  # Parsl backend (can override via --backend local  or --parsl-card)
   parsl_card: config/parsl/local.yaml
 
   # Time budgets (seconds)

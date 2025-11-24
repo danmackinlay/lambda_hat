@@ -84,7 +84,7 @@ samplers:
 
 **Run it**:
 ```bash
-lambda-hat workflow llc --local
+lambda-hat workflow llc --backend local
 ```
 
 **Implementation notes**: The SGLD loop correctly separates adaptation statistics (using only loss gradient) from the final drift (which includes localization), following Hitchcock and Hoogland (Appendix D.3).
@@ -112,7 +112,7 @@ See [Configuration Reference](./config.md) for all SGLD options under `sample/sa
 
 **Run it**:
 ```bash
-lambda-hat workflow llc --local
+lambda-hat workflow llc --backend local
 ```
 
 See [VI overview](./vi.md) for general concepts and shared configuration.

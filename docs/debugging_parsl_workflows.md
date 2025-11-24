@@ -123,7 +123,7 @@ Now you can see:
 ### Initial Symptom
 
 ```bash
-$ JAX_ENABLE_X64=1 uv run lambda-hat workflow llc --config config/smoke.yaml --local
+$ JAX_ENABLE_X64=1 uv run lambda-hat workflow llc --config config/smoke.yaml --backend local
 
 [1/4] ✗ FAILED: tgt_deaf1a769193/hmc/f4567256
   Error: Dependency failure for task 1. The representative cause is via task 0
@@ -137,7 +137,7 @@ $ JAX_ENABLE_X64=1 uv run lambda-hat workflow llc --config config/smoke.yaml --l
 ### After Adding Error Extraction
 
 ```bash
-$ JAX_ENABLE_X64=1 uv run lambda-hat workflow llc --config config/smoke.yaml --local
+$ JAX_ENABLE_X64=1 uv run lambda-hat workflow llc --config config/smoke.yaml --backend local
 
 [tgt_deaf1a769193_hmc_f4567256] FAILED in worker:
 Traceback (most recent call last):

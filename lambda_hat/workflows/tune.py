@@ -9,7 +9,7 @@ Bayesian optimization workflow that:
 
 Usage:
   # Local testing
-  lambda-hat workflow optuna --config config/optuna/default.yaml --local
+  lambda-hat workflow optuna --config config/optuna/default.yaml --backend local
 
   # SLURM cluster
   lambda-hat workflow optuna --config config/optuna/default.yaml \\

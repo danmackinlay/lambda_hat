@@ -62,6 +62,34 @@ pip install .[cuda12]    # For CUDA 12 (Linux)
 
 ---
 
+
+## Quick start
+
+Run the Smoke test: all samplers on a tiny problem
+
+```bash
+uv run lambda-hat workflow sample \
+  --config config/experiments_smoke.yaml \
+  --backend local
+```
+
+This runs all configured samplers on a single small problem
+(`experiment=smoke_all_samplers`) and is suitable for CI or pre-commit
+smoke testing.
+
+Optional quick diagnostics:
+
+```bash
+# Check everything produced sensible outputs
+uv run lambda-hat diagnose-experiment \
+  --experiment smoke_all_samplers \
+  --mode light
+
+# (if you like) validate the target itself
+uv run lambda-hat diagnose-targets \
+  --experiment smoke_all_samplers
+```
+
 ## Entrypoints
 
 Lambda-Hat provides command-line tools that implement the four-stage workflow.
@@ -177,10 +205,10 @@ This requires diagnostics to exist (run Stage C first, or use `--promote` flag w
 
 ```bash
 # Run workflow with diagnostics and promotion
-uv run lambda-hat workflow llc --backend local --promote
+uv run lambda-hat workflow sample --backend local --promote
 
 # Specify which plots to promote
-uv run lambda-hat workflow llc --backend local --promote \
+uv run lambda-hat workflow sample --backend local --promote \
     --promote-plots trace.png,llc_convergence_combined.png
 ```
 
@@ -199,11 +227,12 @@ We use **Parsl** for the full pipeline. Parsl provides Python-native DAG executi
 
 ```bash
 # Run locally (uses single HTEX, multi-process)
-uv run lambda-hat workflow llc --backend local
+uv run lambda-hat workflow sample --backend local
 
 # Run locally with promotion (generates galleries)
-uv run lambda-hat workflow llc --backend local --promote
+uv run lambda-hat workflow sample --backend local --promote
 ```
+
 
 ### Editing experiments
 
@@ -217,17 +246,17 @@ For SLURM clusters, use the backend flag to select GPU or CPU execution:
 
 ```bash
 # Run on SLURM GPU cluster
-uv run lambda-hat workflow llc --backend slurm-gpu
+uv run lambda-hat workflow sample --backend slurm-gpu
 
 # Run on SLURM CPU cluster with overrides
-uv run lambda-hat workflow llc --backend slurm-cpu \
+uv run lambda-hat workflow sample --backend slurm-cpu \
     --set walltime=04:00:00 --set max_blocks=300
 ```
 
 
 ## Artifact Layout
 
-### Standard workflow** (`lambda-hat workflow llc`):
+### Standard workflow** (`lambda-hat workflow sample`):
 
 ```
 runs/
@@ -303,7 +332,7 @@ results/
         └── p_abc123:vi.pkl          # Optuna study (for resume)
 ```
 
-Artifacts are written to `runs/...` (default for `lambda-hat workflow llc`) or `artifacts/...` (default for `lambda-hat workflow optuna`). These paths are configurable via CLI arguments. The sampler name is included in folder names as a human-useful facet; all other hyperparameters live in `analysis.json` or `metrics.json`.
+Artifacts are written to `runs/...` (default for `lambda-hat workflow sample`) or `artifacts/...` (default for `lambda-hat workflow optuna`). These paths are configurable via CLI arguments. The sampler name is included in folder names as a human-useful facet; all other hyperparameters live in `analysis.json` or `metrics.json`.
 
 ---
 

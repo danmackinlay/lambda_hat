@@ -61,7 +61,7 @@ Lambda-Hat provides two VI implementations:
 
 **Basic usage** (uses MFA by default):
 ```bash
-uv run lambda-hat workflow llc --local
+uv run lambda-hat workflow llc --backend local
 ```
 
 **Custom VI settings** in `config/experiments.yaml`:
@@ -202,10 +202,10 @@ uv run lambda-hat sample --config-yaml config/experiments.yaml --target-id tgt_a
 
 ```bash
 # Run full workflow (builds targets + runs samplers)
-uv run lambda-hat workflow llc --local
+uv run lambda-hat workflow llc --backend local
 
 # With promotion (generate galleries)
-uv run lambda-hat workflow llc --local --promote
+uv run lambda-hat workflow llc --backend local  --promote
 ```
 
 ### Example Configuration
