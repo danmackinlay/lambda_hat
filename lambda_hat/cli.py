@@ -485,10 +485,7 @@ def workflow_optuna(config, backend, config_sets, dry_run):
       # Dry-run to preview config
       lambda-hat workflow tune --config config/optuna/default.yaml \\
           --backend local --dry-run
-    """    import sys
-    from pathlib import Path
-
-    from omegaconf import OmegaConf
+    """
 
     import parsl
 
