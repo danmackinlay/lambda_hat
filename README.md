@@ -80,15 +80,28 @@ smoke testing.
 Optional quick diagnostics:
 
 ```bash
-# Check everything produced sensible outputs
+# Check that sampling processes produced sensible outputs
 uv run lambda-hat diagnose-experiment \
   --experiment smoke_all_samplers \
   --mode light
 
-# (if you like) validate the target itself
+# Compares trained target (student) to generating model (teacher)
 uv run lambda-hat diagnose-targets \
   --experiment smoke_all_samplers
 ```
+**Note:** At present running the sample workflow above does not specify a teacher, so the `diagnose-target` command will return a failure message like:
+
+```bash
+[timestamp] INFO lambda_hat.commands.diagnose_target_cmd: [diagnose-targets] Processing 1 targets in experiment 'smoke_all_samplers'
+[timestamp] INFO lambda_hat.commands.diagnose_target_cmd: [diagnose-targets] [1/1] target_id
+[timestamp] INFO lambda_hat.commands.diagnose_target_cmd: [diagnose-target] Processing target: target_id
+[timestamp] WARNING lambda_hat.commands.diagnose_target_cmd: [diagnose-targets] [1/1] FAILED: target_id - Target target_id has no teacher (teacher: _null) - cannot generate teacher diagnostics
+[timestamp] INFO lambda_hat.commands.diagnose_target_cmd: [diagnose-targets] ✓ Completed: 0 success, 1 failed out of 1 targets
+✓ Processed 1 targets: 0 success, 1 failed
+Failed targets:
+  • target_id
+```
+with `timestamp` a time and `target_id` a 12-long hexadecimal string.
 
 
 ## Entrypoints
