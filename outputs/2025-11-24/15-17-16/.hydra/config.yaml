@@ -1,0 +1,90 @@
+model:
+  in_dim: 32
+  out_dim: 1
+  depth: 3
+  widths: null
+  activation: relu
+  bias: true
+  layernorm: false
+  init: he
+  target_params: 10000
+  hidden: 300
+data:
+  n_data: 20000
+  x_dist: gauss_iso
+  cov_decay: 0.95
+  mixture_k: 4
+  mixture_spread: 2.0
+  x_dim_latent: 2
+  noise_model: gauss
+  noise_scale: 0.1
+  hetero_scale: 0.1
+  student_df: 4.0
+  outlier_frac: 0.05
+  outlier_scale: 2.0
+sampler:
+  chains: 4
+  sgld:
+    steps: 3000000
+    warmup: 0
+    batch_size: 1024
+    step_size: 5.0e-07
+    dtype: float32
+    precond: rmsprop
+    beta1: 0.9
+    beta2: 0.999
+    eps: 1.0e-08
+    bias_correction: true
+    eval_every: 100
+  hmc:
+    draws: 12000
+    warmup: 200
+    num_integration_steps: 10
+    step_size: 0.01
+    dtype: float64
+    adapt_step_size: true
+    target_acceptance: 0.8
+  mclmc:
+    draws: 16000
+    L: 1.0
+    step_size: 0.1
+    dtype: float64
+    diagonal_preconditioning: false
+    num_steps: 500
+    frac_tune1: 0.1
+    frac_tune2: 0.1
+    frac_tune3: 0.1
+    desired_energy_var: 0.0005
+    trust_in_estimate: 1.0
+    num_effective_samples: 150.0
+    integrator: isokinetic_mclachlan
+target: mlp
+seed: 42
+use_tqdm: true
+progress_update_every: 50
+profile_adaptation: true
+teacher:
+  depth: null
+  widths: null
+  activation: null
+  dropout_rate: 0.0
+training:
+  optimizer: adam
+  learning_rate: 0.001
+  erm_steps: 5000
+  early_stop_tol: 1.0e-06
+posterior:
+  loss: mse
+  beta_mode: 1_over_log_n
+  beta0: 1.0
+  prior_radius: null
+  gamma: 1.0
+  prior_center: null
+output:
+  save_plots: true
+  show_plots: false
+samplers_to_run:
+- sgld
+- sgld_basic
+- hmc
+- mclmc

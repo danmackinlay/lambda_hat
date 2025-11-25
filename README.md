@@ -1,6 +1,6 @@
 # Lambda-Hat (λ̂): Experiments in estimating the Local Learning Coefficient
 
-In [Singular Learning Theory (SLT)](https://singularlearningtheory.com), the **Local Learning Coefficient (LLC)** quantifies the effective local dimensionality of a model around a trained optimum.
+In [Singular Learning Theory (SLT)](https://singularlearningtheory.com), the **Local Learning Coefficient (LLC)** quantifies the effective local dimension of a model around a trained optimum.
 
 We target networks with parameter-space dimension up to about $10^5$ which means we can ground-truth against classic samplers like HMC (which we expect to become non-viable as either dimension or cardinality of the dataset increases).
 In this regime we can rely upon classic MCMC to tell us the “true” LLC rather than relying on analytic results for approximate networks such as Deep Linear Networks.
@@ -21,7 +21,7 @@ This separation provides:
 * **Isolation**: Target configuration, sampler hyper-parameters, and diagnostic generation are decoupled
 * **Cost control**: Resource-intensive target building, fast sampling, and optional expensive diagnostics can be optimized independently
 
-In [Singular Learning Theory (SLT)](https://singularlearningtheory.com), the **Local Learning Coefficient (LLC)** quantifies the effective local dimensionality of a model around a trained optimum.
+In [Singular Learning Theory (SLT)](https://singularlearningtheory.com), the **Local Learning Coefficient (LLC)** quantifies the effective local dimension of a model around a trained optimum.
 Estimating it can be tricky. That is what we explore here.
 
 ![](assets/readme/llc_convergence_combined.png)
@@ -52,7 +52,7 @@ Requires Python 3.11+.
 ```bash
 # Using uv (recommended):
 uv venv --python 3.12 && source .venv/bin/activate
-uv sync --extra cpu      # For CPU/macOS
+uv sync --extra cpu      # For CPU/macOS (Detects architecture and installs older JAX for x86 macs)
 uv sync --extra cuda12   # For CUDA 12 (Linux)
 
 # Or using pip:

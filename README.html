@@ -1,0 +1,815 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en"><head>
+
+<meta charset="utf-8">
+<meta name="generator" content="quarto-1.8.25">
+
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+
+
+<title>readme</title>
+<style>
+code{white-space: pre-wrap;}
+span.smallcaps{font-variant: small-caps;}
+div.columns{display: flex; gap: min(4vw, 1.5em);}
+div.column{flex: auto; overflow-x: auto;}
+div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+ul.task-list{list-style: none;}
+ul.task-list li input[type="checkbox"] {
+  width: 0.8em;
+  margin: 0 0.8em 0.2em -1em; /* quarto-specific, see https://github.com/quarto-dev/quarto-cli/issues/4556 */ 
+  vertical-align: middle;
+}
+/* CSS for syntax highlighting */
+html { -webkit-text-size-adjust: 100%; }
+pre > code.sourceCode { white-space: pre; position: relative; }
+pre > code.sourceCode > span { display: inline-block; line-height: 1.25; }
+pre > code.sourceCode > span:empty { height: 1.2em; }
+.sourceCode { overflow: visible; }
+code.sourceCode > span { color: inherit; text-decoration: inherit; }
+div.sourceCode { margin: 1em 0; }
+pre.sourceCode { margin: 0; }
+@media screen {
+div.sourceCode { overflow: auto; }
+}
+@media print {
+pre > code.sourceCode { white-space: pre-wrap; }
+pre > code.sourceCode > span { text-indent: -5em; padding-left: 5em; }
+}
+pre.numberSource code
+  { counter-reset: source-line 0; }
+pre.numberSource code > span
+  { position: relative; left: -4em; counter-increment: source-line; }
+pre.numberSource code > span > a:first-child::before
+  { content: counter(source-line);
+    position: relative; left: -1em; text-align: right; vertical-align: baseline;
+    border: none; display: inline-block;
+    -webkit-touch-callout: none; -webkit-user-select: none;
+    -khtml-user-select: none; -moz-user-select: none;
+    -ms-user-select: none; user-select: none;
+    padding: 0 4px; width: 4em;
+  }
+pre.numberSource { margin-left: 3em;  padding-left: 4px; }
+div.sourceCode
+  {   }
+@media screen {
+pre > code.sourceCode > span > a:first-child::before { text-decoration: underline; }
+}
+</style>
+
+
+<script src="README_files/libs/clipboard/clipboard.min.js"></script>
+<script src="README_files/libs/quarto-html/quarto.js" type="module"></script>
+<script src="README_files/libs/quarto-html/tabsets/tabsets.js" type="module"></script>
+<script src="README_files/libs/quarto-html/axe/axe-check.js" type="module"></script>
+<script src="README_files/libs/quarto-html/popper.min.js"></script>
+<script src="README_files/libs/quarto-html/tippy.umd.min.js"></script>
+<script src="README_files/libs/quarto-html/anchor.min.js"></script>
+<link href="README_files/libs/quarto-html/tippy.css" rel="stylesheet">
+<link href="README_files/libs/quarto-html/quarto-syntax-highlighting-7b89279ff1a6dce999919e0e67d4d9ec.css" rel="stylesheet" id="quarto-text-highlighting-styles">
+<script src="README_files/libs/bootstrap/bootstrap.min.js"></script>
+<link href="README_files/libs/bootstrap/bootstrap-icons.css" rel="stylesheet">
+<link href="README_files/libs/bootstrap/bootstrap-d6a003b94517c951b2d65075d42fb01b.min.css" rel="stylesheet" append-hash="true" id="quarto-bootstrap" data-mode="light">
+
+  <script src="https://cdnjs.cloudflare.com/polyfill/v3/polyfill.min.js?features=es6"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml-full.js" type="text/javascript"></script>
+
+<script type="text/javascript">
+const typesetMath = (el) => {
+  if (window.MathJax) {
+    // MathJax Typeset
+    window.MathJax.typeset([el]);
+  } else if (window.katex) {
+    // KaTeX Render
+    var mathElements = el.getElementsByClassName("math");
+    var macros = [];
+    for (var i = 0; i < mathElements.length; i++) {
+      var texText = mathElements[i].firstChild;
+      if (mathElements[i].tagName == "SPAN" && texText && texText.data) {
+        window.katex.render(texText.data, mathElements[i], {
+          displayMode: mathElements[i].classList.contains('display'),
+          throwOnError: false,
+          macros: macros,
+          fleqn: false
+        });
+      }
+    }
+  }
+}
+window.Quarto = {
+  typesetMath
+};
+</script>
+
+</head>
+
+<body class="fullcontent quarto-light">
+
+<div id="quarto-content" class="page-columns page-rows-contents page-layout-article">
+
+<main class="content" id="quarto-document-content">
+
+
+
+
+<section id="lambda-hat-λ-experiments-in-estimating-the-local-learning-coefficient" class="level1">
+<h1>Lambda-Hat (λ̂): Experiments in estimating the Local Learning Coefficient</h1>
+<p>In <a href="https://singularlearningtheory.com">Singular Learning Theory (SLT)</a>, the <strong>Local Learning Coefficient (LLC)</strong> quantifies the effective local dimensionality of a model around a trained optimum.</p>
+<p>We target networks with parameter-space dimension up to about <span class="math inline">\(10^5\)</span> which means we can ground-truth against classic samplers like HMC (which we expect to become non-viable as either dimension or cardinality of the dataset increases). In this regime we can rely upon classic MCMC to tell us the “true” LLC rather than relying on analytic results for approximate networks such as Deep Linear Networks.</p>
+<section id="concept" class="level2">
+<h2 class="anchored" data-anchor-id="concept">Concept</h2>
+<p>The Local Learning Coefficient (LLC) measures the effective number of parameters a neural network <em>actually</em> learns from data. Lambda-Hat implements a teacher–student framework with a four-stage design:</p>
+<ul>
+<li><strong>Stage A</strong>: Build and train a neural network target once, generating a reproducible <strong>target artifact</strong>.</li>
+<li><strong>Stage B</strong>: Run multiple samplers (MCMC or variational) on the same target with different configurations (fast mode: no diagnostics).</li>
+<li><strong>Stage C</strong>: Generate offline diagnostics from traces (optional, separate from sampling for speed).</li>
+<li><strong>Stage D</strong>: Promote results to galleries and aggregated reports (optional, opt-in via <code>--promote</code>).</li>
+</ul>
+<p>This separation provides:</p>
+<ul>
+<li><strong>Reproducibility</strong>: Same target ID = identical neural network weights and data</li>
+<li><strong>Efficiency</strong>: Train expensive targets once, sample many times, generate diagnostics only when needed</li>
+<li><strong>Isolation</strong>: Target configuration, sampler hyper-parameters, and diagnostic generation are decoupled</li>
+<li><strong>Cost control</strong>: Resource-intensive target building, fast sampling, and optional expensive diagnostics can be optimized independently</li>
+</ul>
+<p>In <a href="https://singularlearningtheory.com">Singular Learning Theory (SLT)</a>, the <strong>Local Learning Coefficient (LLC)</strong> quantifies the effective local dimensionality of a model around a trained optimum. Estimating it can be tricky. That is what we explore here.</p>
+<p><img src="assets/readme/llc_convergence_combined.png" class="img-fluid"></p>
+<ul>
+<li><a href="https://arxiv.org/abs/2308.12108">[2308.12108] The Local Learning Coefficient: A Singularity-Aware Complexity Measure</a></li>
+<li><a href="https://arxiv.org/abs/2507.21449">[2507.21449] From Global to Local: A Scalable Benchmark for Local Posterior Sampling</a></li>
+<li><a href="https://singularlearningtheory.com/">singularlearningtheory.com</a></li>
+</ul>
+<p>This repo provides benchmark estimators of LLC on small but non-trivial neural networks, using standard industrial tooling:</p>
+<ul>
+<li><a href="https://github.com/blackjax-devs/blackjax/tree/1.2.5">BlackJAX</a> for MCMC sampling (HMC, MCLMC, SGLD)</li>
+<li><a href="https://python.arviz.org/">ArviZ</a> for diagnostics</li>
+<li><a href="https://omegaconf.readthedocs.io/">OmegaConf</a> for configuration management</li>
+<li><a href="https://github.com/haiku/haiku">Haiku</a> for neural network definitions</li>
+</ul>
+<p><strong>Supported samplers</strong>: HMC, MCLMC, SGLD, VI (variational inference with MFA or Flow algorithms). <strong>Note</strong>: Flow VI requires <code>uv sync --extra flowvi</code>. See <a href="./docs/vi_flow.md">Flow VI documentation</a> for JAX/vmap PRNG guidance and current status.</p>
+<p>We target networks with dimension up to about <span class="math inline">\(10^5\)</span> which means we can ground-truth against classic samplers like HMC (which we expect to become non-viable in higher dimension or dataset size). In this regime we can rely upon classic MCMC to tell us the “true” LLC rather than relying on analytic results for approximate networks such as Deep Linear Networks.</p>
+</section>
+<section id="installation" class="level2">
+<h2 class="anchored" data-anchor-id="installation">Installation</h2>
+<p>Requires Python 3.11+.</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb1"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Using uv (recommended):</span></span>
+<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> venv <span class="at">--python</span> 3.12 <span class="kw">&amp;&amp;</span> <span class="bu">source</span> .venv/bin/activate</span>
+<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> sync <span class="at">--extra</span> cpu      <span class="co"># For CPU/macOS (Detects architecture and installs older JAX for x86 macs)</span></span>
+<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> sync <span class="at">--extra</span> cuda12   <span class="co"># For CUDA 12 (Linux)</span></span>
+<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-6"><a href="#cb1-6" aria-hidden="true" tabindex="-1"></a><span class="co"># Or using pip:</span></span>
+<span id="cb1-7"><a href="#cb1-7" aria-hidden="true" tabindex="-1"></a><span class="ex">pip</span> install .<span class="pp">[</span><span class="ss">cpu</span><span class="pp">]</span>       <span class="co"># For CPU/macOS</span></span>
+<span id="cb1-8"><a href="#cb1-8" aria-hidden="true" tabindex="-1"></a><span class="ex">pip</span> install .<span class="pp">[</span><span class="ss">cuda12</span><span class="pp">]</span>    <span class="co"># For CUDA 12 (Linux)</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<hr>
+</section>
+<section id="quick-start" class="level2">
+<h2 class="anchored" data-anchor-id="quick-start">Quick start</h2>
+<p>Run the Smoke test: all samplers on a tiny problem</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb2"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> run lambda-hat workflow sample <span class="dt">\</span></span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">--config</span> config/experiments_smoke.yaml <span class="dt">\</span></span>
+<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">--backend</span> local</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<p>This runs all configured samplers on a single small problem (<code>experiment=smoke_all_samplers</code>) and is suitable for CI or pre-commit smoke testing.</p>
+<p>Optional quick diagnostics:</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb3"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Check everything produced sensible outputs</span></span>
+<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> run lambda-hat diagnose-experiment <span class="dt">\</span></span>
+<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">--experiment</span> smoke_all_samplers <span class="dt">\</span></span>
+<span id="cb3-4"><a href="#cb3-4" aria-hidden="true" tabindex="-1"></a>  <span class="at">--mode</span> light</span>
+<span id="cb3-5"><a href="#cb3-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb3-6"><a href="#cb3-6" aria-hidden="true" tabindex="-1"></a><span class="co"># (if you like) validate the target itself</span></span>
+<span id="cb3-7"><a href="#cb3-7" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> run lambda-hat diagnose-targets <span class="dt">\</span></span>
+<span id="cb3-8"><a href="#cb3-8" aria-hidden="true" tabindex="-1"></a>  <span class="at">--experiment</span> smoke_all_samplers</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+</section>
+<section id="entrypoints" class="level2">
+<h2 class="anchored" data-anchor-id="entrypoints">Entrypoints</h2>
+<p>Lambda-Hat provides command-line tools that implement the four-stage workflow. Parsl orchestrates these automatically, but they can also be invoked directly for debugging or custom workflows.</p>
+<section id="lambda-hat-build-stage-a" class="level3">
+<h3 class="anchored" data-anchor-id="lambda-hat-build-stage-a"><code>lambda-hat build</code> (Stage A)</h3>
+<p>Builds a neural network target artifact: trains a model, saves parameters, data, and metadata.</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb4"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> run lambda-hat build <span class="dt">\</span></span>
+<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">--config-yaml</span> config/composed.yaml <span class="dt">\</span></span>
+<span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">--target-id</span> tgt_abc123 <span class="dt">\</span></span>
+<span id="cb4-4"><a href="#cb4-4" aria-hidden="true" tabindex="-1"></a>  <span class="at">--experiment</span> my_experiment</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<p><strong>Outputs:</strong> - <code>meta.json</code> — config snapshot, dimensions, L0, package versions - <code>params.npz</code> — trained neural network parameters - <code>data.npz</code> — training dataset (X, Y) - <code>diagnostics/</code> — teacher comparison plots (when teacher is configured and <code>LAMBDA_HAT_SKIP_DIAGNOSTICS=0</code>) - <code>target_train_test_loss.png</code> — training and test loss curves - <code>target_pred_vs_teacher_train.png</code> — student vs teacher predictions (train set) - <code>target_pred_vs_teacher_test.png</code> — student vs teacher predictions (test set)</p>
+<p><strong>Key features:</strong> - Content-addressed target IDs ensure reproducibility - Precision mode (<code>jax_enable_x64</code>) recorded in metadata - Reference loss L0 computed and stored for LLC estimation - Target diagnostics enabled by default for local builds, disabled for Parsl workflows (set <code>LAMBDA_HAT_SKIP_DIAGNOSTICS=0/1</code> to override)</p>
+<p><strong>Regenerate target diagnostics:</strong></p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb5"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Single target</span></span>
+<span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> run lambda-hat diagnose-target <span class="at">--target-id</span> tgt_abc123 <span class="at">--experiment</span> dev</span>
+<span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb5-4"><a href="#cb5-4" aria-hidden="true" tabindex="-1"></a><span class="co"># All targets in experiment</span></span>
+<span id="cb5-5"><a href="#cb5-5" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> run lambda-hat diagnose-targets <span class="at">--experiment</span> dev</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+</section>
+<section id="lambda-hat-sample-stage-b" class="level3">
+<h3 class="anchored" data-anchor-id="lambda-hat-sample-stage-b"><code>lambda-hat sample</code> (Stage B)</h3>
+<p>Runs a sampler (MCMC or variational) on a pre-built target artifact.</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb6"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> run lambda-hat sample <span class="dt">\</span></span>
+<span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">--config-yaml</span> config/sampler.yaml <span class="dt">\</span></span>
+<span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">--target-id</span> tgt_abc123 <span class="dt">\</span></span>
+<span id="cb6-4"><a href="#cb6-4" aria-hidden="true" tabindex="-1"></a>  <span class="at">--experiment</span> my_experiment</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<p><strong>Outputs:</strong> - <code>traces_raw.npz</code> — Raw trace data (NumPy compressed arrays: LLC samples, scalars) - <code>manifest.json</code> — Run metadata (sampler config, timings, work metrics)</p>
+<p><strong>Note:</strong> Diagnostics (<code>trace.nc</code>, <code>analysis.json</code>, plots) are generated in Stage C via <code>lambda-hat diagnose</code></p>
+<p><strong>Key features:</strong> - Precision guard: fails if sampler x64 setting mismatches target - Automatic minibatching for SGLD-family samplers - Parallel chain execution with JAX’s vmap - Workers write raw traces only; diagnostics generated separately in Stage C</p>
+</section>
+<section id="lambda-hat-diagnose-stage-c" class="level3">
+<h3 class="anchored" data-anchor-id="lambda-hat-diagnose-stage-c"><code>lambda-hat diagnose</code> (Stage C)</h3>
+<p>Generates offline diagnostics (plots and analysis) from completed sampling runs. This is decoupled from sampling for speed.</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb7"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Generate diagnostics for a single run</span></span>
+<span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> run lambda-hat diagnose <span class="dt">\</span></span>
+<span id="cb7-3"><a href="#cb7-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">--run-dir</span> artifacts/experiments/dev/runs/20251120... <span class="dt">\</span></span>
+<span id="cb7-4"><a href="#cb7-4" aria-hidden="true" tabindex="-1"></a>  <span class="at">--mode</span> light</span>
+<span id="cb7-5"><a href="#cb7-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-6"><a href="#cb7-6" aria-hidden="true" tabindex="-1"></a><span class="co"># Generate diagnostics for all runs in an experiment</span></span>
+<span id="cb7-7"><a href="#cb7-7" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> run lambda-hat diagnose-experiment <span class="dt">\</span></span>
+<span id="cb7-8"><a href="#cb7-8" aria-hidden="true" tabindex="-1"></a>  <span class="at">--experiment</span> dev <span class="dt">\</span></span>
+<span id="cb7-9"><a href="#cb7-9" aria-hidden="true" tabindex="-1"></a>  <span class="at">--mode</span> light <span class="dt">\</span></span>
+<span id="cb7-10"><a href="#cb7-10" aria-hidden="true" tabindex="-1"></a>  <span class="at">--samplers</span> sgld,hmc</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<p><strong>Outputs:</strong> - <code>diagnostics/trace.png</code> — ArviZ trace plots - <code>diagnostics/rank.png</code> — Rank plots for convergence - <code>diagnostics/energy.png</code> — Energy plots (HMC/MCLMC) - <code>diagnostics/llc_convergence_combined.png</code> — LLC convergence plot - <code>diagnostics/wnv.png</code> — Work-normalized variance (only in <code>--mode full</code>)</p>
+<p><strong>Modes:</strong> - <code>light</code> (default) — Basic plots (trace, rank, energy, convergence) - <code>full</code> — All plots including expensive work-normalized variance</p>
+</section>
+<section id="lambda-hat-promote-stages-c-2-and-d" class="level3">
+<h3 class="anchored" data-anchor-id="lambda-hat-promote-stages-c-2-and-d"><code>lambda-hat promote</code> (Stages C-2 and D)</h3>
+<p>Creates galleries from diagnostic plots and copies them to <strong>repository-visible locations</strong> for documentation.</p>
+<p><strong>Promotion writes to TWO locations:</strong> 1. <strong>Artifact system</strong>: <code>artifacts/experiments/{exp}/artifacts/promotion/</code> (workflow-specific) 2. <strong>Repository</strong>: <code>docs/assets/{exp}/samplers/</code> and <code>docs/assets/{exp}/targets/</code> (browsable on GitHub)</p>
+<p><strong>Manual promotion commands:</strong></p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb8"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Create an asset gallery with newest run per sampler</span></span>
+<span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> run lambda-hat promote gallery <span class="dt">\</span></span>
+<span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">--runs-root</span> artifacts/experiments/dev/runs <span class="dt">\</span></span>
+<span id="cb8-4"><a href="#cb8-4" aria-hidden="true" tabindex="-1"></a>  <span class="at">--samplers</span> sgld,hmc,mclmc <span class="dt">\</span></span>
+<span id="cb8-5"><a href="#cb8-5" aria-hidden="true" tabindex="-1"></a>  <span class="at">--outdir</span> artifacts/promotion <span class="dt">\</span></span>
+<span id="cb8-6"><a href="#cb8-6" aria-hidden="true" tabindex="-1"></a>  <span class="at">--snippet-out</span> artifacts/promotion/gallery.md</span>
+<span id="cb8-7"><a href="#cb8-7" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb8-8"><a href="#cb8-8" aria-hidden="true" tabindex="-1"></a><span class="co"># Copy specific plots</span></span>
+<span id="cb8-9"><a href="#cb8-9" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> run lambda-hat promote single <span class="dt">\</span></span>
+<span id="cb8-10"><a href="#cb8-10" aria-hidden="true" tabindex="-1"></a>  <span class="at">--runs-root</span> artifacts/experiments/dev/runs <span class="dt">\</span></span>
+<span id="cb8-11"><a href="#cb8-11" aria-hidden="true" tabindex="-1"></a>  <span class="at">--samplers</span> sgld <span class="dt">\</span></span>
+<span id="cb8-12"><a href="#cb8-12" aria-hidden="true" tabindex="-1"></a>  <span class="at">--outdir</span> figures <span class="dt">\</span></span>
+<span id="cb8-13"><a href="#cb8-13" aria-hidden="true" tabindex="-1"></a>  <span class="at">--plot-name</span> llc_convergence_combined.png</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<p><strong>Automated promotion via workflow:</strong></p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb9"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Run workflow with diagnostics and promotion</span></span>
+<span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> run lambda-hat workflow sample <span class="at">--backend</span> local <span class="at">--promote</span></span>
+<span id="cb9-3"><a href="#cb9-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb9-4"><a href="#cb9-4" aria-hidden="true" tabindex="-1"></a><span class="co"># Specify which plots to promote</span></span>
+<span id="cb9-5"><a href="#cb9-5" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> run lambda-hat workflow sample <span class="at">--backend</span> local <span class="at">--promote</span> <span class="dt">\</span></span>
+<span id="cb9-6"><a href="#cb9-6" aria-hidden="true" tabindex="-1"></a>    <span class="at">--promote-plots</span> trace.png,llc_convergence_combined.png</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<p><strong>How it works:</strong> - Without <code>--promote</code>: Runs Stages A + B only (fast, no diagnostics or plots) - With <code>--promote</code>: Runs Stages A + B + C + C-2 + D: - <strong>Stage C</strong>: Generate diagnostics for all sampler runs - <strong>Stage C-2</strong>: Copy target diagnostics to <code>docs/assets/{exp}/targets/</code> - <strong>Stage D</strong>: Create galleries and copy to <code>docs/assets/{exp}/samplers/</code></p>
+<p><strong>Repository outputs</strong> (<code>docs/assets/{experiment}/</code>): - <code>samplers/*.png</code> — Latest sampler plots (hmc.png, vi.png, sgld.png, etc.) - <code>samplers/gallery_*.md</code> — HTML gallery snippets for embedding - <code>targets/{target_id}/diagnostics/*.png</code> — Target comparison plots</p>
+<hr>
+</section>
+</section>
+<section id="orchestration" class="level2">
+<h2 class="anchored" data-anchor-id="orchestration">Orchestration</h2>
+<p>We use <strong>Parsl</strong> for the full pipeline. Parsl provides Python-native DAG execution with better support for dynamic parameter sweeps and HPC cluster integration.</p>
+<section id="quickstart" class="level3">
+<h3 class="anchored" data-anchor-id="quickstart">Quickstart</h3>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb10"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Run locally (uses single HTEX, multi-process)</span></span>
+<span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> run lambda-hat workflow sample <span class="at">--backend</span> local</span>
+<span id="cb10-3"><a href="#cb10-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb10-4"><a href="#cb10-4" aria-hidden="true" tabindex="-1"></a><span class="co"># Run locally with promotion (generates galleries)</span></span>
+<span id="cb10-5"><a href="#cb10-5" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> run lambda-hat workflow sample <span class="at">--backend</span> local <span class="at">--promote</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+</section>
+<section id="editing-experiments" class="level3">
+<h3 class="anchored" data-anchor-id="editing-experiments">Editing experiments</h3>
+<ul>
+<li>Edit <code>config/experiments.yaml</code> to add/remove targets and samplers.</li>
+<li>Parsl computes IDs and directories using the same logic; scripts do <strong>not</strong> invent paths.</li>
+</ul>
+</section>
+<section id="hpc-execution" class="level3">
+<h3 class="anchored" data-anchor-id="hpc-execution">HPC Execution</h3>
+<p>For SLURM clusters, use the backend flag to select GPU or CPU execution:</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb11"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Run on SLURM GPU cluster</span></span>
+<span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> run lambda-hat workflow sample <span class="at">--backend</span> slurm-gpu</span>
+<span id="cb11-3"><a href="#cb11-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb11-4"><a href="#cb11-4" aria-hidden="true" tabindex="-1"></a><span class="co"># Run on SLURM CPU cluster with overrides</span></span>
+<span id="cb11-5"><a href="#cb11-5" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> run lambda-hat workflow sample <span class="at">--backend</span> slurm-cpu <span class="dt">\</span></span>
+<span id="cb11-6"><a href="#cb11-6" aria-hidden="true" tabindex="-1"></a>    <span class="at">--set</span> walltime=04:00:00 <span class="at">--set</span> max_blocks=300</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+</section>
+</section>
+<section id="artifact-layout" class="level2">
+<h2 class="anchored" data-anchor-id="artifact-layout">Artifact Layout</h2>
+<p>Lambda-Hat uses a <strong>three-layer content-addressed artifact system</strong> for reproducible experiments:</p>
+<section id="content-addressed-store-immutable" class="level3">
+<h3 class="anchored" data-anchor-id="content-addressed-store-immutable">1. Content-Addressed Store (immutable)</h3>
+<pre><code>artifacts/store/
+└── objects/sha256/&lt;hash&gt;/
+    ├── payload/                    # Actual artifact content
+    │   ├── data.npz
+    │   ├── params.eqx
+    │   └── diagnostics/
+    └── meta.json                   # Type, schema, provenance</code></pre>
+</section>
+<section id="experiment-runs-symlinks-to-store" class="level3">
+<h3 class="anchored" data-anchor-id="experiment-runs-symlinks-to-store">2. Experiment Runs (symlinks to store)</h3>
+<pre><code>artifacts/experiments/{experiment}/
+├── targets/
+│   └── {target_id} -&gt; ../../../store/objects/sha256/.../
+│       └── payload/
+│           ├── meta.json
+│           ├── data.npz
+│           ├── params.npz
+│           └── diagnostics/        # Target comparison plots
+└── runs/
+    └── {timestamp}-{sampler}-{tag}-{id}/
+        ├── manifest.json           # Run metadata
+        ├── traces_raw.npz          # Raw trace data (NumPy compressed)
+        ├── trace.nc                # ArviZ trace (generated in Stage C)
+        ├── analysis.json           # Metrics (generated in Stage C)
+        └── diagnostics/            # Sampler diagnostics (generated in Stage C)
+            ├── trace.png
+            ├── rank.png
+            └── llc_convergence_combined.png</code></pre>
+</section>
+<section id="repository-visible-assets-promotion-outputs" class="level3">
+<h3 class="anchored" data-anchor-id="repository-visible-assets-promotion-outputs">3. Repository-Visible Assets (promotion outputs)</h3>
+<pre><code>docs/assets/{experiment}/
+├── samplers/
+│   ├── hmc.png                     # Latest sampler plots
+│   ├── vi.png
+│   ├── sgld.png
+│   └── gallery_*.md                # Gallery HTML snippets
+└── targets/
+    └── {target_id}/
+        └── diagnostics/            # Target comparison plots
+            ├── data.png
+            └── loss.png</code></pre>
+<p><strong>Key features:</strong> - <strong>Deduplication</strong>: Identical targets stored once via content addressing - <strong>Reproducibility</strong>: Same target ID = identical weights and data - <strong>Immutability</strong>: Store objects never modified; experiments reference via symlinks - <strong>GitHub browsing</strong>: Promoted assets in <code>docs/assets/</code> visible without artifact system access</p>
+<p>See <a href="docs/output_management.md"><code>docs/output_management.md</code></a> for complete details on the artifact system.</p>
+</section>
+<section id="hyperparameter-optimization" class="level3">
+<h3 class="anchored" data-anchor-id="hyperparameter-optimization">Hyperparameter Optimization</h3>
+<p><strong>NB</strong> untested.</p>
+<p><strong>Optuna workflow</strong> for automated hyperparameter tuning using Bayesian optimization:</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb15"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Optimize hyperparameters locally</span></span>
+<span id="cb15-2"><a href="#cb15-2" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> run lambda-hat workflow optuna <span class="at">--config</span> config/optuna_demo.yaml <span class="at">--backend</span> local</span>
+<span id="cb15-3"><a href="#cb15-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb15-4"><a href="#cb15-4" aria-hidden="true" tabindex="-1"></a><span class="co"># Optimize on SLURM cluster</span></span>
+<span id="cb15-5"><a href="#cb15-5" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> run lambda-hat workflow optuna <span class="at">--config</span> config/optuna_demo.yaml <span class="dt">\</span></span>
+<span id="cb15-6"><a href="#cb15-6" aria-hidden="true" tabindex="-1"></a>    <span class="at">--backend</span> slurm-cpu</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<p><strong>How it works:</strong> 1. Computes HMC reference LLC for each problem (high-quality baseline) 2. Optimizes method hyperparameters (SGLD/VI/MCLMC) to minimize <code>|LLC - LLC_ref|</code> 3. Uses Optuna’s TPE sampler for Bayesian search 4. Results written to <code>results/optuna_trials.parquet</code></p>
+<p><strong>Use cases:</strong> - Find optimal hyperparameters for your problem class - Compare methods under fair time budgets - Automate parameter tuning instead of manual sweeps</p>
+<p>See <a href="docs/optuna_workflow.md"><code>docs/optuna_workflow.md</code></a> for detailed configuration and usage.</p>
+<hr>
+<p><strong>Optuna workflow</strong> (<code>lambda-hat workflow optuna</code>):</p>
+<pre><code>artifacts/
+├── problems/
+│   └── p_abc123/
+│       └── ref.json                 # HMC reference LLC
+└── runs/
+    └── p_abc123/
+        └── vi/
+            ├── r_def456/            # one trial
+            │   ├── manifest.json    # trial hyperparameters
+            │   └── metrics.json     # trial results
+            └── r_ghi789/
+
+results/
+├── optuna_trials.parquet            # all trials aggregated
+└── studies/
+    └── optuna_llc/
+        └── p_abc123:vi.pkl          # Optuna study (for resume)</code></pre>
+<p>Artifacts are written to <code>runs/...</code> (default for <code>lambda-hat workflow sample</code>) or <code>artifacts/...</code> (default for <code>lambda-hat workflow optuna</code>). These paths are configurable via CLI arguments. The sampler name is included in folder names as a human-useful facet; all other hyperparameters live in <code>analysis.json</code> or <code>metrics.json</code>.</p>
+<hr>
+</section>
+</section>
+<section id="reproducibility-precision" class="level2">
+<h2 class="anchored" data-anchor-id="reproducibility-precision">Reproducibility &amp; Precision</h2>
+<ul>
+<li><strong>Same target ID</strong> = identical data and parameters</li>
+<li><strong>Precision guard</strong>: mismatch between target build (<code>jax_enable_x64</code>) and sampling run → error</li>
+<li><strong>Metadata</strong>: package versions and code SHA recorded in <code>meta.json</code></li>
+<li><strong>Parameter shape check</strong>: ensures forward function matches stored parameters</li>
+</ul>
+<section id="jax-precision-conventions" class="level3">
+<h3 class="anchored" data-anchor-id="jax-precision-conventions">JAX precision conventions</h3>
+<ul>
+<li><strong>Target building</strong>: typically float64 for stability</li>
+<li><strong>SGLD</strong>: float32 for efficiency</li>
+<li><strong>HMC/MCLMC</strong>: float64 for accuracy</li>
+</ul>
+</section>
+</section>
+<section id="documentation" class="level2">
+<h2 class="anchored" data-anchor-id="documentation">Documentation</h2>
+<ul>
+<li><a href="./docs/cli.md">CLI Reference</a> — All command-line options (auto-generated)</li>
+<li><a href="./docs/config.md">Configuration Reference</a> — YAML schema and defaults (auto-generated)</li>
+<li><a href="./docs/experiments.md">Experiments Guide</a> — How to compose experiments with overrides</li>
+<li><a href="./docs/samplers.md">Samplers</a> — HMC, MCLMC, SGLD, VI usage</li>
+<li><a href="./docs/vi.md">Variational Inference</a> — VI overview and shared concepts</li>
+<li><a href="./docs/workflows.md">Workflows</a> — Parsl orchestration, sweeps, artifact management</li>
+<li><a href="./docs/compatibility.md">Compatibility</a> — Version pins and API notes</li>
+<li><a href="./docs/optuna_workflow.md">Hyperparameter Optimization</a> — Optuna workflow guide</li>
+<li><a href="./docs/methodology.md">Methodology</a> — Conceptual background</li>
+<li><a href="./docs/output_management.md">Output Management</a> — Detailed artifact system</li>
+<li><a href="./docs/CONTRIBUTING.md">Contributing</a> — Documentation maintenance guide</li>
+</ul>
+</section>
+</section>
+
+</main>
+<!-- /main column -->
+<script id="quarto-html-after-body" type="application/javascript">
+  window.document.addEventListener("DOMContentLoaded", function (event) {
+    const icon = "";
+    const anchorJS = new window.AnchorJS();
+    anchorJS.options = {
+      placement: 'right',
+      icon: icon
+    };
+    anchorJS.add('.anchored');
+    const isCodeAnnotation = (el) => {
+      for (const clz of el.classList) {
+        if (clz.startsWith('code-annotation-')) {                     
+          return true;
+        }
+      }
+      return false;
+    }
+    const onCopySuccess = function(e) {
+      // button target
+      const button = e.trigger;
+      // don't keep focus
+      button.blur();
+      // flash "checked"
+      button.classList.add('code-copy-button-checked');
+      var currentTitle = button.getAttribute("title");
+      button.setAttribute("title", "Copied!");
+      let tooltip;
+      if (window.bootstrap) {
+        button.setAttribute("data-bs-toggle", "tooltip");
+        button.setAttribute("data-bs-placement", "left");
+        button.setAttribute("data-bs-title", "Copied!");
+        tooltip = new bootstrap.Tooltip(button, 
+          { trigger: "manual", 
+            customClass: "code-copy-button-tooltip",
+            offset: [0, -8]});
+        tooltip.show();    
+      }
+      setTimeout(function() {
+        if (tooltip) {
+          tooltip.hide();
+          button.removeAttribute("data-bs-title");
+          button.removeAttribute("data-bs-toggle");
+          button.removeAttribute("data-bs-placement");
+        }
+        button.setAttribute("title", currentTitle);
+        button.classList.remove('code-copy-button-checked');
+      }, 1000);
+      // clear code selection
+      e.clearSelection();
+    }
+    const getTextToCopy = function(trigger) {
+      const outerScaffold = trigger.parentElement.cloneNode(true);
+      const codeEl = outerScaffold.querySelector('code');
+      for (const childEl of codeEl.children) {
+        if (isCodeAnnotation(childEl)) {
+          childEl.remove();
+        }
+      }
+      return codeEl.innerText;
+    }
+    const clipboard = new window.ClipboardJS('.code-copy-button:not([data-in-quarto-modal])', {
+      text: getTextToCopy
+    });
+    clipboard.on('success', onCopySuccess);
+    if (window.document.getElementById('quarto-embedded-source-code-modal')) {
+      const clipboardModal = new window.ClipboardJS('.code-copy-button[data-in-quarto-modal]', {
+        text: getTextToCopy,
+        container: window.document.getElementById('quarto-embedded-source-code-modal')
+      });
+      clipboardModal.on('success', onCopySuccess);
+    }
+      var localhostRegex = new RegExp(/^(?:http|https):\/\/localhost\:?[0-9]*\//);
+      var mailtoRegex = new RegExp(/^mailto:/);
+        var filterRegex = new RegExp('/' + window.location.host + '/');
+      var isInternal = (href) => {
+          return filterRegex.test(href) || localhostRegex.test(href) || mailtoRegex.test(href);
+      }
+      // Inspect non-navigation links and adorn them if external
+     var links = window.document.querySelectorAll('a[href]:not(.nav-link):not(.navbar-brand):not(.toc-action):not(.sidebar-link):not(.sidebar-item-toggle):not(.pagination-link):not(.no-external):not([aria-hidden]):not(.dropdown-item):not(.quarto-navigation-tool):not(.about-link)');
+      for (var i=0; i<links.length; i++) {
+        const link = links[i];
+        if (!isInternal(link.href)) {
+          // undo the damage that might have been done by quarto-nav.js in the case of
+          // links that we want to consider external
+          if (link.dataset.originalHref !== undefined) {
+            link.href = link.dataset.originalHref;
+          }
+        }
+      }
+    function tippyHover(el, contentFn, onTriggerFn, onUntriggerFn) {
+      const config = {
+        allowHTML: true,
+        maxWidth: 500,
+        delay: 100,
+        arrow: false,
+        appendTo: function(el) {
+            return el.parentElement;
+        },
+        interactive: true,
+        interactiveBorder: 10,
+        theme: 'quarto',
+        placement: 'bottom-start',
+      };
+      if (contentFn) {
+        config.content = contentFn;
+      }
+      if (onTriggerFn) {
+        config.onTrigger = onTriggerFn;
+      }
+      if (onUntriggerFn) {
+        config.onUntrigger = onUntriggerFn;
+      }
+      window.tippy(el, config); 
+    }
+    const noterefs = window.document.querySelectorAll('a[role="doc-noteref"]');
+    for (var i=0; i<noterefs.length; i++) {
+      const ref = noterefs[i];
+      tippyHover(ref, function() {
+        // use id or data attribute instead here
+        let href = ref.getAttribute('data-footnote-href') || ref.getAttribute('href');
+        try { href = new URL(href).hash; } catch {}
+        const id = href.replace(/^#\/?/, "");
+        const note = window.document.getElementById(id);
+        if (note) {
+          return note.innerHTML;
+        } else {
+          return "";
+        }
+      });
+    }
+    const xrefs = window.document.querySelectorAll('a.quarto-xref');
+    const processXRef = (id, note) => {
+      // Strip column container classes
+      const stripColumnClz = (el) => {
+        el.classList.remove("page-full", "page-columns");
+        if (el.children) {
+          for (const child of el.children) {
+            stripColumnClz(child);
+          }
+        }
+      }
+      stripColumnClz(note)
+      if (id === null || id.startsWith('sec-')) {
+        // Special case sections, only their first couple elements
+        const container = document.createElement("div");
+        if (note.children && note.children.length > 2) {
+          container.appendChild(note.children[0].cloneNode(true));
+          for (let i = 1; i < note.children.length; i++) {
+            const child = note.children[i];
+            if (child.tagName === "P" && child.innerText === "") {
+              continue;
+            } else {
+              container.appendChild(child.cloneNode(true));
+              break;
+            }
+          }
+          if (window.Quarto?.typesetMath) {
+            window.Quarto.typesetMath(container);
+          }
+          return container.innerHTML
+        } else {
+          if (window.Quarto?.typesetMath) {
+            window.Quarto.typesetMath(note);
+          }
+          return note.innerHTML;
+        }
+      } else {
+        // Remove any anchor links if they are present
+        const anchorLink = note.querySelector('a.anchorjs-link');
+        if (anchorLink) {
+          anchorLink.remove();
+        }
+        if (window.Quarto?.typesetMath) {
+          window.Quarto.typesetMath(note);
+        }
+        if (note.classList.contains("callout")) {
+          return note.outerHTML;
+        } else {
+          return note.innerHTML;
+        }
+      }
+    }
+    for (var i=0; i<xrefs.length; i++) {
+      const xref = xrefs[i];
+      tippyHover(xref, undefined, function(instance) {
+        instance.disable();
+        let url = xref.getAttribute('href');
+        let hash = undefined; 
+        if (url.startsWith('#')) {
+          hash = url;
+        } else {
+          try { hash = new URL(url).hash; } catch {}
+        }
+        if (hash) {
+          const id = hash.replace(/^#\/?/, "");
+          const note = window.document.getElementById(id);
+          if (note !== null) {
+            try {
+              const html = processXRef(id, note.cloneNode(true));
+              instance.setContent(html);
+            } finally {
+              instance.enable();
+              instance.show();
+            }
+          } else {
+            // See if we can fetch this
+            fetch(url.split('#')[0])
+            .then(res => res.text())
+            .then(html => {
+              const parser = new DOMParser();
+              const htmlDoc = parser.parseFromString(html, "text/html");
+              const note = htmlDoc.getElementById(id);
+              if (note !== null) {
+                const html = processXRef(id, note);
+                instance.setContent(html);
+              } 
+            }).finally(() => {
+              instance.enable();
+              instance.show();
+            });
+          }
+        } else {
+          // See if we can fetch a full url (with no hash to target)
+          // This is a special case and we should probably do some content thinning / targeting
+          fetch(url)
+          .then(res => res.text())
+          .then(html => {
+            const parser = new DOMParser();
+            const htmlDoc = parser.parseFromString(html, "text/html");
+            const note = htmlDoc.querySelector('main.content');
+            if (note !== null) {
+              // This should only happen for chapter cross references
+              // (since there is no id in the URL)
+              // remove the first header
+              if (note.children.length > 0 && note.children[0].tagName === "HEADER") {
+                note.children[0].remove();
+              }
+              const html = processXRef(null, note);
+              instance.setContent(html);
+            } 
+          }).finally(() => {
+            instance.enable();
+            instance.show();
+          });
+        }
+      }, function(instance) {
+      });
+    }
+        let selectedAnnoteEl;
+        const selectorForAnnotation = ( cell, annotation) => {
+          let cellAttr = 'data-code-cell="' + cell + '"';
+          let lineAttr = 'data-code-annotation="' +  annotation + '"';
+          const selector = 'span[' + cellAttr + '][' + lineAttr + ']';
+          return selector;
+        }
+        const selectCodeLines = (annoteEl) => {
+          const doc = window.document;
+          const targetCell = annoteEl.getAttribute("data-target-cell");
+          const targetAnnotation = annoteEl.getAttribute("data-target-annotation");
+          const annoteSpan = window.document.querySelector(selectorForAnnotation(targetCell, targetAnnotation));
+          const lines = annoteSpan.getAttribute("data-code-lines").split(",");
+          const lineIds = lines.map((line) => {
+            return targetCell + "-" + line;
+          })
+          let top = null;
+          let height = null;
+          let parent = null;
+          if (lineIds.length > 0) {
+              //compute the position of the single el (top and bottom and make a div)
+              const el = window.document.getElementById(lineIds[0]);
+              top = el.offsetTop;
+              height = el.offsetHeight;
+              parent = el.parentElement.parentElement;
+            if (lineIds.length > 1) {
+              const lastEl = window.document.getElementById(lineIds[lineIds.length - 1]);
+              const bottom = lastEl.offsetTop + lastEl.offsetHeight;
+              height = bottom - top;
+            }
+            if (top !== null && height !== null && parent !== null) {
+              // cook up a div (if necessary) and position it 
+              let div = window.document.getElementById("code-annotation-line-highlight");
+              if (div === null) {
+                div = window.document.createElement("div");
+                div.setAttribute("id", "code-annotation-line-highlight");
+                div.style.position = 'absolute';
+                parent.appendChild(div);
+              }
+              div.style.top = top - 2 + "px";
+              div.style.height = height + 4 + "px";
+              div.style.left = 0;
+              let gutterDiv = window.document.getElementById("code-annotation-line-highlight-gutter");
+              if (gutterDiv === null) {
+                gutterDiv = window.document.createElement("div");
+                gutterDiv.setAttribute("id", "code-annotation-line-highlight-gutter");
+                gutterDiv.style.position = 'absolute';
+                const codeCell = window.document.getElementById(targetCell);
+                const gutter = codeCell.querySelector('.code-annotation-gutter');
+                gutter.appendChild(gutterDiv);
+              }
+              gutterDiv.style.top = top - 2 + "px";
+              gutterDiv.style.height = height + 4 + "px";
+            }
+            selectedAnnoteEl = annoteEl;
+          }
+        };
+        const unselectCodeLines = () => {
+          const elementsIds = ["code-annotation-line-highlight", "code-annotation-line-highlight-gutter"];
+          elementsIds.forEach((elId) => {
+            const div = window.document.getElementById(elId);
+            if (div) {
+              div.remove();
+            }
+          });
+          selectedAnnoteEl = undefined;
+        };
+          // Handle positioning of the toggle
+      window.addEventListener(
+        "resize",
+        throttle(() => {
+          elRect = undefined;
+          if (selectedAnnoteEl) {
+            selectCodeLines(selectedAnnoteEl);
+          }
+        }, 10)
+      );
+      function throttle(fn, ms) {
+      let throttle = false;
+      let timer;
+        return (...args) => {
+          if(!throttle) { // first call gets through
+              fn.apply(this, args);
+              throttle = true;
+          } else { // all the others get throttled
+              if(timer) clearTimeout(timer); // cancel #2
+              timer = setTimeout(() => {
+                fn.apply(this, args);
+                timer = throttle = false;
+              }, ms);
+          }
+        };
+      }
+        // Attach click handler to the DT
+        const annoteDls = window.document.querySelectorAll('dt[data-target-cell]');
+        for (const annoteDlNode of annoteDls) {
+          annoteDlNode.addEventListener('click', (event) => {
+            const clickedEl = event.target;
+            if (clickedEl !== selectedAnnoteEl) {
+              unselectCodeLines();
+              const activeEl = window.document.querySelector('dt[data-target-cell].code-annotation-active');
+              if (activeEl) {
+                activeEl.classList.remove('code-annotation-active');
+              }
+              selectCodeLines(clickedEl);
+              clickedEl.classList.add('code-annotation-active');
+            } else {
+              // Unselect the line
+              unselectCodeLines();
+              clickedEl.classList.remove('code-annotation-active');
+            }
+          });
+        }
+    const findCites = (el) => {
+      const parentEl = el.parentElement;
+      if (parentEl) {
+        const cites = parentEl.dataset.cites;
+        if (cites) {
+          return {
+            el,
+            cites: cites.split(' ')
+          };
+        } else {
+          return findCites(el.parentElement)
+        }
+      } else {
+        return undefined;
+      }
+    };
+    var bibliorefs = window.document.querySelectorAll('a[role="doc-biblioref"]');
+    for (var i=0; i<bibliorefs.length; i++) {
+      const ref = bibliorefs[i];
+      const citeInfo = findCites(ref);
+      if (citeInfo) {
+        tippyHover(citeInfo.el, function() {
+          var popup = window.document.createElement('div');
+          citeInfo.cites.forEach(function(cite) {
+            var citeDiv = window.document.createElement('div');
+            citeDiv.classList.add('hanging-indent');
+            citeDiv.classList.add('csl-entry');
+            var biblioDiv = window.document.getElementById('ref-' + cite);
+            if (biblioDiv) {
+              citeDiv.innerHTML = biblioDiv.innerHTML;
+            }
+            popup.appendChild(citeDiv);
+          });
+          return popup.innerHTML;
+        });
+      }
+    }
+  });
+  </script>
+</div> <!-- /content -->
+
+
+
+
+</body></html>

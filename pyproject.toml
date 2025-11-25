@@ -36,13 +36,18 @@ dependencies = [
 [project.optional-dependencies]
 
 # Local / macOS / CPU (MPS or CPU-only)
+# Auto-selects JAX version based on platform:
+# - Intel Macs (x86_64): JAX 0.4.38 (no 0.7.x wheels available)
+# - Other platforms (ARM Macs, Linux, Windows): JAX 0.7.2
 cpu = [
-  "jax~=0.7.2",               # pulls CPU/MPS wheels from PyPI
+  "jax==0.4.38; platform_machine == 'x86_64' and sys_platform == 'darwin'",
+  "jax~=0.7.2; platform_machine != 'x86_64' or sys_platform != 'darwin'",
 ]
 
 # CUDA 12.x wheels for Linux (bundled CUDA libs; only needs a recent NVIDIA driver)
+# Platform marker prevents resolution on non-Linux (avoids conflicts with cpu extra)
 cuda12 = [
-  "jax[cuda12_local]~=0.7.2"
+  "jax[cuda12_local]~=0.7.2; sys_platform == 'linux'",
 ]
 
 # Normalizing flow VI (requires FlowJAX; Equinox is now in base deps)
