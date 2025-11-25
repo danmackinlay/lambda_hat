@@ -29,7 +29,11 @@ from lambda_hat.targets import TargetBundle
 log = logging.getLogger(__name__)
 
 
-def sample_entry(config_yaml: str, target_id: str, experiment: Optional[str] = None) -> Dict:
+def sample_entry(
+    config_yaml: str,
+    target_id: str,
+    experiment: Optional[str] = None
+) -> Dict:
     """Run sampler on target artifact.
 
     Args:

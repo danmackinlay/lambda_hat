@@ -103,8 +103,7 @@ Failed targets:
 ```
 with `timestamp` a time and `target_id` a 12-long hexadecimal string.
 
-
-## Entrypoints
+## Stages
 
 Lambda-Hat provides command-line tools that implement the four-stage workflow.
 Parsl orchestrates these automatically, but they can also be invoked directly for debugging or custom workflows.
@@ -115,9 +114,9 @@ Builds a neural network target artifact: trains a model, saves parameters, data,
 
 ```bash
 uv run lambda-hat build \
-  --config-yaml config/composed.yaml \
-  --target-id tgt_abc123 \
-  --experiment my_experiment
+  --config-yaml <path-to-config.yaml> \
+  --target-id <target_id> \
+  --experiment <experiment_name>
 ```
 
 **Outputs:**
@@ -140,10 +139,10 @@ uv run lambda-hat build \
 **Regenerate target diagnostics:**
 ```bash
 # Single target
-uv run lambda-hat diagnose-target --target-id tgt_abc123 --experiment dev
+uv run lambda-hat diagnose-target --target-id <target_id> --experiment <experiment_name>
 
 # All targets in experiment
-uv run lambda-hat diagnose-targets --experiment dev
+uv run lambda-hat diagnose-targets --experiment <experiment_name>
 ```
 
 **Note:** In order to run `diagnose-target` you will need a `target_id`. You can run:
@@ -166,9 +165,9 @@ Runs a sampler (MCMC or variational) on a pre-built target artifact.
 
 ```bash
 uv run lambda-hat sample \
-  --config-yaml config/sampler.yaml \
-  --target-id tgt_abc123 \
-  --experiment my_experiment
+  --config-yaml <path-to-composed-config.yaml> \
+  --target-id <target_id> \
+  --experiment <experiment_name>
 ```
 
 **Outputs:**
@@ -179,6 +178,7 @@ uv run lambda-hat sample \
 **Note:** Diagnostics (`trace.nc`, `analysis.json`, plots) are generated in Stage C via `lambda-hat diagnose`
 
 **Key features:**
+
 - Precision guard: fails if sampler x64 setting mismatches target
 - Automatic minibatching for SGLD-family samplers
 - Parallel chain execution with JAX's vmap
@@ -191,15 +191,17 @@ Generates offline diagnostics (plots and analysis) from completed sampling runs.
 ```bash
 # Generate diagnostics for a single run
 uv run lambda-hat diagnose \
-  --run-dir artifacts/experiments/dev/runs/20251120... \
+  --run-dir <path-to-run-directory> \
   --mode light
 
 # Generate diagnostics for all runs in an experiment
 uv run lambda-hat diagnose-experiment \
-  --experiment dev \
+  --experiment <experiment_name> \
   --mode light \
-  --samplers sgld,hmc
+  --samplers <sampler1,sampler2,...>
 ```
+
+**Note:** `<path-to-run-directory>` will look like `artifacts/experiments/<experiment_name>/runs/<run_id>/`
 
 **Outputs:**
 
@@ -210,6 +212,7 @@ uv run lambda-hat diagnose-experiment \
 - `diagnostics/wnv.png` — Work-normalized variance (only in `--mode full`)
 
 **Modes:**
+
 - `light` (default) — Basic plots (trace, rank, energy, convergence)
 - `full` — All plots including expensive work-normalized variance
 
@@ -218,24 +221,26 @@ uv run lambda-hat diagnose-experiment \
 Creates galleries from diagnostic plots and copies them to **repository-visible locations** for documentation.
 
 **Promotion writes to TWO locations:**
+
 1. **Artifact system**: `artifacts/experiments/{exp}/artifacts/promotion/` (workflow-specific)
 2. **Repository**: `docs/assets/{exp}/samplers/` and `docs/assets/{exp}/targets/` (browsable on GitHub)
 
 **Manual promotion commands:**
+
 ```bash
 # Create an asset gallery with newest run per sampler
 uv run lambda-hat promote gallery \
-  --runs-root artifacts/experiments/dev/runs \
-  --samplers sgld,hmc,mclmc \
-  --outdir artifacts/promotion \
-  --snippet-out artifacts/promotion/gallery.md
+  --runs-root <path-to-runs-directory> \
+  --samplers <sampler1,sampler2,...> \
+  --outdir <output-directory> \
+  --snippet-out <path-to-gallery.md>
 
 # Copy specific plots
 uv run lambda-hat promote single \
-  --runs-root artifacts/experiments/dev/runs \
-  --samplers sgld \
-  --outdir figures \
-  --plot-name llc_convergence_combined.png
+  --runs-root <path-to-runs-directory> \
+  --samplers <sampler_name> \
+  --outdir <output-directory> \
+  --plot-name <plot_filename>
 ```
 
 **Automated promotion via workflow:**
