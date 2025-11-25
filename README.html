@@ -114,7 +114,7 @@ window.Quarto = {
 
 <section id="lambda-hat-λ-experiments-in-estimating-the-local-learning-coefficient" class="level1">
 <h1>Lambda-Hat (λ̂): Experiments in estimating the Local Learning Coefficient</h1>
-<p>In <a href="https://singularlearningtheory.com">Singular Learning Theory (SLT)</a>, the <strong>Local Learning Coefficient (LLC)</strong> quantifies the effective local dimensionality of a model around a trained optimum.</p>
+<p>In <a href="https://singularlearningtheory.com">Singular Learning Theory (SLT)</a>, the <strong>Local Learning Coefficient (LLC)</strong> quantifies the effective local dimension of a model around a trained optimum.</p>
 <p>We target networks with parameter-space dimension up to about <span class="math inline">\(10^5\)</span> which means we can ground-truth against classic samplers like HMC (which we expect to become non-viable as either dimension or cardinality of the dataset increases). In this regime we can rely upon classic MCMC to tell us the “true” LLC rather than relying on analytic results for approximate networks such as Deep Linear Networks.</p>
 <section id="concept" class="level2">
 <h2 class="anchored" data-anchor-id="concept">Concept</h2>
@@ -132,7 +132,7 @@ window.Quarto = {
 <li><strong>Isolation</strong>: Target configuration, sampler hyper-parameters, and diagnostic generation are decoupled</li>
 <li><strong>Cost control</strong>: Resource-intensive target building, fast sampling, and optional expensive diagnostics can be optimized independently</li>
 </ul>
-<p>In <a href="https://singularlearningtheory.com">Singular Learning Theory (SLT)</a>, the <strong>Local Learning Coefficient (LLC)</strong> quantifies the effective local dimensionality of a model around a trained optimum. Estimating it can be tricky. That is what we explore here.</p>
+<p>In <a href="https://singularlearningtheory.com">Singular Learning Theory (SLT)</a>, the <strong>Local Learning Coefficient (LLC)</strong> quantifies the effective local dimension of a model around a trained optimum. Estimating it can be tricky. That is what we explore here.</p>
 <p><img src="assets/readme/llc_convergence_combined.png" class="img-fluid"></p>
 <ul>
 <li><a href="https://arxiv.org/abs/2308.12108">[2308.12108] The Local Learning Coefficient: A Singularity-Aware Complexity Measure</a></li>
@@ -170,14 +170,24 @@ window.Quarto = {
 <span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">--backend</span> local</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <p>This runs all configured samplers on a single small problem (<code>experiment=smoke_all_samplers</code>) and is suitable for CI or pre-commit smoke testing.</p>
 <p>Optional quick diagnostics:</p>
-<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb3"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Check everything produced sensible outputs</span></span>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb3"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Check that sampling processes produced sensible outputs</span></span>
 <span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> run lambda-hat diagnose-experiment <span class="dt">\</span></span>
 <span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">--experiment</span> smoke_all_samplers <span class="dt">\</span></span>
 <span id="cb3-4"><a href="#cb3-4" aria-hidden="true" tabindex="-1"></a>  <span class="at">--mode</span> light</span>
 <span id="cb3-5"><a href="#cb3-5" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb3-6"><a href="#cb3-6" aria-hidden="true" tabindex="-1"></a><span class="co"># (if you like) validate the target itself</span></span>
+<span id="cb3-6"><a href="#cb3-6" aria-hidden="true" tabindex="-1"></a><span class="co"># Compares trained target (student) to generating model (teacher)</span></span>
 <span id="cb3-7"><a href="#cb3-7" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> run lambda-hat diagnose-targets <span class="dt">\</span></span>
 <span id="cb3-8"><a href="#cb3-8" aria-hidden="true" tabindex="-1"></a>  <span class="at">--experiment</span> smoke_all_samplers</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<p><strong>Note:</strong> At present running the sample workflow above does not specify a teacher, so the <code>diagnose-target</code> command will return a failure message like:</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb4"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="ex">[timestamp]</span> INFO lambda_hat.commands.diagnose_target_cmd: <span class="pp">[</span><span class="ss">diagnose</span><span class="pp">-</span><span class="ss">targets</span><span class="pp">]</span> Processing 1 targets in experiment <span class="st">'smoke_all_samplers'</span></span>
+<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a><span class="ex">[timestamp]</span> INFO lambda_hat.commands.diagnose_target_cmd: <span class="pp">[</span><span class="ss">diagnose</span><span class="pp">-</span><span class="ss">targets</span><span class="pp">]</span> <span class="pp">[</span><span class="ss">1/1</span><span class="pp">]</span> target_id</span>
+<span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a><span class="ex">[timestamp]</span> INFO lambda_hat.commands.diagnose_target_cmd: <span class="pp">[</span><span class="ss">diagnose</span><span class="pp">-</span><span class="ss">target</span><span class="pp">]</span> Processing target: target_id</span>
+<span id="cb4-4"><a href="#cb4-4" aria-hidden="true" tabindex="-1"></a><span class="ex">[timestamp]</span> WARNING lambda_hat.commands.diagnose_target_cmd: <span class="pp">[</span><span class="ss">diagnose</span><span class="pp">-</span><span class="ss">targets</span><span class="pp">]</span> <span class="pp">[</span><span class="ss">1/1</span><span class="pp">]</span> FAILED: target_id <span class="at">-</span> Target target_id has no teacher <span class="er">(</span><span class="ex">teacher:</span> _null<span class="kw">)</span> <span class="ex">-</span> cannot generate teacher diagnostics</span>
+<span id="cb4-5"><a href="#cb4-5" aria-hidden="true" tabindex="-1"></a><span class="ex">[timestamp]</span> INFO lambda_hat.commands.diagnose_target_cmd: <span class="pp">[</span><span class="ss">diagnose</span><span class="pp">-</span><span class="ss">targets</span><span class="pp">]</span> ✓ Completed: 0 success, 1 failed out of 1 targets</span>
+<span id="cb4-6"><a href="#cb4-6" aria-hidden="true" tabindex="-1"></a><span class="ex">✓</span> Processed 1 targets: 0 success, 1 failed</span>
+<span id="cb4-7"><a href="#cb4-7" aria-hidden="true" tabindex="-1"></a><span class="ex">Failed</span> targets:</span>
+<span id="cb4-8"><a href="#cb4-8" aria-hidden="true" tabindex="-1"></a>  <span class="ex">•</span> target_id</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<p>with <code>timestamp</code> a time and <code>target_id</code> a 12-long hexadecimal string.</p>
 </section>
 <section id="entrypoints" class="level2">
 <h2 class="anchored" data-anchor-id="entrypoints">Entrypoints</h2>
@@ -185,26 +195,26 @@ window.Quarto = {
 <section id="lambda-hat-build-stage-a" class="level3">
 <h3 class="anchored" data-anchor-id="lambda-hat-build-stage-a"><code>lambda-hat build</code> (Stage A)</h3>
 <p>Builds a neural network target artifact: trains a model, saves parameters, data, and metadata.</p>
-<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb4"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> run lambda-hat build <span class="dt">\</span></span>
-<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">--config-yaml</span> config/composed.yaml <span class="dt">\</span></span>
-<span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">--target-id</span> tgt_abc123 <span class="dt">\</span></span>
-<span id="cb4-4"><a href="#cb4-4" aria-hidden="true" tabindex="-1"></a>  <span class="at">--experiment</span> my_experiment</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb5"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> run lambda-hat build <span class="dt">\</span></span>
+<span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">--config-yaml</span> config/composed.yaml <span class="dt">\</span></span>
+<span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">--target-id</span> tgt_abc123 <span class="dt">\</span></span>
+<span id="cb5-4"><a href="#cb5-4" aria-hidden="true" tabindex="-1"></a>  <span class="at">--experiment</span> my_experiment</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <p><strong>Outputs:</strong> - <code>meta.json</code> — config snapshot, dimensions, L0, package versions - <code>params.npz</code> — trained neural network parameters - <code>data.npz</code> — training dataset (X, Y) - <code>diagnostics/</code> — teacher comparison plots (when teacher is configured and <code>LAMBDA_HAT_SKIP_DIAGNOSTICS=0</code>) - <code>target_train_test_loss.png</code> — training and test loss curves - <code>target_pred_vs_teacher_train.png</code> — student vs teacher predictions (train set) - <code>target_pred_vs_teacher_test.png</code> — student vs teacher predictions (test set)</p>
 <p><strong>Key features:</strong> - Content-addressed target IDs ensure reproducibility - Precision mode (<code>jax_enable_x64</code>) recorded in metadata - Reference loss L0 computed and stored for LLC estimation - Target diagnostics enabled by default for local builds, disabled for Parsl workflows (set <code>LAMBDA_HAT_SKIP_DIAGNOSTICS=0/1</code> to override)</p>
 <p><strong>Regenerate target diagnostics:</strong></p>
-<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb5"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Single target</span></span>
-<span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> run lambda-hat diagnose-target <span class="at">--target-id</span> tgt_abc123 <span class="at">--experiment</span> dev</span>
-<span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb5-4"><a href="#cb5-4" aria-hidden="true" tabindex="-1"></a><span class="co"># All targets in experiment</span></span>
-<span id="cb5-5"><a href="#cb5-5" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> run lambda-hat diagnose-targets <span class="at">--experiment</span> dev</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb6"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Single target</span></span>
+<span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> run lambda-hat diagnose-target <span class="at">--target-id</span> tgt_abc123 <span class="at">--experiment</span> dev</span>
+<span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-4"><a href="#cb6-4" aria-hidden="true" tabindex="-1"></a><span class="co"># All targets in experiment</span></span>
+<span id="cb6-5"><a href="#cb6-5" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> run lambda-hat diagnose-targets <span class="at">--experiment</span> dev</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </section>
 <section id="lambda-hat-sample-stage-b" class="level3">
 <h3 class="anchored" data-anchor-id="lambda-hat-sample-stage-b"><code>lambda-hat sample</code> (Stage B)</h3>
 <p>Runs a sampler (MCMC or variational) on a pre-built target artifact.</p>
-<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb6"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> run lambda-hat sample <span class="dt">\</span></span>
-<span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">--config-yaml</span> config/sampler.yaml <span class="dt">\</span></span>
-<span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">--target-id</span> tgt_abc123 <span class="dt">\</span></span>
-<span id="cb6-4"><a href="#cb6-4" aria-hidden="true" tabindex="-1"></a>  <span class="at">--experiment</span> my_experiment</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb7"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> run lambda-hat sample <span class="dt">\</span></span>
+<span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">--config-yaml</span> config/sampler.yaml <span class="dt">\</span></span>
+<span id="cb7-3"><a href="#cb7-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">--target-id</span> tgt_abc123 <span class="dt">\</span></span>
+<span id="cb7-4"><a href="#cb7-4" aria-hidden="true" tabindex="-1"></a>  <span class="at">--experiment</span> my_experiment</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <p><strong>Outputs:</strong> - <code>traces_raw.npz</code> — Raw trace data (NumPy compressed arrays: LLC samples, scalars) - <code>manifest.json</code> — Run metadata (sampler config, timings, work metrics)</p>
 <p><strong>Note:</strong> Diagnostics (<code>trace.nc</code>, <code>analysis.json</code>, plots) are generated in Stage C via <code>lambda-hat diagnose</code></p>
 <p><strong>Key features:</strong> - Precision guard: fails if sampler x64 setting mismatches target - Automatic minibatching for SGLD-family samplers - Parallel chain execution with JAX’s vmap - Workers write raw traces only; diagnostics generated separately in Stage C</p>
@@ -212,16 +222,16 @@ window.Quarto = {
 <section id="lambda-hat-diagnose-stage-c" class="level3">
 <h3 class="anchored" data-anchor-id="lambda-hat-diagnose-stage-c"><code>lambda-hat diagnose</code> (Stage C)</h3>
 <p>Generates offline diagnostics (plots and analysis) from completed sampling runs. This is decoupled from sampling for speed.</p>
-<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb7"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Generate diagnostics for a single run</span></span>
-<span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> run lambda-hat diagnose <span class="dt">\</span></span>
-<span id="cb7-3"><a href="#cb7-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">--run-dir</span> artifacts/experiments/dev/runs/20251120... <span class="dt">\</span></span>
-<span id="cb7-4"><a href="#cb7-4" aria-hidden="true" tabindex="-1"></a>  <span class="at">--mode</span> light</span>
-<span id="cb7-5"><a href="#cb7-5" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb7-6"><a href="#cb7-6" aria-hidden="true" tabindex="-1"></a><span class="co"># Generate diagnostics for all runs in an experiment</span></span>
-<span id="cb7-7"><a href="#cb7-7" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> run lambda-hat diagnose-experiment <span class="dt">\</span></span>
-<span id="cb7-8"><a href="#cb7-8" aria-hidden="true" tabindex="-1"></a>  <span class="at">--experiment</span> dev <span class="dt">\</span></span>
-<span id="cb7-9"><a href="#cb7-9" aria-hidden="true" tabindex="-1"></a>  <span class="at">--mode</span> light <span class="dt">\</span></span>
-<span id="cb7-10"><a href="#cb7-10" aria-hidden="true" tabindex="-1"></a>  <span class="at">--samplers</span> sgld,hmc</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb8"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Generate diagnostics for a single run</span></span>
+<span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> run lambda-hat diagnose <span class="dt">\</span></span>
+<span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">--run-dir</span> artifacts/experiments/dev/runs/20251120... <span class="dt">\</span></span>
+<span id="cb8-4"><a href="#cb8-4" aria-hidden="true" tabindex="-1"></a>  <span class="at">--mode</span> light</span>
+<span id="cb8-5"><a href="#cb8-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb8-6"><a href="#cb8-6" aria-hidden="true" tabindex="-1"></a><span class="co"># Generate diagnostics for all runs in an experiment</span></span>
+<span id="cb8-7"><a href="#cb8-7" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> run lambda-hat diagnose-experiment <span class="dt">\</span></span>
+<span id="cb8-8"><a href="#cb8-8" aria-hidden="true" tabindex="-1"></a>  <span class="at">--experiment</span> dev <span class="dt">\</span></span>
+<span id="cb8-9"><a href="#cb8-9" aria-hidden="true" tabindex="-1"></a>  <span class="at">--mode</span> light <span class="dt">\</span></span>
+<span id="cb8-10"><a href="#cb8-10" aria-hidden="true" tabindex="-1"></a>  <span class="at">--samplers</span> sgld,hmc</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <p><strong>Outputs:</strong> - <code>diagnostics/trace.png</code> — ArviZ trace plots - <code>diagnostics/rank.png</code> — Rank plots for convergence - <code>diagnostics/energy.png</code> — Energy plots (HMC/MCLMC) - <code>diagnostics/llc_convergence_combined.png</code> — LLC convergence plot - <code>diagnostics/wnv.png</code> — Work-normalized variance (only in <code>--mode full</code>)</p>
 <p><strong>Modes:</strong> - <code>light</code> (default) — Basic plots (trace, rank, energy, convergence) - <code>full</code> — All plots including expensive work-normalized variance</p>
 </section>
@@ -230,26 +240,26 @@ window.Quarto = {
 <p>Creates galleries from diagnostic plots and copies them to <strong>repository-visible locations</strong> for documentation.</p>
 <p><strong>Promotion writes to TWO locations:</strong> 1. <strong>Artifact system</strong>: <code>artifacts/experiments/{exp}/artifacts/promotion/</code> (workflow-specific) 2. <strong>Repository</strong>: <code>docs/assets/{exp}/samplers/</code> and <code>docs/assets/{exp}/targets/</code> (browsable on GitHub)</p>
 <p><strong>Manual promotion commands:</strong></p>
-<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb8"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Create an asset gallery with newest run per sampler</span></span>
-<span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> run lambda-hat promote gallery <span class="dt">\</span></span>
-<span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">--runs-root</span> artifacts/experiments/dev/runs <span class="dt">\</span></span>
-<span id="cb8-4"><a href="#cb8-4" aria-hidden="true" tabindex="-1"></a>  <span class="at">--samplers</span> sgld,hmc,mclmc <span class="dt">\</span></span>
-<span id="cb8-5"><a href="#cb8-5" aria-hidden="true" tabindex="-1"></a>  <span class="at">--outdir</span> artifacts/promotion <span class="dt">\</span></span>
-<span id="cb8-6"><a href="#cb8-6" aria-hidden="true" tabindex="-1"></a>  <span class="at">--snippet-out</span> artifacts/promotion/gallery.md</span>
-<span id="cb8-7"><a href="#cb8-7" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb8-8"><a href="#cb8-8" aria-hidden="true" tabindex="-1"></a><span class="co"># Copy specific plots</span></span>
-<span id="cb8-9"><a href="#cb8-9" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> run lambda-hat promote single <span class="dt">\</span></span>
-<span id="cb8-10"><a href="#cb8-10" aria-hidden="true" tabindex="-1"></a>  <span class="at">--runs-root</span> artifacts/experiments/dev/runs <span class="dt">\</span></span>
-<span id="cb8-11"><a href="#cb8-11" aria-hidden="true" tabindex="-1"></a>  <span class="at">--samplers</span> sgld <span class="dt">\</span></span>
-<span id="cb8-12"><a href="#cb8-12" aria-hidden="true" tabindex="-1"></a>  <span class="at">--outdir</span> figures <span class="dt">\</span></span>
-<span id="cb8-13"><a href="#cb8-13" aria-hidden="true" tabindex="-1"></a>  <span class="at">--plot-name</span> llc_convergence_combined.png</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb9"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Create an asset gallery with newest run per sampler</span></span>
+<span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> run lambda-hat promote gallery <span class="dt">\</span></span>
+<span id="cb9-3"><a href="#cb9-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">--runs-root</span> artifacts/experiments/dev/runs <span class="dt">\</span></span>
+<span id="cb9-4"><a href="#cb9-4" aria-hidden="true" tabindex="-1"></a>  <span class="at">--samplers</span> sgld,hmc,mclmc <span class="dt">\</span></span>
+<span id="cb9-5"><a href="#cb9-5" aria-hidden="true" tabindex="-1"></a>  <span class="at">--outdir</span> artifacts/promotion <span class="dt">\</span></span>
+<span id="cb9-6"><a href="#cb9-6" aria-hidden="true" tabindex="-1"></a>  <span class="at">--snippet-out</span> artifacts/promotion/gallery.md</span>
+<span id="cb9-7"><a href="#cb9-7" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb9-8"><a href="#cb9-8" aria-hidden="true" tabindex="-1"></a><span class="co"># Copy specific plots</span></span>
+<span id="cb9-9"><a href="#cb9-9" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> run lambda-hat promote single <span class="dt">\</span></span>
+<span id="cb9-10"><a href="#cb9-10" aria-hidden="true" tabindex="-1"></a>  <span class="at">--runs-root</span> artifacts/experiments/dev/runs <span class="dt">\</span></span>
+<span id="cb9-11"><a href="#cb9-11" aria-hidden="true" tabindex="-1"></a>  <span class="at">--samplers</span> sgld <span class="dt">\</span></span>
+<span id="cb9-12"><a href="#cb9-12" aria-hidden="true" tabindex="-1"></a>  <span class="at">--outdir</span> figures <span class="dt">\</span></span>
+<span id="cb9-13"><a href="#cb9-13" aria-hidden="true" tabindex="-1"></a>  <span class="at">--plot-name</span> llc_convergence_combined.png</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <p><strong>Automated promotion via workflow:</strong></p>
-<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb9"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Run workflow with diagnostics and promotion</span></span>
-<span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> run lambda-hat workflow sample <span class="at">--backend</span> local <span class="at">--promote</span></span>
-<span id="cb9-3"><a href="#cb9-3" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb9-4"><a href="#cb9-4" aria-hidden="true" tabindex="-1"></a><span class="co"># Specify which plots to promote</span></span>
-<span id="cb9-5"><a href="#cb9-5" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> run lambda-hat workflow sample <span class="at">--backend</span> local <span class="at">--promote</span> <span class="dt">\</span></span>
-<span id="cb9-6"><a href="#cb9-6" aria-hidden="true" tabindex="-1"></a>    <span class="at">--promote-plots</span> trace.png,llc_convergence_combined.png</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb10"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Run workflow with diagnostics and promotion</span></span>
+<span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> run lambda-hat workflow sample <span class="at">--backend</span> local <span class="at">--promote</span></span>
+<span id="cb10-3"><a href="#cb10-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb10-4"><a href="#cb10-4" aria-hidden="true" tabindex="-1"></a><span class="co"># Specify which plots to promote</span></span>
+<span id="cb10-5"><a href="#cb10-5" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> run lambda-hat workflow sample <span class="at">--backend</span> local <span class="at">--promote</span> <span class="dt">\</span></span>
+<span id="cb10-6"><a href="#cb10-6" aria-hidden="true" tabindex="-1"></a>    <span class="at">--promote-plots</span> trace.png,llc_convergence_combined.png</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <p><strong>How it works:</strong> - Without <code>--promote</code>: Runs Stages A + B only (fast, no diagnostics or plots) - With <code>--promote</code>: Runs Stages A + B + C + C-2 + D: - <strong>Stage C</strong>: Generate diagnostics for all sampler runs - <strong>Stage C-2</strong>: Copy target diagnostics to <code>docs/assets/{exp}/targets/</code> - <strong>Stage D</strong>: Create galleries and copy to <code>docs/assets/{exp}/samplers/</code></p>
 <p><strong>Repository outputs</strong> (<code>docs/assets/{experiment}/</code>): - <code>samplers/*.png</code> — Latest sampler plots (hmc.png, vi.png, sgld.png, etc.) - <code>samplers/gallery_*.md</code> — HTML gallery snippets for embedding - <code>targets/{target_id}/diagnostics/*.png</code> — Target comparison plots</p>
 <hr>
@@ -260,11 +270,11 @@ window.Quarto = {
 <p>We use <strong>Parsl</strong> for the full pipeline. Parsl provides Python-native DAG execution with better support for dynamic parameter sweeps and HPC cluster integration.</p>
 <section id="quickstart" class="level3">
 <h3 class="anchored" data-anchor-id="quickstart">Quickstart</h3>
-<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb10"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Run locally (uses single HTEX, multi-process)</span></span>
-<span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> run lambda-hat workflow sample <span class="at">--backend</span> local</span>
-<span id="cb10-3"><a href="#cb10-3" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb10-4"><a href="#cb10-4" aria-hidden="true" tabindex="-1"></a><span class="co"># Run locally with promotion (generates galleries)</span></span>
-<span id="cb10-5"><a href="#cb10-5" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> run lambda-hat workflow sample <span class="at">--backend</span> local <span class="at">--promote</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb11"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Run locally (uses single HTEX, multi-process)</span></span>
+<span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> run lambda-hat workflow sample <span class="at">--backend</span> local</span>
+<span id="cb11-3"><a href="#cb11-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb11-4"><a href="#cb11-4" aria-hidden="true" tabindex="-1"></a><span class="co"># Run locally with promotion (generates galleries)</span></span>
+<span id="cb11-5"><a href="#cb11-5" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> run lambda-hat workflow sample <span class="at">--backend</span> local <span class="at">--promote</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </section>
 <section id="editing-experiments" class="level3">
 <h3 class="anchored" data-anchor-id="editing-experiments">Editing experiments</h3>
@@ -276,12 +286,12 @@ window.Quarto = {
 <section id="hpc-execution" class="level3">
 <h3 class="anchored" data-anchor-id="hpc-execution">HPC Execution</h3>
 <p>For SLURM clusters, use the backend flag to select GPU or CPU execution:</p>
-<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb11"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Run on SLURM GPU cluster</span></span>
-<span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> run lambda-hat workflow sample <span class="at">--backend</span> slurm-gpu</span>
-<span id="cb11-3"><a href="#cb11-3" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb11-4"><a href="#cb11-4" aria-hidden="true" tabindex="-1"></a><span class="co"># Run on SLURM CPU cluster with overrides</span></span>
-<span id="cb11-5"><a href="#cb11-5" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> run lambda-hat workflow sample <span class="at">--backend</span> slurm-cpu <span class="dt">\</span></span>
-<span id="cb11-6"><a href="#cb11-6" aria-hidden="true" tabindex="-1"></a>    <span class="at">--set</span> walltime=04:00:00 <span class="at">--set</span> max_blocks=300</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb12"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Run on SLURM GPU cluster</span></span>
+<span id="cb12-2"><a href="#cb12-2" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> run lambda-hat workflow sample <span class="at">--backend</span> slurm-gpu</span>
+<span id="cb12-3"><a href="#cb12-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb12-4"><a href="#cb12-4" aria-hidden="true" tabindex="-1"></a><span class="co"># Run on SLURM CPU cluster with overrides</span></span>
+<span id="cb12-5"><a href="#cb12-5" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> run lambda-hat workflow sample <span class="at">--backend</span> slurm-cpu <span class="dt">\</span></span>
+<span id="cb12-6"><a href="#cb12-6" aria-hidden="true" tabindex="-1"></a>    <span class="at">--set</span> walltime=04:00:00 <span class="at">--set</span> max_blocks=300</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </section>
 </section>
 <section id="artifact-layout" class="level2">
@@ -338,12 +348,12 @@ window.Quarto = {
 <h3 class="anchored" data-anchor-id="hyperparameter-optimization">Hyperparameter Optimization</h3>
 <p><strong>NB</strong> untested.</p>
 <p><strong>Optuna workflow</strong> for automated hyperparameter tuning using Bayesian optimization:</p>
-<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb15"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Optimize hyperparameters locally</span></span>
-<span id="cb15-2"><a href="#cb15-2" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> run lambda-hat workflow optuna <span class="at">--config</span> config/optuna_demo.yaml <span class="at">--backend</span> local</span>
-<span id="cb15-3"><a href="#cb15-3" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb15-4"><a href="#cb15-4" aria-hidden="true" tabindex="-1"></a><span class="co"># Optimize on SLURM cluster</span></span>
-<span id="cb15-5"><a href="#cb15-5" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> run lambda-hat workflow optuna <span class="at">--config</span> config/optuna_demo.yaml <span class="dt">\</span></span>
-<span id="cb15-6"><a href="#cb15-6" aria-hidden="true" tabindex="-1"></a>    <span class="at">--backend</span> slurm-cpu</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb16"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb16-1"><a href="#cb16-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Optimize hyperparameters locally</span></span>
+<span id="cb16-2"><a href="#cb16-2" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> run lambda-hat workflow optuna <span class="at">--config</span> config/optuna_demo.yaml <span class="at">--backend</span> local</span>
+<span id="cb16-3"><a href="#cb16-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb16-4"><a href="#cb16-4" aria-hidden="true" tabindex="-1"></a><span class="co"># Optimize on SLURM cluster</span></span>
+<span id="cb16-5"><a href="#cb16-5" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> run lambda-hat workflow optuna <span class="at">--config</span> config/optuna_demo.yaml <span class="dt">\</span></span>
+<span id="cb16-6"><a href="#cb16-6" aria-hidden="true" tabindex="-1"></a>    <span class="at">--backend</span> slurm-cpu</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <p><strong>How it works:</strong> 1. Computes HMC reference LLC for each problem (high-quality baseline) 2. Optimizes method hyperparameters (SGLD/VI/MCLMC) to minimize <code>|LLC - LLC_ref|</code> 3. Uses Optuna’s TPE sampler for Bayesian search 4. Results written to <code>results/optuna_trials.parquet</code></p>
 <p><strong>Use cases:</strong> - Find optimal hyperparameters for your problem class - Compare methods under fair time budgets - Automate parameter tuning instead of manual sweeps</p>
 <p>See <a href="docs/optuna_workflow.md"><code>docs/optuna_workflow.md</code></a> for detailed configuration and usage.</p>
