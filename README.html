@@ -273,12 +273,20 @@ window.Quarto = {
 <li><code>diagnostics/llc_convergence_combined.png</code> — LLC convergence plot</li>
 <li><code>diagnostics/wnv.png</code> — Work-normalized variance (only in <code>--mode full</code>)</li>
 </ul>
-<p><strong>Modes:</strong> - <code>light</code> (default) — Basic plots (trace, rank, energy, convergence) - <code>full</code> — All plots including expensive work-normalized variance</p>
+<p><strong>Modes:</strong></p>
+<ul>
+<li><code>light</code> (default) — Basic plots (trace, rank, energy, convergence)</li>
+<li><code>full</code> — All plots including expensive work-normalized variance</li>
+</ul>
 </section>
 <section id="lambda-hat-promote-stages-c-2-and-d" class="level3">
 <h3 class="anchored" data-anchor-id="lambda-hat-promote-stages-c-2-and-d"><code>lambda-hat promote</code> (Stages C-2 and D)</h3>
 <p>Creates galleries from diagnostic plots and copies them to <strong>repository-visible locations</strong> for documentation.</p>
-<p><strong>Promotion writes to TWO locations:</strong> 1. <strong>Artifact system</strong>: <code>artifacts/experiments/{exp}/artifacts/promotion/</code> (workflow-specific) 2. <strong>Repository</strong>: <code>docs/assets/{exp}/samplers/</code> and <code>docs/assets/{exp}/targets/</code> (browsable on GitHub)</p>
+<p><strong>Promotion writes to TWO locations:</strong></p>
+<ol type="1">
+<li><strong>Artifact system</strong>: <code>artifacts/experiments/{exp}/artifacts/promotion/</code> (workflow-specific)</li>
+<li><strong>Repository</strong>: <code>docs/assets/{exp}/samplers/</code> and <code>docs/assets/{exp}/targets/</code> (browsable on GitHub)</li>
+</ol>
 <p><strong>Manual promotion commands:</strong></p>
 <div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb11"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Create an asset gallery with newest run per sampler</span></span>
 <span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> run lambda-hat promote gallery <span class="dt">\</span></span>
@@ -300,8 +308,22 @@ window.Quarto = {
 <span id="cb12-4"><a href="#cb12-4" aria-hidden="true" tabindex="-1"></a><span class="co"># Specify which plots to promote</span></span>
 <span id="cb12-5"><a href="#cb12-5" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> run lambda-hat workflow sample <span class="at">--backend</span> local <span class="at">--promote</span> <span class="dt">\</span></span>
 <span id="cb12-6"><a href="#cb12-6" aria-hidden="true" tabindex="-1"></a>    <span class="at">--promote-plots</span> trace.png,llc_convergence_combined.png</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
-<p><strong>How it works:</strong> - Without <code>--promote</code>: Runs Stages A + B only (fast, no diagnostics or plots) - With <code>--promote</code>: Runs Stages A + B + C + C-2 + D: - <strong>Stage C</strong>: Generate diagnostics for all sampler runs - <strong>Stage C-2</strong>: Copy target diagnostics to <code>docs/assets/{exp}/targets/</code> - <strong>Stage D</strong>: Create galleries and copy to <code>docs/assets/{exp}/samplers/</code></p>
-<p><strong>Repository outputs</strong> (<code>docs/assets/{experiment}/</code>): - <code>samplers/*.png</code> — Latest sampler plots (hmc.png, vi.png, sgld.png, etc.) - <code>samplers/gallery_*.md</code> — HTML gallery snippets for embedding - <code>targets/{target_id}/diagnostics/*.png</code> — Target comparison plots</p>
+<p><strong>How it works:</strong></p>
+<ul>
+<li>Without <code>--promote</code>: Runs Stages A + B only (fast, no diagnostics or plots)</li>
+<li>With <code>--promote</code>: Runs Stages A + B + C + C-2 + D:
+<ul>
+<li><strong>Stage C</strong>: Generate diagnostics for all sampler runs</li>
+<li><strong>Stage C-2</strong>: Copy target diagnostics to <code>docs/assets/{exp}/targets/</code></li>
+<li><strong>Stage D</strong>: Create galleries and copy to <code>docs/assets/{exp}/samplers/</code></li>
+</ul></li>
+</ul>
+<p><strong>Repository outputs</strong> (<code>docs/assets/{experiment}/</code>):</p>
+<ul>
+<li><code>samplers/*.png</code> — Latest sampler plots (hmc.png, vi.png, sgld.png, etc.)</li>
+<li><code>samplers/gallery_*.md</code> — HTML gallery snippets for embedding</li>
+<li><code>targets/{target_id}/diagnostics/*.png</code> — Target comparison plots</li>
+</ul>
 <hr>
 </section>
 </section>
@@ -394,8 +416,19 @@ window.Quarto = {
 <span id="cb18-4"><a href="#cb18-4" aria-hidden="true" tabindex="-1"></a><span class="co"># Optimize on SLURM cluster</span></span>
 <span id="cb18-5"><a href="#cb18-5" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> run lambda-hat workflow optuna <span class="at">--config</span> config/optuna_demo.yaml <span class="dt">\</span></span>
 <span id="cb18-6"><a href="#cb18-6" aria-hidden="true" tabindex="-1"></a>    <span class="at">--backend</span> slurm-cpu</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
-<p><strong>How it works:</strong> 1. Computes HMC reference LLC for each problem (high-quality baseline) 2. Optimizes method hyperparameters (SGLD/VI/MCLMC) to minimize <code>|LLC - LLC_ref|</code> 3. Uses Optuna’s TPE sampler for Bayesian search 4. Results written to <code>results/optuna_trials.parquet</code></p>
-<p><strong>Use cases:</strong> - Find optimal hyperparameters for your problem class - Compare methods under fair time budgets - Automate parameter tuning instead of manual sweeps</p>
+<p><strong>How it works:</strong></p>
+<ol type="1">
+<li>Computes HMC reference LLC for each problem (high-quality baseline)</li>
+<li>Optimizes method hyperparameters (SGLD/VI/MCLMC) to minimize <code>|LLC - LLC_ref|</code></li>
+<li>Uses Optuna’s TPE sampler for Bayesian search</li>
+<li>Results written to <code>results/optuna_trials.parquet</code></li>
+</ol>
+<p><strong>Use cases:</strong></p>
+<ul>
+<li>Find optimal hyperparameters for your problem class</li>
+<li>Compare methods under fair time budgets</li>
+<li>Automate parameter tuning instead of manual sweeps</li>
+</ul>
 <p>See <a href="docs/optuna_workflow.md"><code>docs/optuna_workflow.md</code></a> for detailed configuration and usage.</p>
 <hr>
 <p><strong>Optuna workflow</strong> (<code>lambda-hat workflow optuna</code>):</p>

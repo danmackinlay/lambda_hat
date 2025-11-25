@@ -254,6 +254,7 @@ uv run lambda-hat workflow sample --backend local --promote \
 ```
 
 **How it works:**
+
 - Without `--promote`: Runs Stages A + B only (fast, no diagnostics or plots)
 - With `--promote`: Runs Stages A + B + C + C-2 + D:
   - **Stage C**: Generate diagnostics for all sampler runs
@@ -261,6 +262,7 @@ uv run lambda-hat workflow sample --backend local --promote \
   - **Stage D**: Create galleries and copy to `docs/assets/{exp}/samplers/`
 
 **Repository outputs** (`docs/assets/{experiment}/`):
+
 - `samplers/*.png` — Latest sampler plots (hmc.png, vi.png, sgld.png, etc.)
 - `samplers/gallery_*.md` — HTML gallery snippets for embedding
 - `targets/{target_id}/diagnostics/*.png` — Target comparison plots
@@ -379,12 +381,14 @@ uv run lambda-hat workflow optuna --config config/optuna_demo.yaml \
 ```
 
 **How it works:**
+
 1. Computes HMC reference LLC for each problem (high-quality baseline)
 2. Optimizes method hyperparameters (SGLD/VI/MCLMC) to minimize `|LLC - LLC_ref|`
 3. Uses Optuna's TPE sampler for Bayesian search
 4. Results written to `results/optuna_trials.parquet`
 
 **Use cases:**
+
 - Find optimal hyperparameters for your problem class
 - Compare methods under fair time budgets
 - Automate parameter tuning instead of manual sweeps
