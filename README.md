@@ -121,6 +121,7 @@ uv run lambda-hat build \
 ```
 
 **Outputs:**
+
 - `meta.json` — config snapshot, dimensions, L0, package versions
 - `params.npz` — trained neural network parameters
 - `data.npz` — training dataset (X, Y)
@@ -130,6 +131,7 @@ uv run lambda-hat build \
   - `target_pred_vs_teacher_test.png` — student vs teacher predictions (test set)
 
 **Key features:**
+
 - Content-addressed target IDs ensure reproducibility
 - Precision mode (`jax_enable_x64`) recorded in metadata
 - Reference loss L0 computed and stored for LLC estimation
@@ -156,6 +158,7 @@ uv run lambda-hat sample \
 ```
 
 **Outputs:**
+
 - `traces_raw.npz` — Raw trace data (NumPy compressed arrays: LLC samples, scalars)
 - `manifest.json` — Run metadata (sampler config, timings, work metrics)
 
@@ -185,6 +188,7 @@ uv run lambda-hat diagnose-experiment \
 ```
 
 **Outputs:**
+
 - `diagnostics/trace.png` — ArviZ trace plots
 - `diagnostics/rank.png` — Rank plots for convergence
 - `diagnostics/energy.png` — Energy plots (HMC/MCLMC)

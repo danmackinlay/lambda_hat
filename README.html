@@ -199,7 +199,18 @@ window.Quarto = {
 <span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">--config-yaml</span> config/composed.yaml <span class="dt">\</span></span>
 <span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">--target-id</span> tgt_abc123 <span class="dt">\</span></span>
 <span id="cb5-4"><a href="#cb5-4" aria-hidden="true" tabindex="-1"></a>  <span class="at">--experiment</span> my_experiment</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
-<p><strong>Outputs:</strong> - <code>meta.json</code> — config snapshot, dimensions, L0, package versions - <code>params.npz</code> — trained neural network parameters - <code>data.npz</code> — training dataset (X, Y) - <code>diagnostics/</code> — teacher comparison plots (when teacher is configured and <code>LAMBDA_HAT_SKIP_DIAGNOSTICS=0</code>) - <code>target_train_test_loss.png</code> — training and test loss curves - <code>target_pred_vs_teacher_train.png</code> — student vs teacher predictions (train set) - <code>target_pred_vs_teacher_test.png</code> — student vs teacher predictions (test set)</p>
+<p><strong>Outputs:</strong></p>
+<ul>
+<li><code>meta.json</code> — config snapshot, dimensions, L0, package versions</li>
+<li><code>params.npz</code> — trained neural network parameters</li>
+<li><code>data.npz</code> — training dataset (X, Y)</li>
+<li><code>diagnostics/</code> — teacher comparison plots (when teacher is configured and <code>LAMBDA_HAT_SKIP_DIAGNOSTICS=0</code>)
+<ul>
+<li><code>target_train_test_loss.png</code> — training and test loss curves</li>
+<li><code>target_pred_vs_teacher_train.png</code> — student vs teacher predictions (train set)</li>
+<li><code>target_pred_vs_teacher_test.png</code> — student vs teacher predictions (test set)</li>
+</ul></li>
+</ul>
 <p><strong>Key features:</strong> - Content-addressed target IDs ensure reproducibility - Precision mode (<code>jax_enable_x64</code>) recorded in metadata - Reference loss L0 computed and stored for LLC estimation - Target diagnostics enabled by default for local builds, disabled for Parsl workflows (set <code>LAMBDA_HAT_SKIP_DIAGNOSTICS=0/1</code> to override)</p>
 <p><strong>Regenerate target diagnostics:</strong></p>
 <div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb6"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Single target</span></span>
