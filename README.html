@@ -211,7 +211,13 @@ window.Quarto = {
 <li><code>target_pred_vs_teacher_test.png</code> — student vs teacher predictions (test set)</li>
 </ul></li>
 </ul>
-<p><strong>Key features:</strong> - Content-addressed target IDs ensure reproducibility - Precision mode (<code>jax_enable_x64</code>) recorded in metadata - Reference loss L0 computed and stored for LLC estimation - Target diagnostics enabled by default for local builds, disabled for Parsl workflows (set <code>LAMBDA_HAT_SKIP_DIAGNOSTICS=0/1</code> to override)</p>
+<p><strong>Key features:</strong></p>
+<ul>
+<li>Content-addressed <code>target_id</code>s ensure reproducibility</li>
+<li>Precision mode (<code>jax_enable_x64</code>) recorded in metadata</li>
+<li>Reference loss L0 computed and stored for LLC estimation</li>
+<li>Target diagnostics enabled by default for local builds, disabled for Parsl workflows (set <code>LAMBDA_HAT_SKIP_DIAGNOSTICS=0/1</code> to override)</li>
+</ul>
 <p><strong>Regenerate target diagnostics:</strong></p>
 <div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb6"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Single target</span></span>
 <span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> run lambda-hat diagnose-target <span class="at">--target-id</span> tgt_abc123 <span class="at">--experiment</span> dev</span>
@@ -226,7 +232,11 @@ window.Quarto = {
 <span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">--config-yaml</span> config/sampler.yaml <span class="dt">\</span></span>
 <span id="cb7-3"><a href="#cb7-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">--target-id</span> tgt_abc123 <span class="dt">\</span></span>
 <span id="cb7-4"><a href="#cb7-4" aria-hidden="true" tabindex="-1"></a>  <span class="at">--experiment</span> my_experiment</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
-<p><strong>Outputs:</strong> - <code>traces_raw.npz</code> — Raw trace data (NumPy compressed arrays: LLC samples, scalars) - <code>manifest.json</code> — Run metadata (sampler config, timings, work metrics)</p>
+<p><strong>Outputs:</strong></p>
+<ul>
+<li><code>traces_raw.npz</code> — Raw trace data (NumPy compressed arrays: LLC samples, scalars)</li>
+<li><code>manifest.json</code> — Run metadata (sampler config, timings, work metrics)</li>
+</ul>
 <p><strong>Note:</strong> Diagnostics (<code>trace.nc</code>, <code>analysis.json</code>, plots) are generated in Stage C via <code>lambda-hat diagnose</code></p>
 <p><strong>Key features:</strong> - Precision guard: fails if sampler x64 setting mismatches target - Automatic minibatching for SGLD-family samplers - Parallel chain execution with JAX’s vmap - Workers write raw traces only; diagnostics generated separately in Stage C</p>
 </section>
@@ -243,7 +253,14 @@ window.Quarto = {
 <span id="cb8-8"><a href="#cb8-8" aria-hidden="true" tabindex="-1"></a>  <span class="at">--experiment</span> dev <span class="dt">\</span></span>
 <span id="cb8-9"><a href="#cb8-9" aria-hidden="true" tabindex="-1"></a>  <span class="at">--mode</span> light <span class="dt">\</span></span>
 <span id="cb8-10"><a href="#cb8-10" aria-hidden="true" tabindex="-1"></a>  <span class="at">--samplers</span> sgld,hmc</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
-<p><strong>Outputs:</strong> - <code>diagnostics/trace.png</code> — ArviZ trace plots - <code>diagnostics/rank.png</code> — Rank plots for convergence - <code>diagnostics/energy.png</code> — Energy plots (HMC/MCLMC) - <code>diagnostics/llc_convergence_combined.png</code> — LLC convergence plot - <code>diagnostics/wnv.png</code> — Work-normalized variance (only in <code>--mode full</code>)</p>
+<p><strong>Outputs:</strong></p>
+<ul>
+<li><code>diagnostics/trace.png</code> — ArviZ trace plots</li>
+<li><code>diagnostics/rank.png</code> — Rank plots for convergence</li>
+<li><code>diagnostics/energy.png</code> — Energy plots (HMC/MCLMC)</li>
+<li><code>diagnostics/llc_convergence_combined.png</code> — LLC convergence plot</li>
+<li><code>diagnostics/wnv.png</code> — Work-normalized variance (only in <code>--mode full</code>)</li>
+</ul>
 <p><strong>Modes:</strong> - <code>light</code> (default) — Basic plots (trace, rank, energy, convergence) - <code>full</code> — All plots including expensive work-normalized variance</p>
 </section>
 <section id="lambda-hat-promote-stages-c-2-and-d" class="level3">

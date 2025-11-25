@@ -132,9 +132,9 @@ uv run lambda-hat build \
 
 **Key features:**
 
-- Content-addressed target IDs ensure reproducibility
+- Content-addressed `target_id`s ensure reproducibility
 - Precision mode (`jax_enable_x64`) recorded in metadata
-- Reference loss L0 computed and stored for LLC estimation
+- Reference loss `L0` computed and stored for LLC estimation
 - Target diagnostics enabled by default for local builds, disabled for Parsl workflows (set `LAMBDA_HAT_SKIP_DIAGNOSTICS=0/1` to override)
 
 **Regenerate target diagnostics:**
@@ -144,6 +144,20 @@ uv run lambda-hat diagnose-target --target-id tgt_abc123 --experiment dev
 
 # All targets in experiment
 uv run lambda-hat diagnose-targets --experiment dev
+```
+
+**Note:** In order to run `diagnose-target` you will need a `target_id`. You can run:
+
+```bash
+uv run lambda-hat artifacts ls
+```
+
+to return a list of generated artifacts from which you can pull `target_i~d`s.
+
+For a list of experiments, e.g. `dev`, which you've run:
+
+```bash
+ls artifacts/experiments/
 ```
 
 ### `lambda-hat sample` (Stage B)
