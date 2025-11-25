@@ -152,7 +152,7 @@ uv run lambda-hat diagnose-targets --experiment dev
 uv run lambda-hat artifacts ls
 ```
 
-to return a list of generated artifacts from which you can pull `target_i~d`s.
+to return a list of generated artifacts from which you can pull `target_id`s.
 
 For a list of experiments, e.g. `dev`, which you've run:
 
