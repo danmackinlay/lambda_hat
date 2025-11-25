@@ -180,7 +180,13 @@ def diagnose_experiment_entry(
     # Find all run directories (filter to sampler runs only via manifest.json presence)
     # This excludes Parsl orchestration dirs and build_target dirs
     run_dirs = sorted(
-        [d for d in experiment_runs_dir.iterdir() if d.is_dir() and (d / "manifest.json").exists()]
+        [
+            d
+            for d in experiment_runs_dir.iterdir()
+            if d.is_dir()
+            and (d / "manifest.json").exists()
+            and "build_target" not in d.name  # Exclude build_target runs (Stage A)
+        ]
     )
 
     if samplers:
