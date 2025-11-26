@@ -306,8 +306,34 @@ samplers:
 ```
 
 **Launch TensorBoard**:
+
 ```bash
 tensorboard --logdir runs/targets/<tgt>/run_vi_<rid>/diagnostics/tb
+```
+
+### Quick Check
+
+The config `config/check_tensorboard.yaml` runs a more limited run of the two faster samplers, MCLMC and VI, with `tensorboard: true`.
+
+To run all stages with this this config:
+
+```bash
+uv run lambda-hat workflow sample \
+  --config config/check_tensorboard.yaml \
+  --backend local
+```
+
+To check function afterwards:
+
+```bash
+# Find the VI run directory
+find artifacts/experiments/check_tensorboard/runs -name "*vi*" -type d
+
+# Check if TensorBoard logs exist
+ls -la artifacts/experiments/check_tensorboard/runs/*vi*/tb/
+
+# Launch TensorBoard
+tensorboard --logdir artifacts/experiments/check_tensorboard/tb
 ```
 
 ### Key Metrics (Shared Across VI Methods)

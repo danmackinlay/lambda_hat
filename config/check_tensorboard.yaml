@@ -1,0 +1,33 @@
+# TensorBoard test config
+# Fast test with only the two fastest samplers (MCLMC and VI)
+# VI has TensorBoard enabled for monitoring
+#
+# Usage:
+#   uv run lambda-hat workflow sample --config config/check_tensorboard.yaml --backend local
+#
+# Purpose: Quick test to verify TensorBoard logging works for VI
+
+experiment: "check_tensorboard"
+jax_enable_x64: true  # Required for MCLMC float64 precision
+
+targets:
+  - model: small
+    data: small
+    teacher: _null
+    seed: 42
+
+samplers:
+  # MCLMC: Fast MCMC sampler
+  - name: mclmc
+    seed: 1
+
+  # VI with TensorBoard enabled
+  - name: vi
+    seed: 2
+    overrides:
+      algo: mfa
+      M: 8
+      r: 2
+      tensorboard: true  # Enable TensorBoard logging
+      steps: 1000        # Reduced steps for faster testing
+
