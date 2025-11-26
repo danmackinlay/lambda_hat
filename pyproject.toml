@@ -30,6 +30,7 @@ dependencies = [
     "pyarrow>=14.0.0",
     "pyyaml>=6.0",
     "scipy>=1.11",
+    "tensorboard>=2.15.0",
     "tensorboardx>=2.6.4",
 ]
 
