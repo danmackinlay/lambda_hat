@@ -77,14 +77,13 @@ This command:
   - **HMC** (Hamiltonian Monte Carlo)
   - **MCLMC** (Microcanonical Langevin Monte Carlo)
   - **SGLD** (Stochastic Gradient Langevin Dynamics)
-  - **VI** (Variational Inference with MFA by default)
-- VI uses **MFA by default** (see `lambda_hat/conf/sample/sampler/vi.yaml`)
+  - **VI** (Variational Inference **MFA by default** see `lambda_hat/conf/sample/sampler/vi.yaml`)
 
-To test samplers you may
+To test samplers you may...
 
 **Configure VI hyperparameters** in your experiments config (`config/experiments.yaml`):
 
-All VI configuration options (set via `overrides` under `sampler.vi`):
+All VI configuration options set via `overrides` under `sampler.vi`:
 
 **Example configurations:**
 
@@ -156,6 +155,7 @@ where:
 ### Temperature β
 
 Controls the sampling temperature:
+
 - $\beta = 1 / \log(n)$ (default, `beta_mode: "1_over_log_n"`)
 - $\beta = 1$ (full posterior, `beta_mode: "manual"`, `beta0: 1.0`)
 - Larger $\beta$ begets sharper posterior (colder)
@@ -183,10 +183,10 @@ uv run lambda-hat sample \
 
 ```bash
 # Run full workflow (builds targets + runs samplers)
-uv run lambda-hat workflow llc --backend local
+uv run lambda-hat workflow sample --backend local
 
 # With promotion (generate galleries)
-uv run lambda-hat workflow llc --backend local  --promote
+uv run lambda-hat workflow sample --backend local  --promote
 ```
 
 ### Example Configuration

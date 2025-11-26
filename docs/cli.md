@@ -16,11 +16,15 @@ Options:
   --help  Show this message and exit.
 
 Commands:
-  artifacts  Artifact management (GC, list, TensorBoard).
-  build      Build target artifact (Stage A: train neural network).
-  promote    Promote plots to galleries (Stage C).
-  sample     Run sampler on target (Stage B: MCMC/VI inference).
-  workflow   Parsl workflow orchestration.
+  artifacts            Artifact management (GC, list, TensorBoard).
+  build                Build target artifact (Stage A: train neural network).
+  diagnose             Generate offline diagnostics for a completed...
+  diagnose-experiment  Generate diagnostics for all runs in an experiment...
+  diagnose-target      Generate target diagnostics (teacher comparison...
+  diagnose-targets     Generate target diagnostics for all targets in an...
+  promote              Promote plots to galleries (Stage D).
+  sample               Run sampler on target (Stage B: MCMC/VI inference).
+  workflow             Parsl workflow orchestration.
 
 ```
 
@@ -47,10 +51,14 @@ Usage: cli sample [OPTIONS]
   Run sampler on target (Stage B: MCMC/VI inference).
 
 Options:
-  --config-yaml PATH  Path to composed YAML config  [required]
-  --target-id TEXT    Target ID to sample from  [required]
-  --experiment TEXT   Experiment name (defaults from config then env)
-  --help              Show this message and exit.
+  --config-yaml PATH            Path to composed YAML config  [required]
+  --target-id TEXT              Target ID to sample from  [required]
+  --experiment TEXT             Experiment name (defaults from config then env)
+  --diagnose                    Run diagnostics immediately after sampling
+                                (convenience flag)
+  --diagnose-mode [light|full]  Diagnostic depth if --diagnose is used
+                                (light=basic, full=expensive plots)
+  --help                        Show this message and exit.
 
 ```
 
@@ -76,7 +84,7 @@ Commands:
 ```text
 Usage: cli promote [OPTIONS] COMMAND [ARGS]...
 
-  Promote plots to galleries (Stage C).
+  Promote plots to galleries (Stage D).
 
 Options:
   --help  Show this message and exit.
@@ -98,7 +106,7 @@ Options:
   --help  Show this message and exit.
 
 Commands:
-  llc     Run N×M targets×samplers workflow.
-  optuna  Run Bayesian hyperparameter optimization.
+  sample  Run N×M targets×samplers workflow.
+  tune    Run Bayesian hyperparameter optimization (YAML-first).
 
 ```
