@@ -184,16 +184,131 @@ window.Quarto = {
 <li><strong>HMC</strong> (Hamiltonian Monte Carlo)</li>
 <li><strong>MCLMC</strong> (Microcanonical Langevin Monte Carlo)</li>
 <li><strong>SGLD</strong> (Stochastic Gradient Langevin Dynamics)</li>
-<li><strong>VI</strong> (Variational Inference with MFA by default)</li>
+<li><strong>VI</strong> (Variational Inference <strong>MFA by default</strong> see <code>lambda_hat/conf/sample/sampler/vi.yaml</code>)</li>
 </ul></li>
-<li>VI uses <strong>MFA by default</strong> (see <code>lambda_hat/conf/sample/sampler/vi.yaml</code>)</li>
 </ul>
+<p>To test samplers you may…</p>
 <p><strong>Configure VI hyperparameters</strong> in your experiments config (<code>config/experiments.yaml</code>):</p>
-<p>All VI configuration options (set via <code>overrides</code> under <code>sampler.vi</code>):</p>
+<p>All VI configuration options set via <code>overrides</code> under <code>sampler.vi</code>:</p>
+<p><strong>Example configurations:</strong></p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb2"><pre class="sourceCode yaml code-with-copy"><code class="sourceCode yaml"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="fu">samplers</span><span class="kw">:</span></span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a><span class="co">  # Basic MFA VI with custom capacity</span></span>
+<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="kw">-</span><span class="at"> </span><span class="fu">name</span><span class="kw">:</span><span class="at"> vi</span></span>
+<span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">overrides</span><span class="kw">:</span></span>
+<span id="cb2-5"><a href="#cb2-5" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="fu">M</span><span class="kw">:</span><span class="at"> </span><span class="dv">8</span></span>
+<span id="cb2-6"><a href="#cb2-6" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="fu">r</span><span class="kw">:</span><span class="at"> </span><span class="dv">2</span></span>
+<span id="cb2-7"><a href="#cb2-7" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="fu">steps</span><span class="kw">:</span><span class="at"> </span><span class="dv">5000</span></span>
+<span id="cb2-8"><a href="#cb2-8" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="fu">whitening_mode</span><span class="kw">:</span><span class="at"> </span><span class="st">"adam"</span></span>
+<span id="cb2-9"><a href="#cb2-9" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="fu">tensorboard</span><span class="kw">:</span><span class="at"> </span><span class="ch">true</span></span>
+<span id="cb2-10"><a href="#cb2-10" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-11"><a href="#cb2-11" aria-hidden="true" tabindex="-1"></a><span class="co">  # Flow VI with custom architecture</span></span>
+<span id="cb2-12"><a href="#cb2-12" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="kw">-</span><span class="at"> </span><span class="fu">name</span><span class="kw">:</span><span class="at"> vi</span></span>
+<span id="cb2-13"><a href="#cb2-13" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">overrides</span><span class="kw">:</span></span>
+<span id="cb2-14"><a href="#cb2-14" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="fu">algo</span><span class="kw">:</span><span class="at"> </span><span class="st">"flow"</span></span>
+<span id="cb2-15"><a href="#cb2-15" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="fu">M</span><span class="kw">:</span><span class="at"> </span><span class="dv">8</span></span>
+<span id="cb2-16"><a href="#cb2-16" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="fu">r</span><span class="kw">:</span><span class="at"> </span><span class="dv">2</span></span>
+<span id="cb2-17"><a href="#cb2-17" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="fu">flow_depth</span><span class="kw">:</span><span class="at"> </span><span class="dv">6</span></span>
+<span id="cb2-18"><a href="#cb2-18" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="fu">flow_type</span><span class="kw">:</span><span class="at"> </span><span class="st">"maf"</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<p><strong>Note</strong>: Flow VI requires <code>uv sync --extra flowvi</code>. See <a href="./vi_flow.md">Flow VI documentation</a> for details.</p>
+<hr>
 </section>
-<section id="configuration" class="level2">
-<h2 class="anchored" data-anchor-id="configuration">Configuration</h2>
-<p>All VI configuration parameters. Configure sampler parameters under <code>sampler.vi</code> and posterior parameters under <code>posterior</code>.</p>
+<section id="core-concepts" class="level2">
+<h2 class="anchored" data-anchor-id="core-concepts">Core Concepts</h2>
+<section id="evidence-lower-bound-elbo" class="level3">
+<h3 class="anchored" data-anchor-id="evidence-lower-bound-elbo">Evidence Lower Bound (ELBO)</h3>
+<p>VI maximizes the ELBO:</p>
+<p><span class="math display">\[
+  \begin{align}
+    \mathsf{ELBO}(q_θ) &amp;= \mathbb{𝔼}_{q_θ(w)}[\log p(w)] - \mathbb{𝔼}_{q_θ(w)}[\log q_θ(w)] \\
+                       &amp;= \mathbb{𝔼}_{q_θ(w)}[\log p(w)] + \mathcal{H}(q_θ)
+  \end{align}
+\]</span></p>
+<p>where:</p>
+<ul>
+<li><span class="math inline">\(p(w)\)</span> is the tempered Gaussian tethered posterior, <span class="math inline">\(\exp(-β L(w) - γ ||w - w^*||²)\)</span></li>
+<li><span class="math inline">\(q_θ(w)\)</span> is the parameterized variational approximation (<span class="math inline">\(θ\)</span> is the variational parameter)</li>
+<li><span class="math inline">\(\mathcal{H}(q_θ)\)</span> is the entropy of <span class="math inline">\(q_θ\)</span></li>
+</ul>
+<p><strong>Key property</strong>: <span class="math inline">\(\mathsf{ELBO} ≤ \log Z\)</span> (true log partition function)</p>
+</section>
+<section id="tetheringlocalization" class="level3">
+<h3 class="anchored" data-anchor-id="tetheringlocalization">Tethering/Localization</h3>
+<p>All VI methods tether/localize around <span class="math inline">\(w^*\)</span> (ERM optimal point) via the quadratic penalty <span class="math inline">\(||w - w^*||^2\)</span> in the exponential:</p>
+<p><span class="math display">\[p(w) = \exp( -\beta L(w) - \gamma ||w - w^*||² + \mathrm{const})\]</span></p>
+<p>where:</p>
+<ul>
+<li><span class="math inline">\(\beta\)</span> is inverse temperature (controls sampling temperature)</li>
+<li><span class="math inline">\(\gamma\)</span> is a tethering strength (for the Gaussian tether around w*)</li>
+<li><span class="math inline">\(L(w)\)</span> loss function (MSE, Gaussian likelihood, etc.)</li>
+</ul>
+<p><strong>Tuning γ</strong>:</p>
+<ul>
+<li>Try <span class="math inline">\({1e-4, 1e-3, 1e-2}\)</span></li>
+<li>Smaller <span class="math inline">\(\gamma\)</span> corresponds to a wider posterior (more exploration)</li>
+<li>Larger <span class="math inline">\(\gamma\)</span> corresponds to a tighter posterior (stronger localization)</li>
+<li>Set via <code>posterior.gamma</code>, <strong>not</strong> <code>sampler.vi.gamma</code></li>
+</ul>
+</section>
+<section id="temperature-β" class="level3">
+<h3 class="anchored" data-anchor-id="temperature-β">Temperature β</h3>
+<p>Controls the sampling temperature:</p>
+<ul>
+<li><span class="math inline">\(\beta = 1 / \log(n)\)</span> (default, <code>beta_mode: "1_over_log_n"</code>)</li>
+<li><span class="math inline">\(\beta = 1\)</span> (full posterior, <code>beta_mode: "manual"</code>, <code>beta0: 1.0</code>)</li>
+<li>Larger <span class="math inline">\(\beta\)</span> begets sharper posterior (colder)</li>
+<li>Smaller <span class="math inline">\(\beta\)</span> begets smoother posterior (hotter)</li>
+</ul>
+<hr>
+</section>
+</section>
+<section id="running-vi" class="level2">
+<h2 class="anchored" data-anchor-id="running-vi">Running VI</h2>
+<section id="single-vi-run" class="level3">
+<h3 class="anchored" data-anchor-id="single-vi-run">Single VI Run</h3>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb3"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Build target first (if not already built) -- Stage A</span></span>
+<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> run lambda-hat build <span class="dt">\</span></span>
+<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">--config-yaml</span> config/experiments.yaml <span class="dt">\</span></span>
+<span id="cb3-4"><a href="#cb3-4" aria-hidden="true" tabindex="-1"></a>  <span class="at">--target-id</span> <span class="op">&lt;</span>target_id<span class="op">&gt;</span></span>
+<span id="cb3-5"><a href="#cb3-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb3-6"><a href="#cb3-6" aria-hidden="true" tabindex="-1"></a><span class="co"># Run VI samplers -- Stage B</span></span>
+<span id="cb3-7"><a href="#cb3-7" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> run lambda-hat sample <span class="dt">\</span></span>
+<span id="cb3-8"><a href="#cb3-8" aria-hidden="true" tabindex="-1"></a>  <span class="at">--config-yaml</span> config/experiments.yaml <span class="dt">\</span></span>
+<span id="cb3-9"><a href="#cb3-9" aria-hidden="true" tabindex="-1"></a>  <span class="at">--target-id</span> <span class="op">&lt;</span>target_id<span class="op">&gt;</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+</section>
+<section id="via-workflow-recommended" class="level3">
+<h3 class="anchored" data-anchor-id="via-workflow-recommended">Via Workflow (Recommended)</h3>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb4"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Run full workflow (builds targets + runs samplers)</span></span>
+<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> run lambda-hat workflow sample <span class="at">--backend</span> local</span>
+<span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb4-4"><a href="#cb4-4" aria-hidden="true" tabindex="-1"></a><span class="co"># With promotion (generate galleries)</span></span>
+<span id="cb4-5"><a href="#cb4-5" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> run lambda-hat workflow sample <span class="at">--backend</span> local  <span class="at">--promote</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+</section>
+<section id="example-configuration" class="level3">
+<h3 class="anchored" data-anchor-id="example-configuration">Example Configuration</h3>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb5"><pre class="sourceCode yaml code-with-copy"><code class="sourceCode yaml"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="co"># config/experiments.yaml</span></span>
+<span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a><span class="fu">targets</span><span class="kw">:</span></span>
+<span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="kw">-</span><span class="at"> </span><span class="kw">{</span><span class="at"> </span><span class="fu">model</span><span class="kw">:</span><span class="at"> base</span><span class="kw">,</span><span class="at"> </span><span class="fu">data</span><span class="kw">:</span><span class="at"> base</span><span class="kw">,</span><span class="at"> </span><span class="fu">teacher</span><span class="kw">:</span><span class="at"> _null</span><span class="kw">,</span><span class="at"> </span><span class="fu">seed</span><span class="kw">:</span><span class="at"> </span><span class="dv">43</span><span class="at"> </span><span class="kw">}</span></span>
+<span id="cb5-4"><a href="#cb5-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb5-5"><a href="#cb5-5" aria-hidden="true" tabindex="-1"></a><span class="fu">samplers</span><span class="kw">:</span></span>
+<span id="cb5-6"><a href="#cb5-6" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="kw">-</span><span class="at"> </span><span class="fu">name</span><span class="kw">:</span><span class="at"> vi</span></span>
+<span id="cb5-7"><a href="#cb5-7" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">overrides</span><span class="kw">:</span></span>
+<span id="cb5-8"><a href="#cb5-8" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="fu">M</span><span class="kw">:</span><span class="at"> </span><span class="dv">8</span></span>
+<span id="cb5-9"><a href="#cb5-9" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="fu">r</span><span class="kw">:</span><span class="at"> </span><span class="dv">2</span></span>
+<span id="cb5-10"><a href="#cb5-10" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="fu">steps</span><span class="kw">:</span><span class="at"> </span><span class="dv">5000</span></span>
+<span id="cb5-11"><a href="#cb5-11" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="fu">whitening_mode</span><span class="kw">:</span><span class="at"> </span><span class="st">"adam"</span></span>
+<span id="cb5-12"><a href="#cb5-12" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="fu">lr_schedule</span><span class="kw">:</span><span class="at"> </span><span class="st">"cosine"</span></span>
+<span id="cb5-13"><a href="#cb5-13" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="fu">tensorboard</span><span class="kw">:</span><span class="at"> </span><span class="ch">true</span></span>
+<span id="cb5-14"><a href="#cb5-14" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">seed</span><span class="kw">:</span><span class="at"> </span><span class="dv">54321</span></span>
+<span id="cb5-15"><a href="#cb5-15" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb5-16"><a href="#cb5-16" aria-hidden="true" tabindex="-1"></a><span class="fu">posterior</span><span class="kw">:</span></span>
+<span id="cb5-17"><a href="#cb5-17" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="fu">gamma</span><span class="kw">:</span><span class="at"> </span><span class="fl">0.001</span></span>
+<span id="cb5-18"><a href="#cb5-18" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="fu">beta_mode</span><span class="kw">:</span><span class="at"> </span><span class="st">"1_over_log_n"</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<hr>
+</section>
+</section>
+<section id="configuring-vi" class="level2">
+<h2 class="anchored" data-anchor-id="configuring-vi">Configuring VI</h2>
+<p>All VI configuration parameters are set via <code>overrides</code> under <code>sampler.vi</code> or, for posterior parameters, under <code>posterior</code>.</p>
 <section id="sampler-parameters-sampler.vi" class="level3">
 <h3 class="anchored" data-anchor-id="sampler-parameters-sampler.vi">Sampler Parameters (<code>sampler.vi</code>)</h3>
 <section id="algorithm-selection" class="level4">
@@ -475,110 +590,6 @@ window.Quarto = {
 </tr>
 </tbody>
 </table>
-<p><strong>Example configurations:</strong></p>
-<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb2"><pre class="sourceCode yaml code-with-copy"><code class="sourceCode yaml"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="fu">samplers</span><span class="kw">:</span></span>
-<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a><span class="co">  # Basic MFA VI with custom capacity</span></span>
-<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="kw">-</span><span class="at"> </span><span class="fu">name</span><span class="kw">:</span><span class="at"> vi</span></span>
-<span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">overrides</span><span class="kw">:</span></span>
-<span id="cb2-5"><a href="#cb2-5" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="fu">M</span><span class="kw">:</span><span class="at"> </span><span class="dv">8</span></span>
-<span id="cb2-6"><a href="#cb2-6" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="fu">r</span><span class="kw">:</span><span class="at"> </span><span class="dv">2</span></span>
-<span id="cb2-7"><a href="#cb2-7" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="fu">steps</span><span class="kw">:</span><span class="at"> </span><span class="dv">5000</span></span>
-<span id="cb2-8"><a href="#cb2-8" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="fu">whitening_mode</span><span class="kw">:</span><span class="at"> </span><span class="st">"adam"</span></span>
-<span id="cb2-9"><a href="#cb2-9" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="fu">tensorboard</span><span class="kw">:</span><span class="at"> </span><span class="ch">true</span></span>
-<span id="cb2-10"><a href="#cb2-10" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb2-11"><a href="#cb2-11" aria-hidden="true" tabindex="-1"></a><span class="co">  # Flow VI with custom architecture</span></span>
-<span id="cb2-12"><a href="#cb2-12" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="kw">-</span><span class="at"> </span><span class="fu">name</span><span class="kw">:</span><span class="at"> vi</span></span>
-<span id="cb2-13"><a href="#cb2-13" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">overrides</span><span class="kw">:</span></span>
-<span id="cb2-14"><a href="#cb2-14" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="fu">algo</span><span class="kw">:</span><span class="at"> </span><span class="st">"flow"</span></span>
-<span id="cb2-15"><a href="#cb2-15" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="fu">M</span><span class="kw">:</span><span class="at"> </span><span class="dv">8</span></span>
-<span id="cb2-16"><a href="#cb2-16" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="fu">r</span><span class="kw">:</span><span class="at"> </span><span class="dv">2</span></span>
-<span id="cb2-17"><a href="#cb2-17" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="fu">flow_depth</span><span class="kw">:</span><span class="at"> </span><span class="dv">6</span></span>
-<span id="cb2-18"><a href="#cb2-18" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="fu">flow_type</span><span class="kw">:</span><span class="at"> </span><span class="st">"maf"</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
-<p><strong>Note</strong>: Flow VI requires <code>uv sync --extra flowvi</code>. See <a href="./vi_flow.md">Flow VI documentation</a> for details.</p>
-<hr>
-</section>
-</section>
-<section id="core-concepts" class="level2">
-<h2 class="anchored" data-anchor-id="core-concepts">Core Concepts</h2>
-<section id="evidence-lower-bound-elbo" class="level3">
-<h3 class="anchored" data-anchor-id="evidence-lower-bound-elbo">Evidence Lower Bound (ELBO)</h3>
-<p>VI maximizes the ELBO:</p>
-<p><span class="math display">\[
-  \begin{align}
-    \mathsf{ELBO}(q_θ) &amp;= \mathbb{𝔼}_{q_θ(w)}[\log p(w)] - \mathbb{𝔼}_{q_θ(w)}[\log q_θ(w)] \\
-                       &amp;= \mathbb{𝔼}_{q_θ(w)}[\log p(w)] + \mathcal{H}(q_θ)
-  \end{align}
-\]</span></p>
-<p>where:</p>
-<ul>
-<li><span class="math inline">\(p(w)\)</span> is the tempered Gaussian tethered posterior, <span class="math inline">\(\exp(-β L(w) - γ ||w - w^*||²)\)</span></li>
-<li><span class="math inline">\(q_θ(w)\)</span> is the parameterized variational approximation (<span class="math inline">\(θ\)</span> is the variational parameter)</li>
-<li><span class="math inline">\(\mathcal{H}(q_θ)\)</span> is the entropy of <span class="math inline">\(q_θ\)</span></li>
-</ul>
-<p><strong>Key property</strong>: <span class="math inline">\(\mathsf{ELBO} ≤ \log Z\)</span> (true log partition function)</p>
-</section>
-<section id="tetheringlocalization" class="level3">
-<h3 class="anchored" data-anchor-id="tetheringlocalization">Tethering/Localization</h3>
-<p>All VI methods tether/localize around <span class="math inline">\(w^*\)</span> (ERM optimal point) via the quadratic penalty <span class="math inline">\(||w - w^*||^2\)</span> in the exponential:</p>
-<p><span class="math display">\[p(w) = \exp( -\beta L(w) - \gamma ||w - w^*||² + \mathrm{const})\]</span></p>
-<p>where:</p>
-<ul>
-<li><span class="math inline">\(\beta\)</span> is inverse temperature (controls sampling temperature)</li>
-<li><span class="math inline">\(\gamma\)</span> is a tethering strength (for the Gaussian tether around w*)</li>
-<li><span class="math inline">\(L(w)\)</span> loss function (MSE, Gaussian likelihood, etc.)</li>
-</ul>
-<p><strong>Tuning γ</strong>:</p>
-<ul>
-<li>Try <span class="math inline">\({1e-4, 1e-3, 1e-2}\)</span></li>
-<li>Smaller <span class="math inline">\(\gamma\)</span> corresponds to a wider posterior (more exploration)</li>
-<li>Larger <span class="math inline">\(\gamma\)</span> corresponds to a tighter posterior (stronger localization)</li>
-<li>Set via <code>posterior.gamma</code>, <strong>not</strong> <code>sampler.vi.gamma</code></li>
-</ul>
-</section>
-<section id="temperature-β" class="level3">
-<h3 class="anchored" data-anchor-id="temperature-β">Temperature β</h3>
-<p>Controls the sampling temperature: - <span class="math inline">\(\beta = 1 / \log(n)\)</span> (default, <code>beta_mode: "1_over_log_n"</code>) - <span class="math inline">\(\beta = 1\)</span> (full posterior, <code>beta_mode: "manual"</code>, <code>beta0: 1.0</code>) - Larger <span class="math inline">\(\beta\)</span> begets sharper posterior (colder) - Smaller <span class="math inline">\(\beta\)</span> begets smoother posterior (hotter)</p>
-<hr>
-</section>
-</section>
-<section id="running-vi" class="level2">
-<h2 class="anchored" data-anchor-id="running-vi">Running VI</h2>
-<section id="single-vi-run" class="level3">
-<h3 class="anchored" data-anchor-id="single-vi-run">Single VI Run</h3>
-<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb3"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Build target first (if not already built)</span></span>
-<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> run lambda-hat build <span class="at">--config-yaml</span> config/experiments.yaml <span class="at">--target-id</span> tgt_abc123</span>
-<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb3-4"><a href="#cb3-4" aria-hidden="true" tabindex="-1"></a><span class="co"># Run VI sampler</span></span>
-<span id="cb3-5"><a href="#cb3-5" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> run lambda-hat sample <span class="at">--config-yaml</span> config/experiments.yaml <span class="at">--target-id</span> tgt_abc123</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
-</section>
-<section id="via-workflow-recommended" class="level3">
-<h3 class="anchored" data-anchor-id="via-workflow-recommended">Via Workflow (Recommended)</h3>
-<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb4"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Run full workflow (builds targets + runs samplers)</span></span>
-<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> run lambda-hat workflow llc <span class="at">--backend</span> local</span>
-<span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb4-4"><a href="#cb4-4" aria-hidden="true" tabindex="-1"></a><span class="co"># With promotion (generate galleries)</span></span>
-<span id="cb4-5"><a href="#cb4-5" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> run lambda-hat workflow llc <span class="at">--backend</span> local  <span class="at">--promote</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
-</section>
-<section id="example-configuration" class="level3">
-<h3 class="anchored" data-anchor-id="example-configuration">Example Configuration</h3>
-<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb5"><pre class="sourceCode yaml code-with-copy"><code class="sourceCode yaml"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="co"># config/experiments.yaml</span></span>
-<span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a><span class="fu">targets</span><span class="kw">:</span></span>
-<span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="kw">-</span><span class="at"> </span><span class="kw">{</span><span class="at"> </span><span class="fu">model</span><span class="kw">:</span><span class="at"> base</span><span class="kw">,</span><span class="at"> </span><span class="fu">data</span><span class="kw">:</span><span class="at"> base</span><span class="kw">,</span><span class="at"> </span><span class="fu">teacher</span><span class="kw">:</span><span class="at"> _null</span><span class="kw">,</span><span class="at"> </span><span class="fu">seed</span><span class="kw">:</span><span class="at"> </span><span class="dv">43</span><span class="at"> </span><span class="kw">}</span></span>
-<span id="cb5-4"><a href="#cb5-4" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb5-5"><a href="#cb5-5" aria-hidden="true" tabindex="-1"></a><span class="fu">samplers</span><span class="kw">:</span></span>
-<span id="cb5-6"><a href="#cb5-6" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="kw">-</span><span class="at"> </span><span class="fu">name</span><span class="kw">:</span><span class="at"> vi</span></span>
-<span id="cb5-7"><a href="#cb5-7" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">overrides</span><span class="kw">:</span></span>
-<span id="cb5-8"><a href="#cb5-8" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="fu">M</span><span class="kw">:</span><span class="at"> </span><span class="dv">8</span></span>
-<span id="cb5-9"><a href="#cb5-9" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="fu">r</span><span class="kw">:</span><span class="at"> </span><span class="dv">2</span></span>
-<span id="cb5-10"><a href="#cb5-10" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="fu">steps</span><span class="kw">:</span><span class="at"> </span><span class="dv">5000</span></span>
-<span id="cb5-11"><a href="#cb5-11" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="fu">whitening_mode</span><span class="kw">:</span><span class="at"> </span><span class="st">"adam"</span></span>
-<span id="cb5-12"><a href="#cb5-12" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="fu">lr_schedule</span><span class="kw">:</span><span class="at"> </span><span class="st">"cosine"</span></span>
-<span id="cb5-13"><a href="#cb5-13" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="fu">tensorboard</span><span class="kw">:</span><span class="at"> </span><span class="ch">true</span></span>
-<span id="cb5-14"><a href="#cb5-14" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">seed</span><span class="kw">:</span><span class="at"> </span><span class="dv">54321</span></span>
-<span id="cb5-15"><a href="#cb5-15" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb5-16"><a href="#cb5-16" aria-hidden="true" tabindex="-1"></a><span class="fu">posterior</span><span class="kw">:</span></span>
-<span id="cb5-17"><a href="#cb5-17" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="fu">gamma</span><span class="kw">:</span><span class="at"> </span><span class="fl">0.001</span></span>
-<span id="cb5-18"><a href="#cb5-18" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="fu">beta_mode</span><span class="kw">:</span><span class="at"> </span><span class="st">"1_over_log_n"</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <hr>
 </section>
 </section>
@@ -593,10 +604,28 @@ window.Quarto = {
 <div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb7"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="ex">tensorboard</span> <span class="at">--logdir</span> runs/targets/<span class="op">&lt;</span>tgt<span class="op">&gt;</span>/run_vi_<span class="op">&lt;</span>rid<span class="op">&gt;</span>/diagnostics/tb</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <section id="key-metrics-shared-across-vi-methods" class="level3">
 <h3 class="anchored" data-anchor-id="key-metrics-shared-across-vi-methods">Key Metrics (Shared Across VI Methods)</h3>
-<p><strong>ELBO decomposition</strong>: - <code>vi/elbo</code> — Total ELBO (maximize this) - <code>vi/elbo_like</code> — Expected log likelihood term - <code>vi/logq</code> — Negative entropy term</p>
-<p><strong>Localization</strong>: - <code>vi/radius2</code> — Localization radius (mean, quantiles) - Track to verify posterior stays near w*</p>
-<p><strong>Optimization</strong>: - <code>vi/grad_norm</code> — Gradient magnitude (watch for spikes) - <code>vi/cumulative_fge</code> — Work-normalized progress</p>
-<p><strong>Convergence</strong>: - ELBO should increase steadily then plateau - <code>grad_norm</code> should decrease and stabilize - <code>radius2</code> should stabilize at reasonable value</p>
+<p><strong>ELBO decomposition</strong>:</p>
+<ul>
+<li><code>vi/elbo</code> — Total ELBO (maximize this)</li>
+<li><code>vi/elbo_like</code> — Expected log likelihood term</li>
+<li><code>vi/logq</code> — Negative entropy term</li>
+</ul>
+<p><strong>Localization</strong>:</p>
+<ul>
+<li><code>vi/radius2</code> — Localization radius (mean, quantiles)</li>
+<li>Track to verify posterior stays near w*</li>
+</ul>
+<p><strong>Optimization</strong>:</p>
+<ul>
+<li><code>vi/grad_norm</code> — Gradient magnitude (watch for spikes)</li>
+<li><code>vi/cumulative_fge</code> — Work-normalized progress</li>
+</ul>
+<p><strong>Convergence</strong>:</p>
+<ul>
+<li>ELBO should increase steadily then plateau</li>
+<li><code>grad_norm</code> should decrease and stabilize</li>
+<li><code>radius2</code> should stabilize at reasonable value</li>
+</ul>
 </section>
 <section id="diagnosis" class="level3">
 <h3 class="anchored" data-anchor-id="diagnosis">Diagnosis</h3>
@@ -668,7 +697,13 @@ window.Quarto = {
 <h2 class="anchored" data-anchor-id="implementation-notes">Implementation Notes</h2>
 <section id="precision" class="level3">
 <h3 class="anchored" data-anchor-id="precision">Precision</h3>
-<p>VI operates in <code>float32</code> by default: - Sufficient for LLC estimation - ~2× faster than float64 - Numerical stability features (clipping, ridge regularization) - Can switch to <code>float64</code> via <code>dtype: float64</code> (rarely needed)</p>
+<p>VI operates in <code>float32</code> by default:</p>
+<ul>
+<li>Sufficient for LLC estimation</li>
+<li>~2× faster than float64</li>
+<li>Numerical stability features (clipping, ridge regularization)</li>
+<li>Can switch to <code>float64</code> via <code>dtype: float64</code> (rarely needed)</li>
+</ul>
 </section>
 <section id="hvp-usage" class="level3">
 <h3 class="anchored" data-anchor-id="hvp-usage">HVP Usage</h3>

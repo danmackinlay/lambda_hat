@@ -313,19 +313,23 @@ tensorboard --logdir runs/targets/<tgt>/run_vi_<rid>/diagnostics/tb
 ### Key Metrics (Shared Across VI Methods)
 
 **ELBO decomposition**:
+
 - `vi/elbo` — Total ELBO (maximize this)
 - `vi/elbo_like` — Expected log likelihood term
 - `vi/logq` — Negative entropy term
 
 **Localization**:
+
 - `vi/radius2` — Localization radius (mean, quantiles)
 - Track to verify posterior stays near w*
 
 **Optimization**:
+
 - `vi/grad_norm` — Gradient magnitude (watch for spikes)
 - `vi/cumulative_fge` — Work-normalized progress
 
 **Convergence**:
+
 - ELBO should increase steadily then plateau
 - `grad_norm` should decrease and stabilize
 - `radius2` should stabilize at reasonable value
@@ -405,6 +409,7 @@ runs/targets/tgt_abc123/run_vi_rid123/
 ### Precision
 
 VI operates in `float32` by default:
+
 - Sufficient for LLC estimation
 - ~2× faster than float64
 - Numerical stability features (clipping, ridge regularization)
