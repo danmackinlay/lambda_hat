@@ -28,6 +28,7 @@ temp_*
 test_*
 parsl_runinfo/
 logs/
+*.html
 
 # New artifact storage
 artifacts/
