@@ -18,14 +18,14 @@ wheels/
 # run outputs (legacy)
 runs/*
 !runs/.keep
-*.png
-*.jpg
-*.jpeg
-*.pdf
+./*.png
+./*.jpg
+./*.jpeg
+./*.pdf
 todo*.md
-results/
-temp_*
-test_*
+./results/
+./temp_*
+./test_*
 parsl_runinfo/
 logs/
 *.html
