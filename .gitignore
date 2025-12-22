@@ -32,6 +32,7 @@ logs/
 
 # New artifact storage
 artifacts/
+artefacts/
 
 # Exception: tracked README example images
 !assets/readme/*.png
@@ -42,3 +43,4 @@ Thumbs.db
 
 *.csv
 README.html
+./*_files/
