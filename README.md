@@ -24,8 +24,12 @@ This separation provides:
 In [Singular Learning Theory (SLT)](https://singularlearningtheory.com), the **Local Learning Coefficient (LLC)** quantifies the effective local dimension of a model around a trained optimum.
 Estimating it can be tricky. That is what we explore here.
 
-![](assets/readme/llc_convergence_combined.png)
-
+<p align="center">
+  <img src="docs/assets/dev/samplers/hmc.png" alt="HMC" width="24%"/>
+  <img src="docs/assets/dev/samplers/mclmc.png" alt="MCLMC" width="24%"/>
+  <img src="docs/assets/dev/samplers/sgld.png" alt="SGLD" width="24%"/>
+  <img src="docs/assets/dev/samplers/vi.png" alt="VI" width="24%"/>
+</p>
 
 * [[2308.12108] The Local Learning Coefficient: A Singularity-Aware Complexity Measure](https://arxiv.org/abs/2308.12108)
 * [[2507.21449] From Global to Local: A Scalable Benchmark for Local Posterior Sampling](https://arxiv.org/abs/2507.21449)

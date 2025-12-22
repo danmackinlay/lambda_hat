@@ -34,9 +34,6 @@ logs/
 artifacts/
 artefacts/
 
-# Exception: tracked README example images
-!assets/readme/*.png
-
 # OS Cruft
 .DS_Store
 Thumbs.db

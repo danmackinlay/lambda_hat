@@ -345,8 +345,6 @@ uv run lambda-hat promote gallery \
   --outdir artifacts/promotion
 ```
 
-**Note on repository assets**: The `assets/readme/` directory is manually curated and contains hand-selected promotional images for the GitHub README. Automated promotion writes to `docs/assets/{experiment}/` which is separate from manual curation.
-
 ---
 
 ## TensorBoard Integration
